@@ -1,6 +1,6 @@
 ---
 name: cc-cli-sandbox
-description: Empirically-verified runtime constraints of the LOCAL Claude Code CLI OS sandbox that wraps Bash-tool commands. NOT the claude.ai/code cloud VM (cc-web-dockerd). IMPORTANT: cc-web-sandbox-signals describes a DIFFERENT environment (silent Anthropic-MITM proxy) that does NOT hold here — do not inherit its egress facts. Use when a sandboxed command misbehaves: a "network request outside sandbox" dialog, file owner shows 65534/nobody, systemctl/journalctl/docker "Operation not permitted", runtime fetch "Proxy server unreachable", a path is read-only, or deciding between a sandbox-config change and dangerouslyDisableSandbox.
+description: Empirically-verified runtime constraints of the LOCAL Claude Code CLI OS sandbox that wraps Bash-tool commands. NOT the claude.ai/code cloud VM (cc-web-dockerd). IMPORTANT: cc-web-sandbox-signals describes a DIFFERENT environment (silent Anthropic-MITM proxy) that does NOT hold here — do not inherit its egress facts. Use when a sandboxed command misbehaves: a "network request outside sandbox" dialog, file owner shows 65534/nobody, systemctl/journalctl/docker "Operation not permitted", runtime fetch "Proxy server unreachable", a path is read-only, deciding between a sandbox-config change and dangerouslyDisableSandbox, or checking whether the current shell is in-sandbox.
 ---
 
 # Claude Code CLI sandbox: verified runtime constraints
@@ -10,6 +10,16 @@ Scope: the **local** OS sandbox that wraps Bash-tool commands in the Claude Code
 ## cc-web-sandbox-signals does NOT apply here
 
 That skill claims a silent TLS-intercepting proxy (every cert signed by an Anthropic `TLS Inspection CA`), a `Host not in allowlist` 403 body, and a fixed reachability table. Verified false here: an allowed host serves its **real upstream cert** (e.g. `github.com` → Sectigo, not an Anthropic MITM CA) and egress is an interactive approval dialog, not a silent MITM. cc-web-sandbox-signals reflects the cloud/web env only.
+
+## Detecting whether you're in-sandbox
+
+The sandbox itself sets a few signals that survive subshells and are independent of user shell config or other CC-level env (so they tell you "sandboxed", not just "under Claude Code"):
+
+- `$SANDBOX_RUNTIME=1` in-sandbox; unset when `dangerouslyDisableSandbox` runs the command. Simplest detector: `[ "${SANDBOX_RUNTIME:-}" = 1 ]`.
+- `/proc/self/uid_map` is the single-row `<uid> <uid> 1` mapping in-sandbox (the same uid-namespace mapping that produces the `65534`/nobody squash described in class B below) vs. the unrestricted `0 0 4294967295` outside.
+- `/proc/self/mountinfo`'s root mount is `ro` in-sandbox vs. `rw` outside.
+
+Do **not** use `$CLAUDECODE` as the discriminator — it is `1` in both cases (it signals "under Claude Code", not "sandboxed").
 
 ## First triage: policy blocker or structural blocker?
 
