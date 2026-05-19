@@ -1,9 +1,6 @@
 ---
 name: edit-pr
-description: >
-  Edit the title and body of an existing GitHub pull request.
-  Fetches the current PR content, writes it to a temp file for editing,
-  then writes it back. Use when the user wants to update a PR description.
+description: Edit the title and body of an existing GitHub pull request. Fetches the current PR content, writes it to a temp file for editing, then writes it back. Use when the user wants to update a PR description.
 argument-hint: <pr-url>
 ---
 

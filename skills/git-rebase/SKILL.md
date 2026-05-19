@@ -5,40 +5,37 @@ description: Perform git interactive rebase and complex history rewrites safely,
 
 # Git Rebase
 
-Claude は端末上の対話的なエディタ（`git rebase -i` が起動する vim など）を操作できない。
-そのため interactive rebase 相当の操作を行うときは、`GIT_SEQUENCE_EDITOR` / `GIT_EDITOR` を経由して
-todo リストやコミットメッセージをファイル化し、ユーザーにレビューしてもらってから実行する。
+Claude は端末上の対話的なエディタ（`git rebase -i` が起動する vim など）を操作できない。そのため interactive rebase 相当の操作を行うときは、`GIT_SEQUENCE_EDITOR` / `GIT_EDITOR` を経由して todo リストやコミットメッセージをファイル化し、ユーザーにレビューしてもらってから実行する。
 
-rebase は履歴を書き換える破壊的操作なので、**必ず実行前にユーザーが diff を見て承認**できる形にする。
-この点が徹底されていればロールバックも効くため、安心して使える。
+rebase は履歴を書き換える破壊的操作なので、**必ず実行前にユーザーが diff を見て承認**できる形にする。この点が徹底されていればロールバックも効くため、安心して使える。
 
 ## どちらの手法を使うか
 
-rebase 系の作業は次の2つに大別される。どちらを使うかは最初に判断する。
+rebase 系の作業は次の2つに大別される。どちらを使うかは最初に判断する。迷ったらまず interactive rebase を試し、足りなければ script rebase に切り替える。
 
 ### Interactive Rebase（このファイル下半分）
-`git rebase -i` の pick / squash / reword / fixup / drop / 並び替えで表現できる操作。
-具体的には:
+
+`git rebase -i` の pick / squash / reword / fixup / drop / 並び替えで表現できる操作。具体的には:
+
 - 連続する数コミットを squash して 1 コミットにまとめたい
 - コミットメッセージを reword したい
 - コミットの並びを入れ替えたい
 - いらないコミットを drop したい
 
 ### Script Rebase（このファイル最下部）
+
 interactive rebase の命令語では表現しきれない操作。具体的には:
+
 - 1 つのコミットを複数に分割したい
 - ファイル単位で別々のコミットに振り分け直したい
 - 複数コミットのメッセージを全面的に書き直したい
 - 複雑な並び替え + squash + 内容の再構成を同時にやりたい
 
-迷ったらまず interactive rebase を試し、足りなければ script rebase に切り替える。
-
 ---
 
 # Interactive Rebase
 
-`git rebase -i` を直接起動するのではなく、`GIT_SEQUENCE_EDITOR` をダミーエディタとして使い、
-todo リストをファイルに吸い出し → ユーザーレビュー → 編集済みファイルを適用、という3段階で進める。
+`git rebase -i` を直接起動するのではなく、`GIT_SEQUENCE_EDITOR` をダミーエディタとして使い、todo リストをファイルに吸い出し → ユーザーレビュー → 編集済みファイルを適用、という3段階で進める。
 
 ## 手順
 
@@ -48,9 +45,7 @@ todo リストをファイルに吸い出し → ユーザーレビュー → �
 GIT_SEQUENCE_EDITOR="cp \$1 /tmp/rebase-todo.txt && false" git rebase -i <base>
 ```
 
-`cp` で git が渡してきた todo ファイルをコピーし、`&& false` でエディタが失敗したように見せて
-rebase 本体を中断させる。これで todo リストだけが `/tmp/rebase-todo.txt` に残り、
-作業ツリーは操作前の状態のまま保たれる。
+`cp` で git が渡してきた todo ファイルをコピーし、`&& false` でエディタが失敗したように見せて rebase 本体を中断させる。これで todo リストだけが `/tmp/rebase-todo.txt` に残り、作業ツリーは操作前の状態のまま保たれる。
 
 ### 2. todo ファイルをユーザーに見せる
 
@@ -66,8 +61,7 @@ cat /tmp/rebase-todo.txt
 cp /tmp/rebase-todo.txt /tmp/rebase-todo-edited.txt
 ```
 
-`Edit` ツールで `/tmp/rebase-todo-edited.txt` を編集する（pick → squash、並び替え、drop など）。
-そのあと diff をユーザーに見せて承認を取る。`/tmp/rebase-todo.txt` は原本として残し、編集しない。
+`Edit` ツールで `/tmp/rebase-todo-edited.txt` を編集する（pick → squash、並び替え、drop など）。そのあと diff をユーザーに見せて承認を取る。`/tmp/rebase-todo.txt` は原本として残し、編集しない。
 
 ### 4. 承認後、原本が変わっていないことを確認して rebase 実行
 
@@ -78,14 +72,11 @@ GIT_SEQUENCE_EDITOR="
 " git rebase -i <base>
 ```
 
-git が今回生成した todo と、手順1で保存した原本を `diff -q` で比較する。
-一致していれば「ユーザーがレビューしたのと同じ操作」だと確信できるので、編集済みファイルを適用する。
-一致しなければ（例えば base までの間に新しいコミットが入った等）その場で中断する。
+git が今回生成した todo と、手順1で保存した原本を `diff -q` で比較する。一致していれば「ユーザーがレビューしたのと同じ操作」だと確信できるので、編集済みファイルを適用する。一致しなければ（例えば base までの間に新しいコミットが入った等）その場で中断する。
 
 ### 5. squash 時のコミットメッセージ編集が必要な場合
 
-`squash` や `reword` を含むと、rebase 中に `GIT_EDITOR` が起動してコミットメッセージ編集を求められる。
-この場合も同じパターンで、`GIT_EDITOR` にファイル経由のダミーエディタを渡す:
+`squash` や `reword` を含むと、rebase 中に `GIT_EDITOR` が起動してコミットメッセージ編集を求められる。この場合も同じパターンで、`GIT_EDITOR` にファイル経由のダミーエディタを渡す:
 
 ```bash
 GIT_EDITOR="cp \$1 /tmp/commit-msg.txt && false" ...
@@ -107,18 +98,16 @@ git rebase --abort
 git reset --hard ORIG_HEAD
 ```
 
-rebase 直前の tip は `ORIG_HEAD` に保存されている。不安なら操作前に
-`OLD_TIP=$(git rev-parse HEAD)` で明示的に控えておくとより確実。
+rebase 直前の tip は `ORIG_HEAD` に保存されている。不安なら操作前に `OLD_TIP=$(git rev-parse HEAD)` で明示的に控えておくとより確実。
 
 ---
 
 # Script Rebase
 
-コミットの分割・ファイル単位の振り分け・大幅なメッセージ書き換えなど、
-interactive rebase の命令語では表現しきれない操作が必要な場合は、
-操作全体を 1 つのシェルスクリプトとして書き出し、ユーザーにレビューしてもらってから実行する。
+コミットの分割・ファイル単位の振り分け・大幅なメッセージ書き換えなど、interactive rebase の命令語では表現しきれない操作が必要な場合は、操作全体を 1 つのシェルスクリプトとして書き出し、ユーザーにレビューしてもらってから実行する。
 
 スクリプト化する理由は2つある:
+
 1. 操作が複数ステップに渡るので、全体を俯瞰できる形でレビューしないと安全性を保証しにくい
 2. 同じスクリプトを再実行すれば再現できるので、途中で失敗しても切り戻しや再挑戦がしやすい
 
@@ -192,6 +181,4 @@ git diff --stat --exit-code "$OLD_TIP" HEAD
 echo "OK: tree matches $OLD_TIP"
 ```
 
-このテンプレートはあくまで骨格なので、実際のタスクに合わせて `EXPECTED_TIP` / `EXPECTED_BRANCH` / add 対象 / メッセージを書き換える。
-重要なのは「`EXPECTED_TIP` との一致確認 → `OLD_TIP` 記録 → 再構成 → `git diff --exit-code` で一致確認」の四点セットを崩さないこと。
-`EXPECTED_TIP` はユーザーにスクリプトを見せる直前に `git rev-parse HEAD` で取得した値を埋め込む。
+このテンプレートはあくまで骨格なので、実際のタスクに合わせて `EXPECTED_TIP` / `EXPECTED_BRANCH` / add 対象 / メッセージを書き換える。重要なのは「`EXPECTED_TIP` との一致確認 → `OLD_TIP` 記録 → 再構成 → `git diff --exit-code` で一致確認」の四点セットを崩さないこと。`EXPECTED_TIP` はユーザーにスクリプトを見せる直前に `git rev-parse HEAD` で取得した値を埋め込む。
