@@ -3,7 +3,7 @@ name: cc-cli-sandbox
 description: >
   Empirically-verified runtime constraints of the LOCAL Claude Code CLI OS
   sandbox that wraps Bash-tool commands. NOT the claude.ai/code cloud VM
-  (that is cc-web-dockerd). IMPORTANT: cc-sandbox-signals describes a
+  (that is cc-web-dockerd). IMPORTANT: cc-web-sandbox-signals describes a
   DIFFERENT environment (silent Anthropic-MITM proxy) that does NOT hold for
   cc-cli — do not inherit its egress facts here. Use when a sandboxed command
   misbehaves: a "network request outside sandbox" dialog, file owner shows
@@ -17,14 +17,14 @@ description: >
 Scope: the **local** OS sandbox around Bash-tool commands (this session's env).
 Web cloud sandbox → `cc-web-dockerd`. Every fact below was probed in cc-cli.
 
-## cc-sandbox-signals does NOT apply here
+## cc-web-sandbox-signals does NOT apply here
 
-`cc-sandbox-signals` claims a silent TLS-intercepting proxy (every cert signed
+`cc-web-sandbox-signals` claims a silent TLS-intercepting proxy (every cert signed
 `O=Anthropic; CN=sandbox-egress-production TLS Inspection CA`), a `Host not in
 allowlist` 403 body, and a fixed reachability table. **Verified false in
 cc-cli**: `github.com` serves its real upstream cert
 (`O=Sectigo`), and egress is an interactive approval dialog, not a silent
-MITM. cc-sandbox-signals reflects the cloud/web env. Always re-verify
+MITM. cc-web-sandbox-signals reflects the cloud/web env. Always re-verify
 egress claims empirically per environment; never inherit cross-env.
 
 ## Egress = interactive per-host approval
@@ -75,7 +75,7 @@ trustworthy output only unsandboxed or in the operator's real shell.
 Eliminate the sandbox-incompatible dependency rather than fight the sandbox:
 vendor fetched constants so a checker needs no network; keep secret-readers
 metadata-only so a non-root checker needs no privileged read. Verify
-env-specific claims empirically — cc-sandbox-signals ≠ cc-cli.
+env-specific claims empirically — cc-web-sandbox-signals ≠ cc-cli.
 
 ## Persistence
 

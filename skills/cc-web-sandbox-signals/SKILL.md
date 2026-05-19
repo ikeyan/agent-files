@@ -1,9 +1,18 @@
 ---
-name: cc-sandbox-signals
-description: Use whenever a Claude Code user is dealing with external notifications, sandbox network egress, or webhook delivery into the session — including CI result notifications ('why didn't Claude see my green CI?'), `subscribe_pr_activity` filter quirks (CI success silent, comment PATCH silent), 'Host not in allowlist' proxy errors, reachability questions for hosts like smee.io / webhook.site / httpbin.org / api.github.com, routing external events into the sandbox via GitHub as a relay, or `Monitor` setup for SSE / WebSocket streams. Trigger even when the skill isn't named — phrases like 'CI passed but nothing happened', 'sandbox can't reach X', 'how do I get a webhook into my session', 'upsert status comment silent', or 'Anthropic TLS Inspection CA' are strong signals. Covers the event filter, the MITM egress allowlist, the create-then-sweep comment pattern, and Monitor streaming.
+name: cc-web-sandbox-signals
+description: Cloud/WEB Claude Code sandbox (claude.ai/code) signaling & egress gotchas. NOT the local CLI sandbox — its egress differs (interactive per-host approval, real upstream TLS, no Anthropic MITM CA); for that use cc-cli-sandbox, do not apply these facts there. Use whenever a web/cloud session deals with external notifications, sandbox network egress, or webhook delivery — including CI result notifications ('why didn't Claude see my green CI?'), `subscribe_pr_activity` filter quirks (CI success silent, comment PATCH silent), 'Host not in allowlist' proxy errors, reachability questions for hosts like smee.io / webhook.site / httpbin.org / api.github.com, routing external events into the sandbox via GitHub as a relay, or `Monitor` setup for SSE / WebSocket streams. Trigger even when the skill isn't named — 'CI passed but nothing happened', 'sandbox can't reach X', 'how do I get a webhook into my session', 'upsert status comment silent', 'Anthropic TLS Inspection CA' are strong signals. Covers the event filter, the MITM egress allowlist, the create-then-sweep comment pattern, and Monitor streaming.
 ---
 
-# Claude Code sandbox: signaling and egress gotchas
+# Claude Code WEB sandbox: signaling and egress gotchas
+
+> **Scope: the cloud/web sandbox (claude.ai/code).** The egress facts here —
+> a silent TLS-inspecting MITM proxy (`O=Anthropic … TLS Inspection CA`),
+> `Host not in allowlist` 403 bodies, the fixed reachability table — were
+> **verified false for the local Claude Code CLI sandbox**, whose egress is
+> instead an interactive per-host approval dialog with real upstream TLS and
+> no MITM CA. For the local CLI sandbox use **cc-cli-sandbox**; do not apply
+> the facts below there. (The signaling/relay/Monitor patterns are largely
+> env-independent; the egress/proxy specifics are not.)
 
 Context this skill captures, gathered from a long debugging run on
 `ikeyan/music-analyzer#15` (2026-04-23 / -24). If you're starting a fresh
