@@ -3,3 +3,4 @@
 jsr.io
 api.jsr.io
 npm.jsr.io
+ikeyan.github.io
