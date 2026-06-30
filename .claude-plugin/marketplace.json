@@ -1,0 +1,12 @@
+{
+  "name": "ikeyan",
+  "owner": { "name": "ikeyan" },
+  "description": "ikeyan の Claude Code スキル集を配布する marketplace。",
+  "plugins": [
+    {
+      "name": "ikeyan-skills",
+      "source": ".",
+      "description": "ikeyan の Claude Code スキル集。"
+    }
+  ]
+}
