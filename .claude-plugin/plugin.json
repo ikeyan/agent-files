@@ -1,7 +1,6 @@
 {
   "name": "ikeyan-skills",
   "description": "ikeyan の Claude Code スキル集。",
-  "version": "0.1.0",
   "author": { "name": "ikeyan" },
   "repository": "https://github.com/ikeyan/agent-files"
 }
