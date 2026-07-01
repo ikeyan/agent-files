@@ -5,7 +5,7 @@
   "plugins": [
     {
       "name": "ikeyan-skills",
-      "source": ".",
+      "source": "./",
       "description": "ikeyan の Claude Code スキル集。"
     }
   ]

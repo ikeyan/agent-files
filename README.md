@@ -6,7 +6,7 @@ skills は、 claude code on the web では環境起動時にコピーされ、�
 
 ## Claude plugin として使う
 
-このリポは Claude Code プラグインも兼ねる。`.claude-plugin/` に `plugin.json` (プラグイン本体) と `marketplace.json` (`source: "."` の単一プラグイン marketplace) を置いてある。
+このリポは Claude Code プラグインも兼ねる。`.claude-plugin/` に `plugin.json` (プラグイン本体) と `marketplace.json` (`source: "./"` の単一プラグイン marketplace) を置いてある。
 
 ```
 /plugin marketplace add ikeyan/agent-files
