@@ -22,6 +22,10 @@ DEVELOPERS・pull_request_template を読み、最後にプロジェクトの
 このスキルは次を行う。
 
 1. リポジトリを fork する
-2. README / CONTRIBUTING / DEVELOPERS / pull_request_template を読む
+2. 以下を読む:
+   - README
+   - CONTRIBUTING
+   - DEVELOPERS
+   - pull_request_template
 3. プロジェクトのガイドラインに沿った PR を起草する
 ```
