@@ -9,7 +9,7 @@ esac
 
 if ! command -v podman >/dev/null 2>&1; then
   apt-get update
-  apt-get install -y podman uidmap slirp4netns fuse-overlayfs
+  apt-get install -y podman podman-docker uidmap slirp4netns fuse-overlayfs
 fi
 
 compose=/usr/local/bin/docker-compose
