@@ -10,7 +10,16 @@ esac
 if ! command -v docker >/dev/null 2>&1; then
   apt-get update
   apt-get install -y podman podman-docker uidmap slirp4netns fuse-overlayfs
+fi
 
+plugin=/usr/local/lib/docker/cli-plugins/docker-compose
+if [[ ! -x "$plugin" ]]; then
+  mkdir -p "$(dirname "$plugin")"
+  curl -fsSL --retry 3 "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$arch" -o "$plugin"
+  chmod +x "$plugin"
+fi
+
+if command -v podman >/dev/null 2>&1; then
   mkdir -p /etc/containers/registries.conf.d
   cat >/etc/containers/registries.conf.d/000-docker-io.conf <<'CONF'
 unqualified-search-registries = ["docker.io"]
@@ -22,13 +31,6 @@ CONF
 [engine]
 compose_providers = ["/usr/local/lib/docker/cli-plugins/docker-compose"]
 CONF
-fi
-
-plugin=/usr/local/lib/docker/cli-plugins/docker-compose
-if [[ ! -x "$plugin" ]]; then
-  mkdir -p "$(dirname "$plugin")"
-  curl -fsSL --retry 3 "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$arch" -o "$plugin"
-  chmod +x "$plugin"
 fi
 
 if [[ -f .setup-sandbox.sh ]]; then
