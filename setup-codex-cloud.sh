@@ -16,6 +16,12 @@ if ! command -v docker >/dev/null 2>&1; then
 unqualified-search-registries = ["docker.io"]
 short-name-mode = "permissive"
 CONF
+
+  mkdir -p /etc/containers/containers.conf.d
+  cat >/etc/containers/containers.conf.d/000-compose.conf <<'CONF'
+[engine]
+compose_providers = ["/usr/local/lib/docker/cli-plugins/docker-compose"]
+CONF
 fi
 
 plugin=/usr/local/lib/docker/cli-plugins/docker-compose
