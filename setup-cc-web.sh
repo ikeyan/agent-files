@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 touch /root/setup.log
 git clone --depth=1 https://github.com/ikeyan/agent-files.git /root/agent-files > /root/setup.log 2>&1
 mv /root/.claude/skills/* /root/agent-files/skills/
