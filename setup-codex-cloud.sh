@@ -10,17 +10,19 @@ esac
 if ! command -v docker >/dev/null 2>&1; then
   apt-get update
   apt-get install -y podman podman-docker uidmap slirp4netns fuse-overlayfs
-fi
 
-compose=/usr/local/bin/docker-compose
-curl -fsSL --retry 3 "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$arch" -o "$compose"
-chmod +x "$compose"
-
-mkdir -p /etc/containers/registries.conf.d
-cat >/etc/containers/registries.conf.d/000-docker-io.conf <<'CONF'
+  mkdir -p /etc/containers/registries.conf.d
+  cat >/etc/containers/registries.conf.d/000-docker-io.conf <<'CONF'
 unqualified-search-registries = ["docker.io"]
 short-name-mode = "permissive"
 CONF
+fi
+
+if ! command -v docker-compose >/dev/null 2>&1; then
+  compose=/usr/local/bin/docker-compose
+  curl -fsSL --retry 3 "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$arch" -o "$compose"
+  chmod +x "$compose"
+fi
 
 if [[ -f .setup-sandbox.sh ]]; then
   /bin/bash .setup-sandbox.sh
