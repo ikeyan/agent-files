@@ -16,6 +16,12 @@ compose=/usr/local/bin/docker-compose
 curl -fsSL --retry 3 "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$arch" -o "$compose"
 chmod +x "$compose"
 
+mkdir -p /etc/containers/registries.conf.d
+cat >/etc/containers/registries.conf.d/000-docker-io.conf <<'CONF'
+unqualified-search-registries = ["docker.io"]
+short-name-mode = "permissive"
+CONF
+
 if [[ -f .setup-sandbox.sh ]]; then
   /bin/bash .setup-sandbox.sh
 elif [[ -f package-lock.json ]]; then
