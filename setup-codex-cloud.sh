@@ -23,7 +23,6 @@ if [[ ! -x "$plugin" ]]; then
   mkdir -p "$(dirname "$plugin")"
   curl -fsSL --retry 3 "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$arch" -o "$plugin"
   chmod +x "$plugin"
-  ln -sf "$plugin" /usr/local/bin/docker-compose
 fi
 
 if [[ -f .setup-sandbox.sh ]]; then
