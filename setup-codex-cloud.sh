@@ -7,7 +7,7 @@ case "$arch" in
   *) echo "unsupported arch: $arch" >&2; exit 1 ;;
 esac
 
-if ! command -v podman >/dev/null 2>&1; then
+if ! command -v docker >/dev/null 2>&1; then
   apt-get update
   apt-get install -y podman podman-docker uidmap slirp4netns fuse-overlayfs
 fi
