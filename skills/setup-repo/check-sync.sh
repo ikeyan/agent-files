@@ -1,7 +1,7 @@
 #!/bin/bash
 # 使い方: check-sync.sh [--warn] <file>...
 # 各 file を frontmatter の `source:` (GitHub blob URL) の内容と比較し、drift があれば diff を表示して exit 1。
-# --warn: drift しても exit 0 (PR の CI 用)。
+# --warn: drift は警告に留めて exit 0 (PR の CI 用)。source: 欠落・取得失敗は --warn でも exit 1。
 set -euo pipefail
 
 warn=0
@@ -10,25 +10,37 @@ if [[ "${1:-}" == "--warn" ]]; then
   shift
 fi
 
-status=0
+tmp=$(mktemp)
+trap 'rm -f "$tmp"' EXIT
+
+error=0
+drift=0
 for f in "$@"; do
   src=$(sed -n 's/^source: //p' "$f" | head -1)
   if [[ -z "$src" ]]; then
     echo "$f: frontmatter に source: が無い" >&2
-    status=1
+    error=1
     continue
   fi
   raw=${src/github.com/raw.githubusercontent.com}
   raw=${raw/\/blob\///}
-  if diff -u <(curl -fsSL "$raw") "$f"; then
+  if ! curl -fsSL "$raw" -o "$tmp"; then
+    echo "$f: source の取得に失敗 ($raw)" >&2
+    error=1
+    continue
+  fi
+  if diff -u "$tmp" "$f"; then
     echo "$f: OK"
   else
     echo "$f: source と drift しています ($src)" >&2
-    status=1
+    drift=1
   fi
 done
 
-if [[ $warn -eq 1 ]]; then
-  exit 0
+if [[ $error -eq 1 ]]; then
+  exit 1
 fi
-exit $status
+if [[ $drift -eq 1 && $warn -eq 0 ]]; then
+  exit 1
+fi
+exit 0
