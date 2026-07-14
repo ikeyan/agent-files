@@ -47,11 +47,17 @@ description: Use when creating a new repository, bringing an existing repository
 
 ## 3. 検証
 
-- REVIEW.md を ikeyan/agent-files からコピーする。同期の検証はこの skill の `check-sync.sh` を使う (frontmatter の `source:` と比較する)。
+- REVIEW.md を ikeyan/agent-files からコピーする。
 - フォーマッター・リンター・静的解析器を入れる (oxfmt, oxlint, typescript 等、言語や目的に応じて)。
 - テストの仕組みを用意する (外部依存の挙動も内部ロジックも)。property testing・table driven test を活用する。
-- 単一検証コマンドを用意する (AGENTS.md 設計指針)。上記すべてと `check-sync.sh REVIEW.md` を 1 つの入口に集約する。
-  - ただし PR の CI では `check-sync.sh --warn` とし、別リポとの同期 drift という PR と無関係なエラーで CI を落とさない。
+- 単一検証コマンドを用意する (AGENTS.md 設計指針)。上記すべてと REVIEW.md の同期チェックを 1 つの入口に集約する。
+  - 同期チェックはこの skill の `check-sync.sh` (frontmatter の `source:` と比較する)。対象リポにはコピーせず、curl で実行する (Claude の plugin cache が無い CI でも動く):
+
+    ```sh
+    curl -fsSL https://raw.githubusercontent.com/ikeyan/agent-files/main/skills/setup-repo/check-sync.sh | bash -s -- REVIEW.md
+    ```
+
+  - ただし PR の CI では `bash -s -- --warn REVIEW.md` とし、別リポとの同期 drift という PR と無関係なエラーで CI を落とさない。
 
 ## 4. 検証済み事実台帳
 
