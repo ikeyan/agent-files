@@ -1,6 +1,6 @@
 ---
 name: setup-repo
-description: Set up or audit a repository against the standard architecture, including Claude plugin settings, AGENTS.md/CLAUDE.md, supply-chain hardening, REVIEW.md sync, a single verification command, the verified-facts ledger, and CI. Use when creating a new repository or bringing an existing one up to standard.
+description: Use when creating a new repository, bringing an existing repository up to the standard architecture, or auditing a repository's setup against it.
 ---
 
 # リポジトリ標準アーキテクチャ
@@ -9,7 +9,7 @@ description: Set up or audit a repository against the standard architecture, inc
 
 ## 1. Claude 設定
 
-- `.claude/settings.json` で ikeyan marketplace とスキル plugin を宣言する (cc-web ではセッション開始時に自動インストールされる):
+- `.claude/settings.json` で ikeyan marketplace とスキル plugin を宣言する:
 
 ```json
 {
@@ -21,6 +21,7 @@ description: Set up or audit a repository against the standard architecture, inc
 ```
 
 - optional: お気に入りスキルを `enabledPlugins` に足すことをユーザーにおすすめする (今のところ `superpowers@claude-plugins-official`)。
+- superpowers を有効にする場合、`.superpowers/` を `.gitignore` に足す (brainstorming がリポ配下に実行時状態を書く)。
 - `AGENTS.md` を用意する (ikeyan/agent-files のものを見本に)。AGENTS.md はリポごとに最適化する対象で、コピーしたまま放置しない。
 - `CLAUDE.md` の内容は `@AGENTS.md` の 1 行のみ。
 
@@ -46,15 +47,15 @@ description: Set up or audit a repository against the standard architecture, inc
 
 ## 3. 検証
 
-- REVIEW.md を ikeyan/agent-files からコピーし、source と比較・更新するコマンドを用意する。
+- REVIEW.md を ikeyan/agent-files からコピーする。同期の検証はこの skill の `check-sync.sh` を使う (frontmatter の `source:` と比較する)。
 - フォーマッター・リンター・静的解析器を入れる (oxfmt, oxlint, typescript 等、言語や目的に応じて)。
 - テストの仕組みを用意する (外部依存の挙動も内部ロジックも)。property testing・table driven test を活用する。
-- 単一検証コマンドを用意する (AGENTS.md 設計指針)。上記すべてと REVIEW.md の同期チェックを 1 つの入口に集約する。
-  - ただし PR の CI では、REVIEW.md のような別リポとの同期チェックの drift は warn に留める (PR と無関係なエラーで CI を落とさない)。
+- 単一検証コマンドを用意する (AGENTS.md 設計指針)。上記すべてと `check-sync.sh REVIEW.md` を 1 つの入口に集約する。
+  - ただし PR の CI では `check-sync.sh --warn` とし、別リポとの同期 drift という PR と無関係なエラーで CI を落とさない。
 
 ## 4. 検証済み事実台帳
 
-- `docs/verified-facts/` を用意する (規約は ikeyan/agent-files の `docs/verified-facts/README.md`)。
+- `docs/verified-facts/` を用意する。規約は ikeyan/agent-files の `docs/verified-facts/README.md` を参照する (コピーせず、トピックファイルだけを置く)。
 
 ## 5. CI
 

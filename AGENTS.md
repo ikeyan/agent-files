@@ -53,4 +53,6 @@ group: sync-${{ github.workflow }}-pr-${{ github.event.pull_request.number }}
 group: sync-${{ github.workflow }}-pr-${{ github.event.pull_request.number }}
 ```
 
-@rules/markdown.md
+## 文書 (Markdown) の書き方
+
+REVIEW.md の「自然言語の書き方」に従う。
