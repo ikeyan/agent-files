@@ -5,4 +5,5 @@ api.jsr.io
 npm.jsr.io
 production.cloudfront.docker.com
 ikeyan.github.io
+pkg-containers.githubusercontent.com
 deb.debian.org

@@ -1,6 +1,6 @@
 # agent-files
 skills, AGENTS.md等のファイル置き場。
-skills は、 claude code on the web では環境起動時にコピーされ、他のclaude codeでは .claude/skills からsymlink等で参照される。
+skills は Claude plugin としてインストールして参照する (下記)。
 
 `rules/` は AGENTS.md / CLAUDE.md から `@rules/...` で取り込む共有ルール置き場で、他のリポジトリからも同じファイルを参照する想定。
 
@@ -16,5 +16,5 @@ skills は、 claude code on the web では環境起動時にコピーされ、�
 
 セッション中にインストールした場合、`/reload-plugins` を実行するまでスキルは読み込まれない。
 
-インストールするとスキルは `/ikeyan-skills:<name>` で名前空間付き呼び出しになる。web の `setup-cc-web.sh` symlink とプラグインインストールは別チャネルなので、同一環境で両方有効にするとスキルが二重 (素の名前と名前空間付き) で読み込まれる。
+インストールするとスキルは `/ikeyan-skills:<name>` で名前空間付き呼び出しになる。
 
