@@ -1,4 +1,4 @@
-# クラウド環境のネットワークアクセスの許可されたドメインリスト
+# https://code.claude.com/docs/en/claude-code-on-the-web#default-allowed-domains に対する追加分
 
 jsr.io
 api.jsr.io

@@ -4,6 +4,8 @@ skills は Claude plugin としてインストールして参照する (下記)�
 
 `rules/` は AGENTS.md / CLAUDE.md から `@rules/...` で取り込む共有ルール置き場で、他のリポジトリからも同じファイルを参照する想定。
 
+`docs/verified-facts/` は外部ツールの確定仕様を出典つきで固定する台帳 (規約は同ディレクトリの README)。REVIEW.md が根拠の置き場として参照するため、各リポジトリに必要。
+
 ## Claude plugin として使う
 
 このリポは Claude Code プラグインも兼ねる。`.claude-plugin/` に `plugin.json` (プラグイン本体) と `marketplace.json` (`source: "./"` の単一プラグイン marketplace) を置いてある。
