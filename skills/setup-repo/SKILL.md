@@ -16,7 +16,7 @@ description: Set up or audit a repository against the standard architecture, inc
   "extraKnownMarketplaces": {
     "ikeyan": { "source": { "source": "github", "repo": "ikeyan/agent-files" } }
   },
-  "enabledPlugins": ["ikeyan-skills@ikeyan"]
+  "enabledPlugins": { "ikeyan-skills@ikeyan": true }
 }
 ```
 
