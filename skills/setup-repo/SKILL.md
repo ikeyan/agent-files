@@ -51,13 +51,13 @@ description: Use when creating a new repository, bringing an existing repository
 - フォーマッター・リンター・静的解析器を入れる (oxfmt, oxlint, typescript 等、言語や目的に応じて)。
 - テストの仕組みを用意する (外部依存の挙動も内部ロジックも)。property testing・table driven test を活用する。
 - 単一検証コマンドを用意する (AGENTS.md 設計指針)。上記すべてと REVIEW.md の同期チェックを 1 つの入口に集約する。
-  - 同期チェックはこの skill の `check-sync.sh` (frontmatter の `source:` と比較する)。対象リポにはコピーせず、curl で実行する (Claude の plugin cache が無い CI でも動く):
+  - 同期チェックはこの skill の `check-sync.sh` (frontmatter の `source:` と比較する)。対象リポにはコピーせず、curl で実行する (Claude の plugin cache が無い CI でも動く)。パイプだと curl 失敗が exit 0 で隠れるため `-o` + `&&` で連結する:
 
     ```sh
-    curl -fsSL https://raw.githubusercontent.com/ikeyan/agent-files/main/skills/setup-repo/check-sync.sh | bash -s -- REVIEW.md
+    curl -fsSL https://raw.githubusercontent.com/ikeyan/agent-files/main/skills/setup-repo/check-sync.sh -o /tmp/check-sync.sh && bash /tmp/check-sync.sh REVIEW.md
     ```
 
-  - ただし PR の CI では `bash -s -- --warn REVIEW.md` とし、別リポとの同期 drift という PR と無関係なエラーで CI を落とさない。
+  - ただし PR の CI では `--warn` を付け、別リポとの同期 drift という PR と無関係なエラーで CI を落とさない。
 
 ## 4. 検証済み事実台帳
 
