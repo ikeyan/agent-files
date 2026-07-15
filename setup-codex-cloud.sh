@@ -35,14 +35,14 @@ compose_providers = ["/usr/local/lib/docker/cli-plugins/docker-compose"]
 CONF
 
   # docker(shim) 自体はローカル実行で API socket 不要だが、compose provider と testcontainers は socket に接続する (docs/verified-facts/podman.md)
-  api_ready() { curl -fsS --unix-socket /run/podman/podman.sock http://d/_ping >/dev/null 2>&1; }
-  if ! api_ready; then
+  docker_api_ready() { curl -fsS --unix-socket /var/run/docker.sock http://d/_ping >/dev/null 2>&1; }
+  if ! docker_api_ready; then
     rm -f /run/podman/podman.sock
     (podman system service --time=0 >/dev/null 2>&1 &)
-    for _ in {1..50}; do api_ready && break; sleep 0.1; done
-    api_ready
+    ln -sf /run/podman/podman.sock /var/run/docker.sock
+    for _ in {1..50}; do docker_api_ready && break; sleep 0.1; done
+    docker_api_ready
   fi
-  ln -sf /run/podman/podman.sock /var/run/docker.sock
 fi
 
 if [[ -f .setup-sandbox.sh ]]; then
