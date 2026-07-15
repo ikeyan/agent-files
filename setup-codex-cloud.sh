@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# codex cloud の setup script と maintenance script 両方の欄から呼ぶ (両方に置く理由: docs/verified-facts/codex-cloud.md):
+# codex cloud の setup script 欄から呼ぶ:
 # curl -fsSL https://raw.githubusercontent.com/ikeyan/agent-files/main/setup-codex-cloud.sh -o /tmp/setup-codex-cloud.sh && bash /tmp/setup-codex-cloud.sh
+# FIXME: 現状 codex cloud はコンテナキャッシュを再利用せず毎タスク setup が走る (docs/verified-facts/codex-cloud.md)。
+# 修復されたら maintenance script の要否を再検討する (キャッシュ再開時に service プロセスが残るかは未検証)
 set -euo pipefail
 
 arch=$(uname -m)
@@ -34,14 +36,14 @@ CONF
 compose_providers = ["/usr/local/lib/docker/cli-plugins/docker-compose"]
 CONF
 
-  # docker(shim) 自体はローカル実行で API socket 不要だが、compose provider と testcontainers は socket に接続する (docs/verified-facts/podman.md)
-  docker_api_ready() { curl -fsS --unix-socket /var/run/docker.sock http://d/_ping >/dev/null 2>&1; }
+  # docker(shim) は API socket 不要で動くが compose provider は socket に接続する (docs/verified-facts/podman.md)
+  docker_api_ready() { curl -fsS --max-time 2 --unix-socket /var/run/docker.sock http://d/_ping >/dev/null 2>&1; }
   if ! docker_api_ready; then
-    rm -f /run/podman/podman.sock
-    (podman system service --time=0 >/dev/null 2>&1 &)
+    # setsid: setup セッション終了時の道連れ kill を避ける
+    (setsid podman system service --time=0 >/tmp/podman-service.log 2>&1 &)
     ln -sf /run/podman/podman.sock /var/run/docker.sock
-    for _ in {1..50}; do docker_api_ready && break; sleep 0.1; done
-    docker_api_ready
+    for _ in {1..150}; do docker_api_ready && break; sleep 0.1; done
+    docker_api_ready || { echo "podman system service not ready:" >&2; tail /tmp/podman-service.log >&2; }
   fi
 fi
 
