@@ -38,7 +38,7 @@ description: Use when creating a new repository, bringing an existing repository
 - インストール時にスキャンする。いずれか:
   - ラッパー方式の [sfw](https://github.com/SocketDev/sfw-free) (多くのパッケージマネージャーに対応)
   - bun なら `install.security.scanner`
-- インストール作業自体は install-deps skill で行う (インストール直前の新着パッケージ audit)。閾値等が本節と重ならないよう、audit の仕様は install-deps 側を正とする。
+- インストール作業は install-deps skill で行う。上記の常設スキャン設定とは独立の、インストール直前の新着パッケージ audit の層で、audit の仕様は install-deps 側を正とする。
 - Dependabot 等でバージョン更新を管理する
 - 例外: 供給元が中央集権的に品質管理されている (apt (not PPA) 等)、または ikeyan/agent-files 自身 (本標準の trust root) の場合、リスクが緩和されていると判断するなら unpinned でもよい
 

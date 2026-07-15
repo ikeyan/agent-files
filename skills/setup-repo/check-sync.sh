@@ -20,7 +20,12 @@ trap 'rm -f "$tmp"' EXIT
 error=0
 drift=0
 for f in "$@"; do
-  src=$(sed -n 's/^source: //p' "$f" | head -1)
+  if [[ ! -r "$f" ]]; then
+    echo "$f: 読めない" >&2
+    error=1
+    continue
+  fi
+  src=$(sed -n '/^source: /{s///p;q}' "$f")
   if [[ -z "$src" ]]; then
     echo "$f: frontmatter に source: が無い" >&2
     error=1
@@ -28,7 +33,7 @@ for f in "$@"; do
   fi
   raw=${src/github.com/raw.githubusercontent.com}
   raw=${raw/\/blob\///}
-  if ! curl -fsSL --connect-timeout 10 --max-time 60 --retry 2 "$raw" -o "$tmp"; then
+  if ! curl -fsSL --connect-timeout 10 --max-time 60 --retry 2 --retry-connrefused "$raw" -o "$tmp"; then
     echo "$f: source の取得に失敗 ($raw)" >&2
     error=1
     continue
