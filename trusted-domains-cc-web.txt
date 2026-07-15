@@ -1,0 +1,9 @@
+# https://code.claude.com/docs/en/claude-code-on-the-web#default-allowed-domains に対する追加分
+
+jsr.io
+api.jsr.io
+npm.jsr.io
+production.cloudfront.docker.com
+ikeyan.github.io
+pkg-containers.githubusercontent.com
+deb.debian.org

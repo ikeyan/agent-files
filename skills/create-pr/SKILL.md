@@ -116,6 +116,11 @@ If no template exists, use this default structure:
 <how the changes were tested>
 ```
 
+Before submitting, review the description against the diff:
+
+- **Prose and diff must agree.** If the description claims "does X in the same-account case" but the code does X unconditionally, one of them is wrong — decide which, and fix both so no visible mismatch remains. Fixing only the prose leaves a tell.
+- **Verify embedded code blocks render as intended on GitHub.** Backslashes inside a heredoc and similar escapes can survive into the rendered Markdown; check the preview, not just the source.
+
 ### 9. Post-creation
 
 After the PR is created:

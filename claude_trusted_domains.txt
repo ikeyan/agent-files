@@ -1,8 +1,0 @@
-# クラウド環境のネットワークアクセスの許可されたドメインリスト
-
-jsr.io
-api.jsr.io
-npm.jsr.io
-production.cloudfront.docker.com
-ikeyan.github.io
-deb.debian.org

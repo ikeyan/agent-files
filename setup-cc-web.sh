@@ -1,9 +1,7 @@
 #!/bin/bash
+# cc-web の環境セットアップスクリプト欄から呼ぶ:
+# curl -fsSL https://raw.githubusercontent.com/ikeyan/agent-files/main/setup-cc-web.sh -o /tmp/setup-cc-web.sh && bash /tmp/setup-cc-web.sh
 set -euo pipefail
-git clone --depth=1 https://github.com/ikeyan/agent-files.git /root/agent-files > /root/setup.log 2>&1
-cp -rn /root/.claude/skills/. /root/agent-files/skills/
-rm -rf /root/.claude/skills
-ln -s /root/agent-files/skills /root/.claude/skills
 
 if [[ -f .setup-sandbox.sh ]]; then
   /bin/bash .setup-sandbox.sh
