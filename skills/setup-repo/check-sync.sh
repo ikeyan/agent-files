@@ -9,6 +9,10 @@ if [[ "${1:-}" == "--warn" ]]; then
   warn=1
   shift
 fi
+if [[ $# -eq 0 ]]; then
+  echo "使い方: check-sync.sh [--warn] <file>..." >&2
+  exit 1
+fi
 
 tmp=$(mktemp)
 trap 'rm -f "$tmp"' EXIT
@@ -24,7 +28,7 @@ for f in "$@"; do
   fi
   raw=${src/github.com/raw.githubusercontent.com}
   raw=${raw/\/blob\///}
-  if ! curl -fsSL "$raw" -o "$tmp"; then
+  if ! curl -fsSL --connect-timeout 10 --max-time 60 --retry 2 "$raw" -o "$tmp"; then
     echo "$f: source の取得に失敗 ($raw)" >&2
     error=1
     continue

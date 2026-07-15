@@ -21,7 +21,7 @@ description: Use when creating a new repository, bringing an existing repository
 ```
 
 - optional: お気に入りスキルを `enabledPlugins` に足すことをユーザーにおすすめする (今のところ `superpowers@claude-plugins-official`)。
-- superpowers を有効にする場合、`.superpowers/` を `.gitignore` に足す (brainstorming がリポ配下に実行時状態を書く)。
+- superpowers を有効にする場合、`.superpowers/` を `.gitignore` に足す。
 - `AGENTS.md` を用意する (ikeyan/agent-files のものを見本に)。AGENTS.md はリポごとに最適化する対象で、コピーしたまま放置しない。
 - `CLAUDE.md` の内容は `@AGENTS.md` の 1 行のみ。
 
@@ -38,8 +38,9 @@ description: Use when creating a new repository, bringing an existing repository
 - インストール時にスキャンする。いずれか:
   - ラッパー方式の [sfw](https://github.com/SocketDev/sfw-free) (多くのパッケージマネージャーに対応)
   - bun なら `install.security.scanner`
+- インストール作業自体は install-deps skill で行う (インストール直前の新着パッケージ audit)。閾値等が本節と重ならないよう、audit の仕様は install-deps 側を正とする。
 - Dependabot 等でバージョン更新を管理する
-- 例外: apt (not PPA) のように中央集権的に品質管理されている供給元は、リスクが緩和されていると判断するなら unpinned でもよい
+- 例外: 供給元が中央集権的に品質管理されている (apt (not PPA) 等)、または ikeyan/agent-files 自身 (本標準の trust root) の場合、リスクが緩和されていると判断するなら unpinned でもよい
 
 ### セキュリティモデル
 
@@ -51,7 +52,7 @@ description: Use when creating a new repository, bringing an existing repository
 - フォーマッター・リンター・静的解析器を入れる (oxfmt, oxlint, typescript 等、言語や目的に応じて)。
 - テストの仕組みを用意する (外部依存の挙動も内部ロジックも)。property testing・table driven test を活用する。
 - 単一検証コマンドを用意する (AGENTS.md 設計指針)。上記すべてと REVIEW.md の同期チェックを 1 つの入口に集約する。
-  - 同期チェックはこの skill の `check-sync.sh` (frontmatter の `source:` と比較する)。対象リポにはコピーせず、curl で実行する (Claude の plugin cache が無い CI でも動く)。パイプだと curl 失敗が exit 0 で隠れるため `-o` + `&&` で連結する:
+  - 同期チェックはこの skill の `check-sync.sh` (frontmatter の `source:` と比較する)。対象リポにはコピーせず、curl で実行する (unpinned はセキュリティ節の trust root 例外):
 
     ```sh
     curl -fsSL https://raw.githubusercontent.com/ikeyan/agent-files/main/skills/setup-repo/check-sync.sh -o /tmp/check-sync.sh && bash /tmp/check-sync.sh REVIEW.md
