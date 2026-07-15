@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# codex cloud の setup script と maintenance script 両方の欄から呼ぶ (両方に置く理由: docs/verified-facts/codex-cloud.md):
+# curl -fsSL https://raw.githubusercontent.com/ikeyan/agent-files/main/setup-codex-cloud.sh -o /tmp/setup-codex-cloud.sh && bash /tmp/setup-codex-cloud.sh
 set -euo pipefail
 
 arch=$(uname -m)
@@ -31,6 +33,16 @@ CONF
 [engine]
 compose_providers = ["/usr/local/lib/docker/cli-plugins/docker-compose"]
 CONF
+
+  # docker(shim) 自体はローカル実行で API socket 不要だが、compose provider と testcontainers は socket に接続する (docs/verified-facts/podman.md)
+  api_ready() { curl -fsS --unix-socket /run/podman/podman.sock http://d/_ping >/dev/null 2>&1; }
+  if ! api_ready; then
+    rm -f /run/podman/podman.sock
+    (podman system service --time=0 >/dev/null 2>&1 &)
+    for _ in {1..50}; do api_ready && break; sleep 0.1; done
+    api_ready
+  fi
+  ln -sf /run/podman/podman.sock /var/run/docker.sock
 fi
 
 if [[ -f .setup-sandbox.sh ]]; then

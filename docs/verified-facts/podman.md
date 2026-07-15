@@ -1,0 +1,8 @@
+# Podman
+
+- podman-docker の `docker` は `exec podman "$@"` する薄い shim。`[empirical]` containers/podman `docker/docker.in` (2026-07-15 確認)
+- podman が remote モード (API socket に接続) になるのは `CONTAINER_HOST`/`CONTAINER_CONNECTION` 環境変数と `--remote`/`--connection`/`--url`/`--host`/`--context` フラグのみ。`DOCKER_HOST` では remote にならないため、shim 経由の `docker info` は API service 不在でも成功する (readiness check には使えない)。`[empirical]` containers/podman `cmd/podman/registry/remote.go` `IsRemote()` + 実機で `DOCKER_HOST` を dead socket に向けて exit 0 を確認 (2026-07-15)
+- `podman compose` は外部 provider (docker-compose 等) を `DOCKER_HOST` 付きで exec する。`DOCKER_HOST` 未設定時は default API address に自動フォールバックするため、default address で service を立てれば環境変数の伝搬は不要。`[empirical]` containers/podman `cmd/podman/compose.go` `composeDockerHost()` (2026-07-15 確認)
+- rootful の default API address は `unix:///run/podman/podman.sock`。引数なしの `podman system service` はそこに bind し、`--time=0` で無期限に待ち受ける。`[man]` https://docs.podman.io/en/latest/markdown/podman-system-service.1.html + containers/podman `cmd/podman/registry/registry.go` `DefaultRootAPIAddress` (2026-07-15 確認)
+- podman-docker は systemd 環境では tmpfiles.d で `/run/docker.sock → /run/podman/podman.sock` の symlink を張る。systemd の無いコンテナ内では socket activation とこの symlink が両方欠けるため、service 起動と symlink を手動で補う。`[empirical]` containers/podman `contrib/systemd/system/podman-docker.conf` (2026-07-15 確認)
+- rootless の runtime dir は `XDG_RUNTIME_DIR` 未設定かつ `/run/user/$UID` 不在だと `/tmp/storage-run-$UID` に解決される。socket パスは手計算せず podman 自身の既定解決 (`podman info --format '{{.Host.RemoteSocket.Path}}'`) に任せる。`[empirical]` cc-web sandbox で確認 (2026-07-15)
