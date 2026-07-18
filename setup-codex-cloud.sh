@@ -43,8 +43,11 @@ CONF
     # chroot isolation: proc を mount できない sandbox では OCI isolation の build RUN が EPERM になる (docs/verified-facts/codex-cloud.md, podman.md)
     (BUILDAH_ISOLATION=chroot setsid podman system service --time=0 >/tmp/podman-service.log 2>&1 &)
     ln -sf /run/podman/podman.sock /var/run/docker.sock
-    for _ in {1..150}; do docker_api_ready && break; sleep 0.1; done
-    docker_api_ready || { echo "podman system service not ready:" >&2; tail /tmp/podman-service.log >&2; }
+    export -f docker_api_ready
+    if ! timeout 1m bash -c 'until docker_api_ready; do sleep 0.1; done'; then
+      echo "podman system service not ready:" >&2
+      tail /tmp/podman-service.log >&2
+    fi
   fi
 fi
 
