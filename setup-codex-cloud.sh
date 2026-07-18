@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# codex cloud の setup script 欄から呼ぶ:
+# curl -fsSL https://raw.githubusercontent.com/ikeyan/agent-files/main/setup-codex-cloud.sh -o /tmp/setup-codex-cloud.sh && bash /tmp/setup-codex-cloud.sh
+# FIXME: 現状 codex cloud はコンテナキャッシュを再利用せず毎タスク setup が走る (docs/verified-facts/codex-cloud.md)。
+# 修復されたら maintenance script の要否を再検討する (キャッシュ再開時に service プロセスが残るかは未検証)
 set -euo pipefail
 
 arch=$(uname -m)
@@ -31,6 +35,20 @@ CONF
 [engine]
 compose_providers = ["/usr/local/lib/docker/cli-plugins/docker-compose"]
 CONF
+
+  # docker(shim) は API socket 不要で動くが compose provider は socket に接続する (docs/verified-facts/podman.md)
+  docker_api_ready() { curl -fsS --max-time 2 --unix-socket /var/run/docker.sock http://d/_ping >/dev/null 2>&1; }
+  if ! docker_api_ready; then
+    # setsid: setup セッション終了時の道連れ kill を避ける
+    # chroot isolation: proc を mount できない sandbox では OCI isolation の build RUN が EPERM になる (docs/verified-facts/codex-cloud.md, podman.md)
+    (BUILDAH_ISOLATION=chroot setsid podman system service --time=0 >/tmp/podman-service.log 2>&1 &)
+    ln -sf /run/podman/podman.sock /var/run/docker.sock
+    export -f docker_api_ready
+    if ! timeout 1m bash -c 'until docker_api_ready; do sleep 0.1; done'; then
+      echo "podman system service not ready:" >&2
+      tail /tmp/podman-service.log >&2
+    fi
+  fi
 fi
 
 if [[ -f .setup-sandbox.sh ]]; then
