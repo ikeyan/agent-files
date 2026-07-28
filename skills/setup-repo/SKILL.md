@@ -52,13 +52,14 @@ description: Use when creating a new repository, bringing an existing repository
 - フォーマッター・リンター・静的解析器を入れる (oxfmt, oxlint, typescript 等、言語や目的に応じて)。
 - テストの仕組みを用意する (外部依存の挙動も内部ロジックも)。property testing・table driven test を活用する。
 - 単一検証コマンドを用意する (AGENTS.md 設計指針)。上記すべてと REVIEW.md の同期チェックを 1 つの入口に集約する。
-  - 同期チェックはこの skill の `check-sync.sh` (frontmatter の `source:` と比較する)。対象リポにはコピーせず、curl で実行する (unpinned はセキュリティ節の trust root 例外):
+  - 同期チェックは frontmatter の `source:` (raw URL) を取得して diff する:
 
     ```sh
-    curl -fsSL https://raw.githubusercontent.com/ikeyan/agent-files/main/skills/setup-repo/check-sync.sh -o /tmp/check-sync.sh && bash /tmp/check-sync.sh REVIEW.md
+    (f=$(mktemp -p "${TMPDIR:-/tmp}"); trap 'rm -f "$f"' EXIT; curl -fsSL --connect-timeout 10 --max-time 60 --retry 2 --retry-connrefused "$(sed -n '/^source: /{s///p;q;}' REVIEW.md)" -o "$f" && { diff -u "$f" REVIEW.md || { [ -n "$WARN" ] && echo 'REVIEW.md: 上流と違う'; }; })
     ```
 
-  - ただし PR の CI では `--warn` を付け、別リポとの同期 drift という PR と無関係なエラーで CI を落とさない。
+  - PR の CI では `WARN=1` を渡して drift を警告に留め、別リポとの同期 drift という PR と無関係なエラーで CI を落とさない。取得失敗と `source:` 欠落は `WARN` によらず落とす。
+  - スニペットの各要素は省くと壊れる。`( )`・`mktemp -p`・`{ }`・`q;` の根拠は [docs/verified-facts/shell.md](../../docs/verified-facts/shell.md)。`curl` のフラグは検証入口の待ち時間を有界にし、一過性の失敗で落ちないようにする。
 
 ## 4. 検証済み事実台帳
 
