@@ -55,11 +55,11 @@ description: Use when creating a new repository, bringing an existing repository
   - 同期チェックは frontmatter の `source:` (raw URL) を取得して diff する。外部スクリプトを取得して実行しない — 単一検証コマンドは変更のたびに走るため、リモートコードの実行を本標準で最も高頻度な経路に置くことになり、セキュリティ節のサプライチェーン対策と矛盾する:
 
     ```sh
-    f=$(mktemp -p "${TMPDIR:-/tmp}"); trap 'rm -f "$f"' EXIT; curl -fsSL "$(sed -n '/^source: /{s///p;q;}' REVIEW.md)" -o "$f" && { diff -u "$f" REVIEW.md || { [ -n "$WARN" ] && echo 'REVIEW.md が source と drift しています'; }; }
+    (f=$(mktemp -p "${TMPDIR:-/tmp}"); trap 'rm -f "$f"' EXIT; curl -fsSL --connect-timeout 10 --max-time 60 --retry 2 --retry-connrefused "$(sed -n '/^source: /{s///p;q;}' REVIEW.md)" -o "$f" && { diff -u "$f" REVIEW.md || { [ -n "$WARN" ] && echo 'REVIEW.md が source と drift しています'; }; })
     ```
 
   - PR の CI では `WARN=1` を渡して drift を警告に留め、別リポとの同期 drift という PR と無関係なエラーで CI を落とさない。取得失敗と `source:` 欠落は `WARN` によらず落とす (ネットワークの不調が黙って通ると同期チェックが形骸化する)。
-  - スニペットの `mktemp -p`・`{ }`・`q;` はいずれも省くと壊れる。根拠は [docs/verified-facts/shell.md](../../docs/verified-facts/shell.md)。
+  - スニペットの各要素は省くと壊れる。単一検証コマンドの一部として大きなシェルに埋め込まれる前提なので、囲みの `( )` も要る (EXIT trap と `$f` を呼び出し側から隔離する)。`curl` の 4 つのフラグは、必須の検証入口がネットワークの不調で無限に待つ・一過性の 5xx で落ちるのを防ぐ。`mktemp -p`・`{ }`・`q;` の根拠は [docs/verified-facts/shell.md](../../docs/verified-facts/shell.md)。
 
 ## 4. 検証済み事実台帳
 
