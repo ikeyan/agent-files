@@ -43,11 +43,11 @@
 | `-p <dir>` | `<dir>` (`TMPDIR` と食い違うときも `-p` が優先) | 同左 |
 | `mktemp "<dir>/foo.XXXXXX"` | `<dir>` | `<dir>` |
 
-一時ファイルを特定のディレクトリに置きたいなら、`TMPDIR` を設定して `mktemp` に任せるのではなく `-p` で渡す。`-p` は BSD の man にも `mktemp [-d] [-p tmpdir] [-q] [-t prefix] [-u] template ...` として載っており、両実装で使える。
+一時ファイルを特定のディレクトリに置くには `-p` で渡す。`-p` は BSD の man にも `mktemp [-d] [-p tmpdir] [-q] [-t prefix] [-u] template ...` として載っており、両実装で使える。
 
 これは書き込み先を制限したサンドボックス下で問題になる。macOS の Claude Code サンドボックスは `$TMPDIR` を含む限られたパスしか書き込みを許さず、Darwin のユーザ一時ディレクトリはそこに入らないため、引数なしの `mktemp` は `Operation not permitted` で落ちる (実測)。
 
-`mktemp` を使う理由は `TMPDIR` の解決ではなく、**予測可能な固定パスへの書き込みを避けること**にある。共有ホストの `/tmp` に固定名で `curl -o` すると、先に同名の symlink を置かれたときに追従する。
+`mktemp` の効用は予測可能な固定パスへの書き込みを避けること。共有ホストの `/tmp` に固定名で `curl -o` すると、先に同名の symlink を置かれたときに追従する。
 
 ## `trap … EXIT` は呼び出し側の EXIT trap を置き換える
 
