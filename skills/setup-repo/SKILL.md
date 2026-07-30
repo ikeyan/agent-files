@@ -63,7 +63,7 @@ description: Use when creating a new repository, bringing an existing repository
 
 ## 4. 検証済み事実台帳
 
-- `docs/verified-facts/` を用意する。規約は ikeyan/agent-files の `docs/verified-facts/README.md` を参照する (コピーせず、トピックファイルだけを置く)。
+- 外部依存の確定仕様と事故は repo に置かず canon (`ikeyan/canon`) に集める。規約と confidence タグの定義は canon の `_index.md` が正本。判断は [organizing-agent-docs](../organizing-agent-docs/SKILL.md)。
 
 ## 5. CI
 
