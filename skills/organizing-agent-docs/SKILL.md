@@ -20,8 +20,6 @@ description: Use when recording durable knowledge or feedback for future session
 
 canon が手元に無ければ clone する。Claude Code remote でも Claude 自身なら取得できる (add repo → `git clone` → repo root を register)。ただし**環境セットアップスクリプトからは取得できない**ので、canon の取得をそこに書かない。
 
-移行期間中は各 repo に残る `docs/verified-facts/` と `docs/incidents.md` を **read-only** として扱う — 探すときは読むが、書くのは canon だけ。全 repo の移設が済んだらこの段落を消す。
-
 ## 原則
 
 - **単調増加するリストを AGENTS.md に置かない**: ツール列挙・事故ログは肥大を生み、「列挙外は対象外」と誤読させる。抽象化したクラス規律を AGENTS.md に、個々の実例は canon に。

@@ -59,7 +59,12 @@ description: Use when creating a new repository, bringing an existing repository
     ```
 
   - PR の CI では `WARN=1` を渡して drift を警告に留め、別リポとの同期 drift という PR と無関係なエラーで CI を落とさない。取得失敗と `source:` 欠落は `WARN` によらず落とす。
-  - スニペットの各要素は省くと壊れる。`( )`・`mktemp -p`・`{ }`・`q;` の根拠は [docs/verified-facts/shell.md](../../docs/verified-facts/shell.md)。`curl` のフラグは検証入口の待ち時間を有界にし、一過性の失敗で落ちないようにする。
+  - スニペットの各要素は省くと壊れる。根拠 (canon の shell facts):
+    - `( )`: `canon: facts/shell/trap-exit-replaces-callers-handler`
+    - `mktemp -p`: `canon: facts/shell/mktemp-tmpdir-handling-bsd-vs-gnu`
+    - `{ }`: `canon: facts/shell/and-or-list-left-associative`
+    - `q;`: `canon: facts/shell/bsd-sed-block-q-requires-semicolon`
+  - `curl` のフラグは検証入口の待ち時間を有界にし、一過性の失敗で落ちないようにする。
 
 ## 4. 検証済み事実台帳
 

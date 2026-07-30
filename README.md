@@ -2,7 +2,7 @@
 skills, AGENTS.md等のファイル置き場。
 skills は Claude plugin としてインストールして参照する (下記)。
 
-外部依存の確定仕様と事故は repo ごとに持たず canon (`ikeyan/canon`) に集める。`docs/verified-facts/` は移設が済むまで残る read-only の旧台帳 (書くのは canon だけ)。
+外部依存の確定仕様と事故は repo ごとに持たず canon (`ikeyan/canon`) に集める (書くのは canon だけ)。
 
 ## Claude plugin として使う
 
