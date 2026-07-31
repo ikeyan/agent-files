@@ -2,7 +2,7 @@
 skills, AGENTS.md等のファイル置き場。
 skills は Claude plugin としてインストールして参照する (下記)。
 
-`docs/verified-facts/` は外部ツールの確定仕様を出典つきで固定する台帳。REVIEW.md が根拠の置き場として参照するため各リポジトリに必要だが、置くのはトピックファイルだけで、規約 README は本リポのものを参照する。
+外部依存の確定仕様と事故は repo ごとに持たず canon (`ikeyan/canon`) に集める (書くのは canon だけ)。
 
 ## Claude plugin として使う
 
