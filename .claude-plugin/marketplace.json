@@ -1,12 +1,17 @@
 {
   "name": "ikeyan",
   "owner": { "name": "ikeyan" },
-  "description": "ikeyan の Claude Code スキル集を配布する marketplace。",
+  "description": "ikeyan の Claude Code プラグイン配布 marketplace。",
   "plugins": [
     {
       "name": "ikeyan-skills",
       "source": "./",
       "description": "ikeyan の Claude Code スキル集。"
+    },
+    {
+      "name": "codex-cc-bridge",
+      "source": { "source": "github", "repo": "ikeyan/codex-cc-bridge" },
+      "description": "Claude Code から OpenAI Codex を常駐 app-server 経由で使う薄い橋 (Claude sandbox に封じ込め)。"
     }
   ]
 }
