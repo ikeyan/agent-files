@@ -69,7 +69,9 @@ Before making any changes, run **all** of the project's validation commands on t
 
 Identify the exact commands from the documentation read in step 2, or inspect `package.json` scripts / `Makefile` targets / CI workflow files.
 
-**If any check fails on the default branch**, stop and warn the user immediately. Report which checks failed and their output. Do not proceed to implementation until the user decides how to handle it (e.g. skip that check, fix it first, or continue anyway).
+Every required check must be executed. If the current environment cannot run one, give the user the exact command to run locally and wait for them to confirm its result.
+
+**If any check fails on the default branch**, do not classify it as pre-existing from that result alone. Trace the failure to the exact commit and changed line that introduced it, verify that the check passes on the parent and fails on that commit, and confirm that the surrounding history and PRs based on revisions from either side corroborate the boundary: earlier revisions pass, while later revisions either fail or contain a fix. Report this evidence to the user and do not proceed until they decide whether to fix the baseline first or continue with the established pre-existing failure.
 
 ### 5. Create a Feature Branch
 
@@ -85,7 +87,7 @@ e.g. `fix/null-pointer-in-parser`, `feat/add-csv-export`
 
 Make the requested changes, following the coding standards discovered in step 2.
 
-After implementation, re-run **all** CI checks from step 4. Fix any failures before proceeding. If a failure is unrelated to your changes (i.e. it also failed in step 4's baseline), note it in the PR description.
+After implementation, re-run **all** CI checks from step 4, using the same user-assisted local execution when the current environment cannot run one. Fix any failures introduced by the changes before proceeding. Treat a baseline failure as unrelated only when step 4 established its history; if the user chose to continue, include that evidence in the PR description.
 
 ### 7. Commit
 
@@ -112,7 +114,7 @@ If no template exists, use this default structure:
 ## Changes
 <description of what was changed and why>
 
-## Test plan
+## Verification
 <how the changes were tested>
 ```
 
@@ -120,6 +122,11 @@ Before submitting, review the description against the diff:
 
 - **Prose and diff must agree.** If the description claims "does X in the same-account case" but the code does X unconditionally, one of them is wrong — decide which, and fix both so no visible mismatch remains. Fixing only the prose leaves a tell.
 - **Verify embedded code blocks render as intended on GitHub.** Backslashes inside a heredoc and similar escapes can survive into the rendered Markdown; check the preview, not just the source.
+- **State the purpose.** Make the problem and intended outcome clear to the repository's owners and reviewers.
+- **Explain reviewer-relevant constraints.** Include only non-obvious constraints and trade-offs that remain relevant to the final implementation; omit chronological experimentation and discarded alternatives.
+- **Omit details visible in the diff.** Do not narrate file-by-file edits that reviewers can read directly.
+- **Keep agent-local details out of the PR.** Explain environment-specific details to the user instead, unless that environment is itself the subject of the PR.
+- **Report verification, not instructions.** When the procedure is documented in `CONTRIBUTING.md` or similar, list each successful check by its exact executed command without restating the procedure. For an established baseline failure, include the command, result, and the historical evidence from step 4 that identifies its cause.
 
 ### 9. Post-creation
 
