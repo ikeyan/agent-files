@@ -69,6 +69,7 @@ description: Use when creating a new repository, bringing an existing repository
 ## 4. 検証済み事実台帳
 
 - 外部依存の確定仕様と事故は repo に置かず canon (`ikeyan/canon`) に集める。規約と confidence タグの定義は canon の `_index.md` が正本。判断は [organizing-agent-docs](../organizing-agent-docs/SKILL.md)。
+- canon とリポ内の知識ベース (wiki/) の管理ツールは **plasma-wiki** (PyPI) の `wiki` CLI。index と相互リンクは `wiki update` が生成するので手で書かない (`wiki init` で新設、`wiki lint` で検査)。リポが wiki/ を持つなら dev 依存に plasma-wiki を宣言し、`wiki lint` を単一検証コマンドに含める。未インストールなら `uvx --from plasma-wiki wiki ...` で動く。
 
 ## 5. CI
 
