@@ -74,3 +74,24 @@ description: Use when creating a new repository, bringing an existing repository
 ## 5. CI
 
 - CI で単一検証コマンドを回す。
+
+## 6. PR / ブランチ運用
+
+- リポ固有の PR・ブランチ運用を `.claude/skills/pr-workflow/SKILL.md` に書く。description は「ブランチを push する・PR を作る/説明を直す・レビューコメントに対応する・CI を確認する」場面で発火する 1 行にする。
+- 書く内容は下の各項目の**方針**と、それを実行する**手段** (コマンド・ツール名)。方針は既定を採り、リポごとに変えるならユーザーに確認する。手段はそのリポの実環境 (cc-web か local か、`gh` の有無、GitHub MCP の有無) で 1 回実測して通ったものだけを書き、実測できなかった手段は未実測と明記する (AGENTS.md「実行時契約の実測」)。候補:
+  - `gh` がある環境: `gh pr view --comments` (通常コメントと review を混ぜた時系列)、`gh api` (REST)、`gh api graphql`、`gh pr checks --watch --fail-fast`、`gh pr edit`。
+  - cc-web (GitHub MCP): `pull_request_read` (`get_comments` / `get_review_comments` / `get_reviews` / `get_check_runs`)、`add_reply_to_pull_request_comment`、`resolve_review_thread`、`update_pull_request`、`subscribe_pr_activity`。
+
+### 項目と既定
+
+- **ブランチの更新**: 作業ブランチへ `git push -u origin <branch>`。他人のブランチの履歴は書き換えない (base の取り込みは merge)。マージ済み PR のブランチには積まず、既定ブランチから同名で作り直す。
+- **コミットごとに push するか**: しない。push は作業の区切り (レビュー依頼・指示された時点) でまとめる。この方針は pr-workflow skill だけに書き、AGENTS.md に重ねない。
+- **PR の作成**: 頼まれたときだけ作る。テンプレート (`.github/pull_request_template.md` 等) があればそれに従う。
+- **PR の説明**: 試行錯誤抜き。書くのは目的、diff から読めない制約・トレードオフ、実行した検証コマンドとその結果。書かないのは経緯・捨てた代案・diff を読めば分かるファイル単位の説明・エージェント環境固有の事情。本文と diff の主張を一致させる (「同一アカウントの場合だけ X する」と書いて無条件に X するコードにしない)。
+- **コメントの読み方**: 2 種類あり取得経路が違う。
+  - 通常コメント (issue comment、会話タブ): REST `issues/{n}/comments` / MCP `get_comments`。resolve の概念がない。
+  - レビューコメント (review comment、diff 上のスレッド): スレッド単位の `isResolved` / `isOutdated` は GraphQL (`pullRequest.reviewThreads`) にしかなく、REST `pulls/{n}/comments` は個々のコメントの平坦な列で resolved 状態を持たない。MCP `get_review_comments` はスレッド id (`PRRT_…`) と `is_resolved` を返す。approve / request changes の本文は review (`get_reviews`)。
+  - 未対応の指摘 = `isResolved: false` のスレッド全部 (outdated でも)。
+- **Codex Review (chatgpt-codex-connector) の読み方**: push 後まず通常コメント `💡 Codex Review` が投稿され、その本文が進捗ステータスで上書きされ、完了すると review (本文が `💡 Codex Review` で始まり、指摘は review comment のスレッド、指摘なしなら 👍 reaction) が投稿される。通常コメントの段階は完了ではないので review の投稿を待つ。cc-web ではコメントの上書きはイベントとして届かず、review の投稿は届く (cc-web-sandbox-signals)。
+- **コメント対応後**: 対応したスレッドに返信 (対応コミットの SHA と要点。却下なら理由) してから resolve する。返信は REST `pulls/{n}/comments/{id}/replies` / MCP `add_reply_to_pull_request_comment`、resolve は GraphQL `resolveReviewThread(threadId)` / MCP `resolve_review_thread` (REST に resolve は無い)。通常コメントは返信のみ。
+- **cc-web 以外でも PR コメント・CI を watch するか**: しない。cc-web では `subscribe_pr_activity` でイベントが届く (届く種類の制限は cc-web-sandbox-signals)。それ以外の環境では push 後に 1 回 CI 結果を確認して終える。watch するなら手段 (ポーリング間隔・終了条件) を書く。
