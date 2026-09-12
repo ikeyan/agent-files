@@ -1,6 +1,6 @@
 ---
 name: cc-web-sandbox-signals
-description: Cloud/WEB Claude Code sandbox (claude.ai/code) signaling & egress gotchas. NOT the local CLI sandbox — its egress differs (interactive per-host approval, real upstream TLS, no Anthropic MITM CA); for that use cc-cli-sandbox, do not apply these facts there. Use whenever a web/cloud session deals with external notifications, sandbox network egress, or webhook delivery — including CI result notifications ('why didn't Claude see my green CI?'), `subscribe_pr_activity` filter quirks (CI success silent, comment PATCH silent), 'Host not in allowlist' proxy errors, reachability questions for hosts like smee.io / webhook.site / httpbin.org / api.github.com, routing external events into the sandbox via GitHub as a relay, or `Monitor` setup for SSE / WebSocket streams. Trigger even when the skill isn't named — 'CI passed but nothing happened', 'sandbox can't reach X', 'how do I get a webhook into my session', 'upsert status comment silent', 'Anthropic TLS Inspection CA' are strong signals. Covers the event filter, the MITM egress allowlist, the create-then-sweep comment pattern, and Monitor streaming.
+description: Cloud/WEB Claude Code sandbox (claude.ai/code) signaling & egress gotchas. NOT the local CLI sandbox — its egress differs (interactive per-host approval, real upstream TLS, no Anthropic MITM CA); for that use cc-cli-sandbox, do not apply these facts there. Use whenever a web/cloud session deals with external notifications, sandbox network egress, or webhook delivery — including CI result notifications ('why didn't Claude see my green CI?'), `subscribe_pr_activity` filter quirks (CI success silent), 'Host not in allowlist' proxy errors, reachability questions for hosts like smee.io / webhook.site / httpbin.org / api.github.com, routing external events into the sandbox via GitHub as a relay, or `Monitor` setup for SSE / WebSocket streams. Trigger even when the skill isn't named — 'CI passed but nothing happened', 'sandbox can't reach X', 'how do I get a webhook into my session', 'Anthropic TLS Inspection CA' are strong signals. Covers the event filter, the MITM egress allowlist, the create-then-sweep comment pattern, and Monitor streaming.
 ---
 
 # Claude Code WEB sandbox: signaling and egress gotchas
@@ -12,8 +12,8 @@ Context this skill captures, gathered from a long debugging run on `ikeyan/music
 ## 1. `subscribe_pr_activity` only forwards a narrow slice of PR events
 
 - **Does deliver**: CI *failure* conclusions, new PR/issue comments (`created`), PR review submissions.
-- **Does NOT deliver**: CI *success* conclusions, comment *edits* (`PATCH /issues/comments/{id}` is silent for subscribers), label / status changes.
-- Consequence: naive `upsert-a-status-comment` flows (create on first run, PATCH on subsequent runs) only notify the first run. Every later run is silent even though the comment is visibly updated in the GitHub UI.
+- **Does deliver since 2026-09-12** (observed on `ikeyan/agent-files#11`): comment *edits*, as `issue_comment.edited`. Before that, `PATCH /issues/comments/{id}` was silent for subscribers, which is why the create-then-sweep pattern below exists; it is still needed for CI *success*.
+- **Does NOT deliver**: CI *success* conclusions, label / status changes.
 
 ### Pattern that works: create-then-sweep
 

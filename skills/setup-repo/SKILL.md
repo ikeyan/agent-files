@@ -84,7 +84,7 @@ description: Use when creating a new repository, bringing an existing repository
 
 ### 項目と既定
 
-- **ブランチの更新**: 作業ブランチへ `git push -u origin <branch>`。他人のブランチの履歴は書き換えない (base の取り込みは merge)。マージ済み PR のブランチには積まず、既定ブランチから同名で作り直す。
+- **ブランチの更新**: 書き込み可能な remote (fork 運用では `origin` と限らない。実測で確定したもの) の作業ブランチへ `git push -u <remote> <branch>`。他人のブランチの履歴は書き換えない (base の取り込みは merge)。マージ済み PR のブランチには積まず、既定ブランチから同名で作り直す。
 - **コミットごとに push するか**: しない。push は作業の区切り (レビュー依頼・指示された時点) でまとめる。この方針は pr-workflow skill だけに書き、AGENTS.md に重ねない。
 - **PR の作成**: 頼まれたときだけ作る。テンプレート (`.github/pull_request_template.md` 等) があればそれに従う。
 - **PR の説明**: 現在の状態だけを書く。
@@ -96,7 +96,7 @@ description: Use when creating a new repository, bringing an existing repository
 - **コメントの読み方**: 2 種類あり取得経路が違う。
   - 通常コメント (issue comment、会話タブ): REST `issues/{n}/comments` / MCP `get_comments`。resolve の概念がない。
   - レビューコメント (review comment、diff 上のスレッド): スレッド単位の `isResolved` / `isOutdated` は GraphQL (`pullRequest.reviewThreads`) にしかなく、REST `pulls/{n}/comments` は個々のコメントの平坦な列で resolved 状態を持たない。MCP `get_review_comments` はスレッド id (`PRRT_…`) と `is_resolved` を返す。approve / request changes の本文は review (`get_reviews`)。
-  - 未対応の指摘 = `isResolved: false` のスレッド全部 (outdated でも)。
-- **Codex Review (chatgpt-codex-connector) の読み方**: push 後まず通常コメント `💡 Codex Review` が投稿され、その本文が進捗ステータスで上書きされ、完了すると review (本文が `💡 Codex Review` で始まり、指摘は review comment のスレッド、指摘なしなら 👍 reaction) が投稿される。通常コメントの段階は完了ではないので review の投稿を待つ。cc-web ではコメントの上書きはイベントとして届かず、review の投稿は届く (cc-web-sandbox-signals)。
+  - 未対応の指摘 = `isResolved: false` のスレッド全部 (outdated でも) + まだ返信していない通常コメントと review 本文 (スレッドを持たない `REQUEST_CHANGES` はここにしか現れない)。
+- **Codex Review (chatgpt-codex-connector) の読み方** (本リポ #11 で 2026-09-12 に実測): PR 作成・push 直後に通常コメント (先頭が `<!-- codex-pull-request-review-summary -->`、見出し `Codex Review Summary`、状態表 🔄 Running) が投稿され、完了時に同じコメントが ✅ Completed へ上書きされる。指摘があれば review (本文が `💡 Codex Review` で始まる) が投稿され、指摘は review comment のスレッド。指摘なしなら 👍 reaction のみ。Running の段階は完了ではないので Completed か review を待つ。cc-web では上書き (`issue_comment.edited`) も review の投稿も subscribe_pr_activity のイベントとして届く。
 - **コメント対応後**: 対応したスレッドに返信 (対応コミットの SHA と要点。却下なら理由) してから resolve する。返信は REST `pulls/{n}/comments/{id}/replies` / MCP `add_reply_to_pull_request_comment`、resolve は GraphQL `resolveReviewThread(threadId)` / MCP `resolve_review_thread` (REST に resolve は無い)。通常コメントは返信のみ。
 - **cc-web 以外でも PR コメント・CI を watch するか**: しない。cc-web では `subscribe_pr_activity` でイベントが届く (届く種類の制限は cc-web-sandbox-signals)。それ以外の環境では push 後に 1 回 CI 結果を確認して終える。watch するなら手段 (ポーリング間隔・終了条件) を書く。
