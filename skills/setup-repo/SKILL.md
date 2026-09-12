@@ -86,14 +86,14 @@ description: Use when creating a new repository, bringing an existing repository
 
 - **ブランチの更新**: 書き込み可能な remote (fork 運用では `origin` と限らない。実測で確定したもの) の作業ブランチへ `git push -u <remote> <branch>`。他人のブランチの履歴は書き換えない (base の取り込みは merge)。マージ済み PR のブランチには積まず、既定ブランチから同名で作り直す。remote に旧ブランチが残っていると push は non-fast-forward で拒否される。自分のブランチなら `git fetch <remote> <branch>` し、fetch した oid が、そのブランチを head とするマージ済み PR の head SHA と一致する (= マージ後に何も積まれていない) ことを PR 情報で確認してから、`git push --force-with-lease=<branch>:<fetch した oid> <remote> <branch>` で上書きする。値を省いた `--force-with-lease` は、作り直したブランチが旧 tip を含まないため fetch の前後どちらでも `stale info` で拒否される (git 2.43 で実測)。コミットの祖先関係 (`merge-base --is-ancestor`) はマージ済みの判定に使えない (squash / rebase マージでは旧 tip が既定ブランチの祖先にならない)。
 - **コミットごとに push するか**: しない。push は作業の区切り (レビュー依頼・指示された時点) でまとめる。この方針は pr-workflow skill だけに書き、AGENTS.md に重ねない。
-- **PR の作成**: 頼まれたときだけ作る。テンプレート (`.github/pull_request_template.md` 等) があればそれに従う。
+- **PR の作成**: 頼まれたときだけ作る。リポの寄稿規約 (`CONTRIBUTING.md` 等にある PR テンプレート・ブランチ命名・コミットメッセージ規約・DCO sign-off / CLA) を setup 時に読んで pr-workflow skill に書き、それに従う。
 - **PR の説明**: 現在の状態だけを書く。
   - 書くのは目的、diff と既存コードだけからは必要性が読めない要素についてその理由 (根拠は実測か canon の fact)、実行した検証コマンドとその結果。
   - 書かないのは diff を読めば分かるファイル単位の説明、エージェント環境固有の事情、書き手の過去の行為が主語の文 (「試した」「最初は〜にしていた」「入れてから消した」)。システムを主語にした現在形の制約に書き直せない文は不要な情報。
   - 読者が canon を読めない PR 先 (公開リポ等) では canon を参照せず、その fact の内容を説明に写す。
   - 予測で先回りせず、レビュアーが聞いたらスレッドで答える。
   - 本文と diff の主張を一致させる (「同一アカウントの場合だけ X する」と書いて無条件に X するコードにしない)。
-- **コメントの読み方**: 2 種類あり取得経路が違う。
+- **コメントの読み方**: 2 種類あり取得経路が違う。どの経路でもコレクションは最後のページまで読み切る (`gh api --paginate`、GraphQL の `pageInfo`、MCP の `page` / `after`)。1 ページ目だけでは未対応の指摘を見落とす。
   - 通常コメント (issue comment、会話タブ): REST `issues/{n}/comments` / MCP `get_comments`。resolve の概念がない。
   - レビューコメント (review comment、diff 上のスレッド): スレッド単位の `isResolved` / `isOutdated` は GraphQL (`pullRequest.reviewThreads`) にしかなく、REST `pulls/{n}/comments` は個々のコメントの平坦な列で resolved 状態を持たない。MCP `get_review_comments` はスレッド id (`PRRT_…`) と `is_resolved` を返す。approve / request changes の本文は review (`get_reviews`)。
   - 未対応の指摘 = `isResolved: false` のスレッド全部 (outdated でも) + 対応を求める内容を持ち、まだ返信していない通常コメントと review 本文。各レビュアーについて、`COMMENTED` を除いた最新の review (`APPROVED` / `CHANGES_REQUESTED`。dismiss されたものは除く) が `CHANGES_REQUESTED` ならその本文は必ず含む (スレッドを持たない指摘はここにしか現れない。後続の `COMMENTED` review は change request を解除しない)。情報だけの bot コメントと `APPROVED` の本文は含まない。review 本文への返信は PR の通常コメントで行う。
