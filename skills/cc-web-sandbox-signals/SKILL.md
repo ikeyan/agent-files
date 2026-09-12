@@ -12,10 +12,11 @@ Context this skill captures, gathered from a long debugging run on `ikeyan/music
 ## 1. `subscribe_pr_activity` only forwards a narrow slice of PR events
 
 - **Does deliver**: CI *failure* conclusions, new PR/issue comments (`created`), PR review submissions.
-- **Does deliver since 2026-09-12** (observed on `ikeyan/agent-files#11`): comment *edits*, as `issue_comment.edited`. Before that, `PATCH /issues/comments/{id}` was silent for subscribers, which is why the create-then-sweep pattern below exists; it is still needed for CI *success*.
+- **Does deliver since 2026-09-12** (observed on `ikeyan/agent-files#11`, comment authored by a GitHub App): comment *edits*, as `issue_comment.edited`. Before that, `PATCH /issues/comments/{id}` was silent for subscribers.
 - **Does NOT deliver**: CI *success* conclusions, label / status changes.
+- Consequence: a green PR is only visible to the session through a comment. Keep one status comment per PR and PATCH it on every run. Whether an edit by `github-actions[bot]` is delivered has not been measured; if it is not, fall back to create-then-sweep below.
 
-### Pattern that works: create-then-sweep
+### Fallback: create-then-sweep
 
 Post a fresh comment every time (triggers the create event) and delete previous marker'd comments afterwards:
 
