@@ -87,7 +87,7 @@ description: Use when creating a new repository, bringing an existing repository
 - **ブランチの更新**: 作業ブランチへ `git push -u origin <branch>`。他人のブランチの履歴は書き換えない (base の取り込みは merge)。マージ済み PR のブランチには積まず、既定ブランチから同名で作り直す。
 - **コミットごとに push するか**: しない。push は作業の区切り (レビュー依頼・指示された時点) でまとめる。この方針は pr-workflow skill だけに書き、AGENTS.md に重ねない。
 - **PR の作成**: 頼まれたときだけ作る。テンプレート (`.github/pull_request_template.md` 等) があればそれに従う。
-- **PR の説明**: 試行錯誤抜き。書くのは目的、diff から読めない制約・トレードオフ、実行した検証コマンドとその結果。書かないのは経緯・捨てた代案・diff を読めば分かるファイル単位の説明・エージェント環境固有の事情。本文と diff の主張を一致させる (「同一アカウントの場合だけ X する」と書いて無条件に X するコードにしない)。
+- **PR の説明**: 試行錯誤抜き。書くのは目的、diff から読めない制約・トレードオフ、実行した検証コマンドとその結果。書かないのは経緯 (作り直し・失敗・入れてから消したコード)・捨てた代案・diff を読めば分かるファイル単位の説明・エージェント環境固有の事情。経緯を書くのは、省くとレビュアーが現在の設計を筋が悪いと疑うおそれがある場合だけ。本文と diff の主張を一致させる (「同一アカウントの場合だけ X する」と書いて無条件に X するコードにしない)。
 - **コメントの読み方**: 2 種類あり取得経路が違う。
   - 通常コメント (issue comment、会話タブ): REST `issues/{n}/comments` / MCP `get_comments`。resolve の概念がない。
   - レビューコメント (review comment、diff 上のスレッド): スレッド単位の `isResolved` / `isOutdated` は GraphQL (`pullRequest.reviewThreads`) にしかなく、REST `pulls/{n}/comments` は個々のコメントの平坦な列で resolved 状態を持たない。MCP `get_review_comments` はスレッド id (`PRRT_…`) と `is_resolved` を返す。approve / request changes の本文は review (`get_reviews`)。
