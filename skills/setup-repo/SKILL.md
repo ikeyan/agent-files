@@ -84,7 +84,7 @@ description: Use when creating a new repository, bringing an existing repository
 
 ### 項目と既定
 
-- **ブランチの更新**: 書き込み可能な remote (fork 運用では `origin` と限らない。実測で確定したもの) の作業ブランチへ `git push -u <remote> <branch>`。他人のブランチの履歴は書き換えない (base の取り込みは merge)。マージ済み PR のブランチには積まず、既定ブランチから同名で作り直す。remote に旧ブランチが残っていると push は non-fast-forward で拒否される。自分のブランチなら `git fetch <remote> <branch>` してから残りがマージ済みの履歴だけと確認し (`git merge-base --is-ancestor <remote>/<branch> <default-branch>`)、`git push --force-with-lease=<branch>:<fetch した oid> <remote> <branch>` で上書きする。値を省いた `--force-with-lease` は、作り直したブランチが旧 tip を含まないため fetch の前後どちらでも `stale info` で拒否される (git 2.43 で実測)。
+- **ブランチの更新**: 書き込み可能な remote (fork 運用では `origin` と限らない。実測で確定したもの) の作業ブランチへ `git push -u <remote> <branch>`。他人のブランチの履歴は書き換えない (base の取り込みは merge)。マージ済み PR のブランチには積まず、既定ブランチから同名で作り直す。remote に旧ブランチが残っていると push は non-fast-forward で拒否される。自分のブランチなら `git fetch <remote> <branch>` し、fetch した oid が、そのブランチを head とするマージ済み PR の head SHA と一致する (= マージ後に何も積まれていない) ことを PR 情報で確認してから、`git push --force-with-lease=<branch>:<fetch した oid> <remote> <branch>` で上書きする。値を省いた `--force-with-lease` は、作り直したブランチが旧 tip を含まないため fetch の前後どちらでも `stale info` で拒否される (git 2.43 で実測)。コミットの祖先関係 (`merge-base --is-ancestor`) はマージ済みの判定に使えない (squash / rebase マージでは旧 tip が既定ブランチの祖先にならない)。
 - **コミットごとに push するか**: しない。push は作業の区切り (レビュー依頼・指示された時点) でまとめる。この方針は pr-workflow skill だけに書き、AGENTS.md に重ねない。
 - **PR の作成**: 頼まれたときだけ作る。テンプレート (`.github/pull_request_template.md` 等) があればそれに従う。
 - **PR の説明**: 現在の状態だけを書く。
