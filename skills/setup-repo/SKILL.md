@@ -77,27 +77,13 @@ description: Use when creating a new repository, bringing an existing repository
 
 ## 6. PR / ブランチ運用
 
-- リポ固有の PR・ブランチ運用を `.claude/skills/pr-workflow/SKILL.md` に書く。description は「ブランチを push する・PR を作る/説明を直す・レビューコメントに対応する・CI を確認する」場面で発火する 1 行にする。
-- 書く内容は下の各項目の**方針**と、それを実行する**手段** (コマンド・ツール名)。方針は既定を採り、リポごとに変えるならユーザーに確認する。手段はそのリポの実環境 (cc-web か local か、`gh` の有無、GitHub MCP の有無) で 1 回実測して通ったものだけを書き、実測できなかった手段は未実測と明記する (AGENTS.md「実行時契約の実測」)。候補:
-  - `gh` がある環境: `gh pr view --comments` (通常コメントと review を混ぜた時系列)、`gh api` (REST)、`gh api graphql`、`gh pr checks --watch`、`gh pr edit`。
-  - cc-web (GitHub MCP): `pull_request_read` (`get_comments` / `get_review_comments` / `get_reviews` / `get_check_runs` / `get_status`)、`add_reply_to_pull_request_comment`、`resolve_review_thread`、`update_pull_request`、`subscribe_pr_activity`。
-
-### 項目と既定
-
-- **ブランチの更新**: 書き込み可能な remote (fork 運用では `origin` と限らない。実測で確定したもの) の作業ブランチへ `git push -u <remote> <branch>`。他人のブランチの履歴は書き換えない (base の取り込みは merge)。マージ済み PR のブランチには積まず、既定ブランチから同名で作り直す。remote に旧ブランチが残っていると push は non-fast-forward で拒否される。自分のブランチなら `git fetch <remote> <branch>` し、fetch した oid が、そのブランチを head とするマージ済み PR の head SHA と一致する (= マージ後に何も積まれていない) ことを PR 情報で確認してから、`git push --force-with-lease=<branch>:<fetch した oid> <remote> <branch>` で上書きする。値を省いた `--force-with-lease` は、作り直したブランチが旧 tip を含まないため fetch の前後どちらでも `stale info` で拒否される (git 2.43 で実測)。コミットの祖先関係 (`merge-base --is-ancestor`) はマージ済みの判定に使えない (squash / rebase マージでは旧 tip が既定ブランチの祖先にならない)。
-- **コミットごとに push するか**: しない。push は作業の区切り (レビュー依頼・指示された時点) でまとめる。この方針は pr-workflow skill だけに書き、AGENTS.md に重ねない。
-- **PR の作成**: 頼まれたときだけ作る。リポの寄稿規約 (`CONTRIBUTING.md` 等にある PR テンプレート・ブランチ命名・コミットメッセージ規約・DCO sign-off / CLA) を setup 時に読んで pr-workflow skill に書き、それに従う。
-- **PR の説明**: 現在の状態だけを書く。
-  - 書くのは目的、diff と既存コードだけからは必要性が読めない要素についてその理由 (根拠は実測か canon の fact)、実行した検証コマンドとその結果。
-  - 書かないのは diff を読めば分かるファイル単位の説明、エージェント環境固有の事情、書き手の過去の行為が主語の文 (「試した」「最初は〜にしていた」「入れてから消した」)。システムを主語にした現在形の制約に書き直せない文は不要な情報。
-  - 読者が canon を読めない PR 先 (公開リポ等) では canon を参照せず、その fact の内容を説明に写す。
-  - 予測で先回りせず、レビュアーが聞いたらスレッドで答える。
-  - 本文と diff の主張を一致させる (「同一アカウントの場合だけ X する」と書いて無条件に X するコードにしない)。
-- **コメントの読み方**: 2 種類あり取得経路が違う。どの経路でもコレクションは最後のページまで読み切る (`gh api --paginate`、GraphQL の `pageInfo`、MCP の `page` / `after`)。1 ページ目だけでは未対応の指摘を見落とす。
-  - 通常コメント (issue comment、会話タブ): REST `issues/{n}/comments` / MCP `get_comments`。resolve の概念がない。
-  - レビューコメント (review comment、diff 上のスレッド): スレッド単位の `isResolved` / `isOutdated` は GraphQL (`pullRequest.reviewThreads`) にしかなく、REST `pulls/{n}/comments` は個々のコメントの平坦な列で resolved 状態を持たない。MCP `get_review_comments` はスレッド id (`PRRT_…`) と `is_resolved` を返す。approve / request changes の本文は review (`get_reviews`)。
-  - 未対応の指摘 = `isResolved: false` のスレッド全部 (outdated でも) + 対応を求める内容を持ち、まだ返信していない通常コメントと review 本文。各レビュアーについて、`COMMENTED` を除いた最新の review (`APPROVED` / `CHANGES_REQUESTED`。dismiss されたものは除く) が `CHANGES_REQUESTED` ならその本文は必ず含む (スレッドを持たない指摘はここにしか現れない。後続の `COMMENTED` review は change request を解除しない)。情報だけの bot コメントと `APPROVED` の本文は含まない。review 本文への返信は PR の通常コメントで行う。
-- **Codex Review (chatgpt-codex-connector) の読み方** (本リポ #11 で 2026-09-12 に実測): PR 作成・push 直後に通常コメント (先頭が `<!-- codex-pull-request-review-summary -->`、見出し `Codex Review Summary`、状態表 🔄 Running) が投稿され、完了時に同じコメントが ✅ Completed へ上書きされる。指摘があれば review (本文が `💡 Codex Review` で始まる) が投稿され、指摘は review comment のスレッド。指摘なしなら 👍 reaction のみ。完了の判定は、状態表の Commit 列 (review なら本文の Reviewed commit) が現在の head と一致し、かつ Completed であること。push 直後は前の commit の Completed と前の review が残っているので、head の一致を見ずに完了と判断しない。cc-web では上書き (`issue_comment.edited`) も review の投稿も subscribe_pr_activity のイベントとして届く。
-- **コメント対応後**: 対応したスレッドに返信 (対応コミットの SHA と要点。却下なら理由) してから resolve する。返信は REST `pulls/{n}/comments/{id}/replies` / MCP `add_reply_to_pull_request_comment`、resolve は GraphQL `resolveReviewThread(threadId)` / MCP `resolve_review_thread` (REST に resolve は無い)。通常コメントは返信のみ。
-- **push 後の CI 確認**: 成功か失敗の終端状態まで見届ける。cc-web では失敗は `subscribe_pr_activity` のイベントで届くが成功は届かない (cc-web-sandbox-signals) ので、成功は `get_check_runs` (Checks API) と `get_status` (Commit Status API。required checks には旧来の status context もあり、`get_check_runs` には出ない) の再読 (`send_later` の check-in 等) で確認する。それ以外の環境では `gh pr checks --watch` で終わるまで待つ (待ち時間は有界にする。`--watch` なしは pending で exit 8 になり終端を保証しない)。push 直後は check がまだ作られていないことがあり、`gh pr checks` は check が 0 件だと `--watch` でも即座に `no checks reported` で exit 1 する (cli/cli `pkg/cmd/pr/checks/checks.go` の `populateStatusChecks`)。`get_check_runs` / `get_status` の 0 件も未着と区別できない。workflow ごとに check の登録時刻が違い、path filter・条件付き job・matrix で head ごとに走る check も変わるので、1 件現れただけでも固定の一覧が揃っただけでも終端は判定できない。終端 = 次の両方を満たす状態: (1) pr-workflow skill に書いた最低限の check 名 (実際の push で無条件に走ると実測したもの。条件付きの check はその条件と一緒に書く) が全部現在の head に現れて終端状態、(2) 現れている check が全部終端状態で、かつそのリポで実測した静止時間のあいだ新しい check が登録されない。これを有界に待つ。名前一覧は CI 設定や required checks から推測せず実測する (organization / enterprise の ruleset が注入する workflow はリポの設定にも required checks にも現れない)。CI が無いリポはその旨を書く。
-- **cc-web 以外でも PR コメントを watch するか**: しない。cc-web では `subscribe_pr_activity` でイベントが届く (届く種類の制限は cc-web-sandbox-signals)。watch するなら手段 (ポーリング間隔・終了条件) を書く。
+- リポ固有の PR・ブランチ運用を `.claude/skills/pr-workflow/SKILL.md` に書く。既定の [pr-workflow.md](pr-workflow.md) をコピーし、そのリポに合わせて編集する:
+  - 方針は既定を採る。リポごとに変えるならユーザーに確認する。
+  - 手段 (コマンド・ツール名) は、そのリポの実環境 (cc-web か local か、`gh` の有無、GitHub MCP の有無) で 1 回実測して通ったものだけを残す。実測できなかった手段は未実測と明記する (AGENTS.md「実行時契約の実測」)。
+  - 「このリポの値」の `<…>` を埋める:
+    - push 先: 書き込めることを実測で確かめた remote (fork 運用では `origin` と限らない)。
+    - 寄稿規約: `CONTRIBUTING.md` 等を読んで書く。無ければ「なし」。
+    - CI の最低限の check 名: 実際の push で無条件に走ると実測したもの。条件付きの check はその条件と一緒に書く。CI 設定や required checks から推測しない (organization / enterprise の ruleset が注入する workflow はどちらにも現れない)。CI が無ければ「なし」。
+    - CI の静止時間: そのリポで実測する。
+  - リポで使っていない仕組み (Codex Review 等) の項目は削る。
+- push 単位の方針は pr-workflow skill だけに書き、AGENTS.md に重ねない。
