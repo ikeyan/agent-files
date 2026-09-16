@@ -146,7 +146,7 @@ for (const file of markdownFiles) {
   }
   const dir = file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : ".";
   for (const target of targetsOf(text)) {
-    if (/^[a-z][a-z0-9+.-]*:/i.test(target)) continue; // http:, mailto: 等の外部
+    if (/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(target)) continue; // http:, mailto:, //host (プロトコル相対) 等の外部
     const [path, anchor] = target.split("#");
     const resolved = path === "" ? file : `${dir}/${path}`.replace(/^\.\//, "");
     const normalized = decode(new URL(resolved, "file:///").pathname.slice(1));
