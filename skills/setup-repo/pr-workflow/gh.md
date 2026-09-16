@@ -14,10 +14,12 @@ gh 2.98.0 で `--help` と実行を確認したもの。「未実測」と書い
 - **CI**:
   - 現れている check の一覧: `gh pr checks <n> --json name,bucket,link`
   - 現れている check が全部終端になるまで待つ: `gh pr checks <n> --watch` (待ち時間は有界にする。push 直後は前のコミットの check を見ることがある。後から登録された check を拾うかは未実測)
-  - 特定の check が現れて終端になるまで待つ。push 直後の `gh pr checks` は前のコミットの check を返すことがあり、そのまま待つと古い結果で終端と誤判定する。head の SHA を指定して Checks API を見る:
+  - 特定の check が現れて終端になるまで待つ。push 直後の `gh pr checks` は前のコミットの check を返すことがあり、そのまま待つと古い結果で終端と誤判定する。push したコミットの SHA を指定して Checks API を見る:
 
     ```sh
-    sha=$(git rev-parse HEAD)
+    refs=$(git ls-remote <remote> "refs/heads/<branch>") || exit 1
+    sha=$(printf '%s\n' "$refs" | awk -v r="refs/heads/<branch>" '$2 == r { print $1 }')
+    [ -n "$sha" ] || { echo "<remote> に <branch> が無い"; exit 1; }
     end=$((SECONDS + <秒数>))
     until gh api --paginate "repos/<owner>/<repo>/commits/$sha/check-runs" --jq '.check_runs[] | select(.name == "<check>") | .status' | grep -qx completed; do
       [ $SECONDS -lt $end ] || { echo "timeout"; exit 1; }
@@ -26,7 +28,7 @@ gh 2.98.0 で `--help` と実行を確認したもの。「未実測」と書い
     gh api --paginate "repos/<owner>/<repo>/commits/$sha/check-runs" --jq '.check_runs[] | select(.name == "<check>") | .conclusion'
     ```
 
-    check がまだ 0 件でも出力が空になるだけなのでループは回り続ける。旧来の commit status (`gh api repos/<owner>/<repo>/commits/$sha/status`) はこの API に出ない。根拠と実測: `canon: facts/gh/pr-checks-zero-checks-and-exit-codes`
+    SHA はローカルの `HEAD` からも remote-tracking ref からも取らず、`git ls-remote` でリモートのブランチの先端を直接読む。`ls-remote` のパターンは ref 名の末尾一致なので (`refs/heads/a/refs/heads/<branch>` も当たる)、ref 名が完全一致する行だけを採る。取得に失敗したとき (ネットワーク・認証・remote 名の誤り) は git のエラーのまま止まる。別のブランチをチェックアウトしていても、未 push のコミットがあっても、fetch の refspec がブランチを含まない clone (`--single-branch` 等。push しても remote-tracking ref ができない) でも、push したコミットを指す。自分が push していない PR の head を待つときも、PR の head ブランチを同じように読む (fork なら fork 側の remote)。API の PR の head は push 直後に古いことがあるので使わない (REST の `pulls/<n>` の `head.sha` が新しいコミットになるまで約 1.7 秒かかった)。check がまだ 0 件でも出力が空になるだけなのでループは回り続ける。旧来の commit status (`gh api repos/<owner>/<repo>/commits/$sha/status`) はこの API に出ない。根拠と実測: `canon: facts/gh/pr-checks-zero-checks-and-exit-codes`
   - ログ: Actions の check は `link` の URL から `<jobId>` を取って `gh run view --job <jobId> --log-failed` (`canon: facts/gh/pr-checks-link-to-run-logs`)。Actions 以外の check は `link` の URL を見る。
 - **PR の watch** (コメントの作成・編集、review、CI の失敗、PR の close を待つ): Monitor ツールで回す。stdout の 1 行が 1 通知になる。
   1. watch ごとに専用のディレクトリを作り、出力されたパスを `<dir>` として使う: `mktemp -d -p "${TMPDIR:-/tmp}" watch-pr.XXXXXX`。共有の `/tmp` に固定名で置くと、別のユーザーが先に置いたスクリプトを自分のトークンで実行しうる。
