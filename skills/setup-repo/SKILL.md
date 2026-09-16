@@ -77,11 +77,19 @@ description: Use when creating a new repository, bringing an existing repository
 
 ## 6. PR / ブランチ運用
 
-- リポ固有の PR・ブランチ運用を `.claude/skills/pr-workflow/SKILL.md` に書く。既定の [pr-workflow.md](pr-workflow.md) をコピーし、そのリポに合わせて編集する:
+- リポ固有の PR・ブランチ運用を `.claude/skills/pr-workflow/` に置く。既定の 3 ファイルをコピーする (方針だけを読んで、使う環境の手段だけを開く構成):
+
+  | コピー元 | コピー先 |
+  |---|---|
+  | [pr-workflow.md](pr-workflow.md) | `.claude/skills/pr-workflow/SKILL.md` |
+  | [pr-workflow-gh.md](pr-workflow-gh.md) | `.claude/skills/pr-workflow/gh.md` |
+  | [pr-workflow-github-mcp.md](pr-workflow-github-mcp.md) | `.claude/skills/pr-workflow/github-mcp.md` |
+
+- コピーしたらそのリポに合わせて編集する:
   - 方針は既定を採る。リポごとに変えるならユーザーに確認する。
-  - 手段 (コマンド・ツール名) は、そのリポの実環境 (cc-web か local か、`gh` の有無、GitHub MCP の有無) で 1 回実測して通ったものだけを残す。実測できなかった手段は未実測と明記する (AGENTS.md「実行時契約の実測」)。
+  - 手段のファイルは両方残す (同じリポを cc-web と local の両方から触る)。setup した環境で 1 回実測して通らなかった手段・実測できなかった手段には未実測と書き添える (AGENTS.md「実行時契約の実測」)。
   - 「このリポの値」の `<…>` を埋める:
     - push 先: 書き込めることを実測で確かめた remote (fork 運用では `origin` と限らない)。
-    - 寄稿規約: `CONTRIBUTING.md` 等を読んで書く。無ければ「なし」。
+    - 寄稿規約: 規約が書いてあるファイルを指す。中身は写さない (`CONTRIBUTING.md` から読めるので)。文書に無いがこのリポで通っている規約だけ本文に書く。無ければ「なし」。
   - リポで使っていない仕組み (Codex Review 等) の項目は削る。
 - push 単位の方針は pr-workflow skill だけに書き、AGENTS.md に重ねない。
