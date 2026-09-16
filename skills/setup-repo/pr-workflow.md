@@ -47,9 +47,20 @@ description: Use when pushing a branch, creating a pull request or editing its d
   - 未対応の指摘 = `isResolved: false` のスレッド全部 (outdated でも) + 対応を求める内容を持ち、まだ返信していない通常コメントと review 本文。各レビュアーについて、`COMMENTED` を除いた最新の review (`APPROVED` / `CHANGES_REQUESTED`。dismiss されたものは除く) が `CHANGES_REQUESTED` ならその本文は必ず含む (スレッドを持たない指摘はここにしか現れない。後続の `COMMENTED` review は change request を解除しない)。情報だけの bot コメントと `APPROVED` の本文は含まない。review 本文への返信は PR の通常コメントで行う。
 - **Codex Review (chatgpt-codex-connector) の読み方** (ikeyan/agent-files #11 で 2026-09-12 に実測): PR 作成・push 直後に通常コメント (先頭が `<!-- codex-pull-request-review-summary -->`、見出し `Codex Review Summary`、状態表 🔄 Running) が投稿され、完了時に同じコメントが ✅ Completed へ上書きされる。指摘があれば review (本文が `💡 Codex Review` で始まる) が投稿され、指摘は review comment のスレッド。指摘なしなら 👍 reaction のみ。完了の判定は、状態表の Commit 列 (review なら本文の Reviewed commit) が現在の head と一致し、かつ Completed であること。push 直後は前の commit の Completed と前の review が残っているので、head の一致を見ずに完了と判断しない。cc-web では上書き (`issue_comment.edited`) も review の投稿も subscribe_pr_activity のイベントとして届く。
 - **コメント対応後**: 対応したスレッドに返信 (対応コミットの SHA と要点。却下なら理由) してから resolve する。返信は REST `pulls/{n}/comments/{id}/replies` / MCP `add_reply_to_pull_request_comment`、resolve は GraphQL `resolveReviewThread(threadId)` / MCP `resolve_review_thread` (REST に resolve は無い)。通常コメントは返信のみ。
-- **push 後の CI 確認**: 既定は失敗の検知だけ。cc-web では失敗は `subscribe_pr_activity` のイベントで届く (成功は届かない。cc-web-sandbox-signals)。
-  - 成功を見届けるのは理由があるときだけ (ユーザーに指示された、CI 自体を変更していて成功時のログが要る等)。その理由から必要な check を特定し、それが現在の head に現れて終端状態になるまで有界に待つ。head に走る check 全部が揃ったことを知る手段は無いので (workflow ごとに登録時刻が違い、path filter・条件付き job・matrix・`workflow_run` で head ごとに変わる)、「全部緑」を確認対象にはしない。
-  - check の一覧は CI 設定や required checks から推測せず、現在の head に現れているものを読む (organization / enterprise の ruleset が注入する workflow はリポの設定にも required checks にも現れない)。
-  - 待つ手段: `gh pr checks --watch` (待ち時間は有界にする。`--watch` なしは pending で exit 8 になり終端を保証しない)。cc-web では `get_check_runs` (Checks API) と `get_status` (Commit Status API。required checks には旧来の status context もあり、`get_check_runs` には出ない) の再読 (`send_later` の check-in 等)。
-  - push 直後は check がまだ作られていないことがあり、`gh pr checks` は check が 0 件だと `--watch` でも即座に `no checks reported` で exit 1 する (cli/cli `pkg/cmd/pr/checks/checks.go` の `populateStatusChecks`)。`get_check_runs` / `get_status` の 0 件も未着と区別できない。
+- **push 後の CI 確認**: 既定は失敗の検知だけ。cc-web では失敗は `subscribe_pr_activity` のイベントで届く (成功は届かない。cc-web-sandbox-signals)。失敗のログは `gh run view --log-failed` (Actions 以外は `gh pr checks --json name,link` の URL)。
+  - 成功を見届けるのは理由があるときだけ (ユーザーに指示された、CI 自体を変更していて成功時のログが要る等)。その理由から必要な check を特定し、それが現在の head に現れて終端状態 (`bucket` が `pending` 以外) になるまで有界に待つ。head に走る check 全部が揃ったことを確実に知る手段は無いので、「全部緑」を確認対象にはしない。
+  - check の一覧は CI 設定や required checks から推測せず、現在の head に現れているものを読む (organization / enterprise の ruleset が注入する workflow はリポの設定にも required checks にも現れない)。名前は job 単位で、matrix は展開後 (`build (ubuntu-latest)`)。
+  - push 直後は check が 0 件のことがある。`gh pr checks` は 0 件だと `--json` でも `--watch` でも `no checks reported` を stderr に出して exit 1 するので (gh 2.98 で実測)、check が現れるのを待つには自分でポーリングする:
+
+    ```sh
+    end=$((SECONDS + <秒数>))
+    until gh pr checks <n> --json name,bucket --jq '.[] | select(.name == "<check>") | .bucket' | grep -qxv pending; do
+      [ $SECONDS -lt $end ] || { echo "timeout"; exit 1; }
+      sleep 15
+    done
+    ```
+
+    - 0 件の間も該当名が無い間も出力が空なので、このループはどちらでも回り続ける。`--jq` は該当なしでも exit 0 なので、判定は exit コードでなく出力で行う (空入力の `grep` が 1 を返すことに乗っている)。
+    - 打ち切ったらユーザーに報告する。待ち続けない。
+  - 現れている check が全部終端になるまで待つなら `gh pr checks --watch` (待ち時間は有界にする。`--watch` なしは pending のとき exit 8)。cc-web では `get_check_runs` (Checks API) と `get_status` (Commit Status API。required checks には旧来の status context もあり、`get_check_runs` には出ない) を再読する (`send_later` の check-in 等)。0 件かどうかはこれらでも未着と区別できない。
 - **cc-web 以外でも PR コメントを watch するか**: しない。cc-web では `subscribe_pr_activity` でイベントが届く (届く種類の制限は cc-web-sandbox-signals)。watch するなら手段 (ポーリング間隔・終了条件) を書く。
