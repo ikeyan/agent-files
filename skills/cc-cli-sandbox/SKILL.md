@@ -1,6 +1,6 @@
 ---
 name: cc-cli-sandbox
-description: Empirically-verified runtime constraints of the LOCAL Claude Code CLI OS sandbox that wraps Bash-tool commands. NOT the claude.ai/code cloud VM (cc-web-dockerd). IMPORTANT: cc-web-sandbox-signals describes a DIFFERENT environment (silent Anthropic-MITM proxy) that does NOT hold here — do not inherit its egress facts. Use when a sandboxed command misbehaves: a "network request outside sandbox" dialog, file owner shows 65534/nobody, systemctl/journalctl/docker "Operation not permitted", runtime fetch "Proxy server unreachable", a path is read-only, deciding between a sandbox-config change and dangerouslyDisableSandbox, or checking whether the current shell is in-sandbox.
+description: 'Empirically-verified runtime constraints of the LOCAL Claude Code CLI OS sandbox that wraps Bash-tool commands. NOT the claude.ai/code cloud VM (cc-web-dockerd). IMPORTANT: cc-web-sandbox-signals describes a DIFFERENT environment (silent Anthropic-MITM proxy) that does NOT hold here — do not inherit its egress facts. Use when a sandboxed command misbehaves: a "network request outside sandbox" dialog, file owner shows 65534/nobody, systemctl/journalctl/docker "Operation not permitted", runtime fetch "Proxy server unreachable", a path is read-only, deciding between a sandbox-config change and dangerouslyDisableSandbox, or checking whether the current shell is in-sandbox.'
 ---
 
 # Claude Code CLI sandbox: verified runtime constraints
