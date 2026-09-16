@@ -12,7 +12,7 @@ check_files() { # <コマンド…> -- <パターン>: git が知っているフ
   while [ "$1" != "--" ]; do cmd+=("$1"); shift; done
   shift
   while IFS= read -r file; do files+=("$file"); done < <(git ls-files --cached --others --exclude-standard "$1")
-  [ ${#files[@]} -gt 0 ] && "${cmd[@]}" "${files[@]}"
+  if [ ${#files[@]} -gt 0 ]; then "${cmd[@]}" "${files[@]}"; fi
 }
 check_files shellcheck -- '*.sh'
 check_files deno check -- '*.ts'
@@ -22,57 +22,52 @@ check_files deno check -- '*.ts'
 readonly_mode=${VERIFY_READONLY:-}
 skills_status=0
 if [ ! -d .claude/skills ]; then
-  if [ -n "$readonly_mode" ]; then
-    echo ".claude/skills: ディレクトリが無い" >&2
-    skills_status=1
-  else
-    mkdir -p .claude/skills
-    echo ".claude/skills: ディレクトリを作った"
-  fi
-fi
-for path in .claude/skills/*; do
-  name=${path##*/}
-  if [ -L "$path" ]; then
-    target=$(readlink "$path")
-    if [ "$target" != "../../skills/$name" ]; then
-      echo "$path: symlink 先が ../../skills/$name でない — $target" >&2
+  echo ".claude/skills/: 無い" >&2
+  skills_status=1
+else
+  for path in .claude/skills/*; do
+    name=${path##*/}
+    if [ -L "$path" ]; then
+      target=$(readlink "$path")
+      if [ "$target" != "../../skills/$name" ]; then
+        echo "$path (-> $target): 飛び先 != ../../skills/$name" >&2
+        skills_status=1
+      elif [ ! -e "$path" ]; then
+        if [ -n "$readonly_mode" ]; then
+          echo "$path: 切れた symlink" >&2
+          skills_status=1
+        else
+          unlink "$path"
+          echo "$path: 切れた symlink を削除した"
+        fi
+        continue
+      fi
+    elif [ ! -d "$path" ]; then
+      echo "$path: ディレクトリでも symlink でもない" >&2
       skills_status=1
       continue
     fi
-    if [ ! -e "$path" ]; then
-      if [ -n "$readonly_mode" ]; then
-        echo "$path: symlink 先の配布スキルが無い (消した・改名した残骸)" >&2
-        skills_status=1
-      else
-        unlink "$path"
-        echo "$path: 切れた symlink を消した"
-      fi
+    # symlink 経由でも実体でも、SKILL.md が無ければスキルとして読まれない。
+    [ -f "$path/SKILL.md" ] || { echo "$path/SKILL.md: 無い" >&2; skills_status=1; }
+  done
+  for path in skills/*/; do
+    name=$(basename "$path")
+    link=".claude/skills/$name"
+    if [ -L "$link" ] || [ -e "$link" ]; then
       continue
     fi
-  elif [ -d "skills/$name" ]; then
-    echo "$path: 同名の配布スキルが skills/ にある — どちらが読まれるか紛らわしい" >&2
-    skills_status=1
-  fi
-  # symlink 経由でも実体でも、SKILL.md が無ければスキルとして読まれない。
-  [ -f "$path/SKILL.md" ] || { echo "$path: SKILL.md が無い" >&2; skills_status=1; }
-done
-for path in skills/*/; do
-  name=$(basename "$path")
-  link=".claude/skills/$name"
-  if [ -e "$link" ] || [ -L "$link" ]; then
-    continue
-  fi
-  if [ ! -f "$path/SKILL.md" ]; then
-    echo "$path: SKILL.md が無い — symlink は作らない" >&2
-    skills_status=1
-  elif [ -n "$readonly_mode" ]; then
-    echo "$link: 配布スキルへの symlink が無い — ln -s ../../skills/$name $link" >&2
-    skills_status=1
-  else
-    ln -s "../../skills/$name" "$link"
-    echo "$link: 配布スキルへの symlink を作った"
-  fi
-done
+    if [ ! -f "$path/SKILL.md" ]; then
+      echo "$path/SKILL.md: 無い" >&2
+      skills_status=1
+    elif [ -n "$readonly_mode" ]; then
+      echo "$link: 配布スキルへの symlink が無い。 Execute: ln -s ../../skills/$name $link" >&2
+      skills_status=1
+    else
+      ln -s "../../skills/$name" "$link"
+      echo "$link: 配布スキルへの symlink を作った"
+    fi
+  done
+fi
 
 git ls-files --cached --others --exclude-standard |
   deno run --allow-read=. --allow-net=www.schemastore.org scripts/verify.ts
