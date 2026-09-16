@@ -22,7 +22,10 @@ check_files deno check -- '*.ts'
 # .claude/skills が保護パスで書けないので、直せなければ違反として報告して検査を続ける。
 readonly_mode=${VERIFY_READONLY:-}
 skills_status=0
-if [ ! -d .claude/skills ]; then
+if [ -L .claude/skills ]; then
+  echo ".claude/skills: symlink になっている (実体のディレクトリであるべき。構造は README)" >&2
+  skills_status=1
+elif [ ! -d .claude/skills ]; then
   echo ".claude/skills/: 無い" >&2
   skills_status=1
 else
