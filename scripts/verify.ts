@@ -10,6 +10,8 @@
 import { Ajv } from "ajv";
 import { Ajv2020 } from "ajv/2020";
 import type { ValidateFunction } from "ajv";
+import GithubSlugger from "github-slugger";
+import MarkdownIt from "markdown-it";
 
 /** 検査する JSON と、当てる schema。null は構文だけ見る。ここに無いファイルは違反として報告する。 */
 const SCHEMAS: Record<string, string | null> = {
@@ -88,49 +90,49 @@ for (const file of jsonFiles) {
   }
 }
 
-/** ``` / ~~~ で囲まれた部分を落とす。中の # 行は見出しでなく、[x](y) もリンクではない。 */
-const withoutFences = (markdown: string): string => {
-  let fence: string | null = null;
-  return markdown.split("\n").map((line) => {
-    const marker = line.match(/^\s*(```+|~~~+)/)?.[1];
-    if (fence === null && marker) {
-      fence = marker[0];
-      return "";
-    }
-    if (fence !== null) {
-      if (marker && marker[0] === fence) fence = null;
-      return "";
-    }
-    return line;
-  }).join("\n");
+// Markdown は CommonMark のパーサで読む。コードブロック・インラインコードの中はリンクでも見出しでもない。
+const md = new MarkdownIt();
+type Token = ReturnType<typeof md.parse>[number];
+
+/** GitHub は先頭の YAML frontmatter を本文として描画しない (パーサに渡すと --- が見出しの下線になる)。 */
+const parse = (markdown: string): Token[] =>
+  md.parse(markdown.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, ""), {});
+
+/** 見出しの anchor。github-slugger は GitHub が描画時に付ける id と同じ規則 (重複は -1, -2 …)。 */
+const anchorsOf = (markdown: string): Set<string> => {
+  const tokens = parse(markdown);
+  const slugger = new GithubSlugger();
+  const anchors = new Set<string>();
+  tokens.forEach((token, i) => {
+    if (token.type !== "heading_open") return;
+    const text = (tokens[i + 1].children ?? [])
+      .filter((c) => c.type === "text" || c.type === "text_special" || c.type === "code_inline")
+      .map((c) => c.content)
+      .join("");
+    anchors.add(slugger.slug(text));
+  });
+  return anchors;
 };
 
-/** GitHub の見出し anchor 生成 (小文字化、記号除去、空白をハイフン、重複は -1, -2 …)。 */
-const anchorsOf = (markdown: string): Set<string> => {
-  const seen = new Map<string, number>();
-  const anchors = new Set<string>();
-  for (const line of markdown.split("\n")) {
-    const heading = line.match(/^#{1,6}\s+(.*)$/);
-    if (!heading) continue;
-    const base = heading[1]
-      .replace(/`([^`]*)`/g, "$1")
-      .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
-      .trim()
-      .toLowerCase()
-      .replace(/[^\p{L}\p{N}_\s-]/gu, "")
-      .replace(/\s/g, "-");
-    const n = seen.get(base) ?? 0;
-    seen.set(base, n + 1);
-    anchors.add(n === 0 ? base : `${base}-${n}`);
-  }
-  return anchors;
+/** リンクと画像の参照先 (参照スタイルのリンクも解決済みで出てくる)。 */
+const targetsOf = (markdown: string): string[] => {
+  const out: string[] = [];
+  const walk = (tokens: Token[]) => {
+    for (const token of tokens) {
+      const target = token.type === "link_open" ? token.attrGet("href") : token.type === "image" ? token.attrGet("src") : null;
+      if (typeof target === "string") out.push(target);
+      if (token.children) walk(token.children);
+    }
+  };
+  walk(parse(markdown));
+  return out;
 };
 
 const anchorCache = new Map<string, Set<string>>();
 const anchorsFor = async (path: string): Promise<Set<string>> => {
   const cached = anchorCache.get(path);
   if (cached) return cached;
-  const anchors = anchorsOf(withoutFences(await Deno.readTextFile(path)));
+  const anchors = anchorsOf(await Deno.readTextFile(path));
   anchorCache.set(path, anchors);
   return anchors;
 };
@@ -142,7 +144,7 @@ for (const file of markdownFiles) {
     continue;
   }
   const dir = file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : ".";
-  for (const [, target] of withoutFences(text).matchAll(/\[[^\]]*\]\(([^)\s]+)\)/g)) {
+  for (const target of targetsOf(text)) {
     if (/^[a-z][a-z0-9+.-]*:/i.test(target)) continue; // http:, mailto: 等の外部
     const [path, anchor] = target.split("#");
     const resolved = path === "" ? file : `${dir}/${path}`.replace(/^\.\//, "");
@@ -152,7 +154,7 @@ for (const file of markdownFiles) {
       continue;
     }
     if (!anchor || !normalized.endsWith(".md")) continue;
-    if (!(await anchorsFor(normalized)).has(decode(anchor).toLowerCase())) {
+    if (!(await anchorsFor(normalized)).has(decode(anchor))) {
       report(file, `anchor が見出しに無い — ${target}`);
     }
   }
