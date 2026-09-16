@@ -22,5 +22,12 @@ skills は Claude plugin としてインストールして参照する (下記)�
 
 インストールするとスキルは `/ikeyan-skills:<name>` で名前空間付き呼び出しになる。
 
-このリポ自身の中では `.claude/skills` → `skills/` の symlink により素の名前で live ロードされる (編集が即反映される dogfood 用)。plugin も入れた環境でこのリポを開くと素の名前と名前空間付きの二重ロードになる。
+このリポ自身の中では `.claude/skills/` から素の名前で live ロードされる (編集が即反映される dogfood 用)。plugin も入れた環境でこのリポを開くと素の名前と名前空間付きの二重ロードになる。
+
+`.claude/skills/` の中身は 2 種類:
+
+- `skills/<name>` への symlink — plugin として配るスキル。
+- 実体のディレクトリ — このリポ専用で、配らないスキル (`pr-workflow`)。plugin が配るのは `skills/` 配下だけなので、専用スキルはここに実体で置く。
+
+対応関係は `./verify.sh` が検査する (配布スキルの symlink 漏れ、symlink 先の誤り、実体側の `SKILL.md` 欠落)。
 
