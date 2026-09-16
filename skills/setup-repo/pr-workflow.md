@@ -51,6 +51,6 @@ description: Use when pushing a branch, creating a pull request or editing its d
 - **コメント対応後**: 対応したスレッドに返信 (対応コミットの SHA と要点。却下なら理由) してから resolve する。通常コメントは返信のみ。
 - **CI の確認**: 既定は失敗の検知だけ。
   - 成功を見届けるのは理由があるときだけ (ユーザーに指示された、CI 自体を変更していて成功時のログが要る等)。その理由から必要な check を特定し、それが現在の head に現れて終端状態になるまで有界に待つ。打ち切ったらユーザーに報告する。待ち続けない。
-  - head に走る check 全部が揃ったことを確実に知る手段は無いので、「全部緑」を確認対象にはしない。
-  - check の一覧は CI 設定や required checks から推測せず、現在の head に現れているものを読む (リポの設定にも required checks にも現れない check が走ることがある)。
+  - 「全部緑」は確認対象にしない。head に走る check の集合は閉じず、「もう増えない」の判定は決定不能 (`canon: facts/github/check-runs-set-is-open`)。
+  - 同じ理由で、走る check の一覧は CI 設定や required checks からは導けない。現在の head に現れているものを読む。
 - **PR コメントの watch**: しない。cc-web では `subscribe_pr_activity` でイベントが届く。他の環境で watch するなら手段 (ポーリング間隔・終了条件) を決めてここに書く。
