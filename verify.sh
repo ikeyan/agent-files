@@ -11,9 +11,8 @@ shellcheck "${sh_files[@]}"
 mapfile -t ts_files < <(git ls-files --cached --others --exclude-standard '*.ts')
 deno check "${ts_files[@]}"
 
-# .claude/skills/ には、配布するスキル (skills/ への symlink) とこのリポ専用のスキル (実体) が同居する。
-# plugin が配るのは skills/ 配下だけなので、専用スキルを skills/ に置くと利用者にも配られてしまう。
-# symlink の作成は deno だと無制限の --allow-write/--allow-read が要るので shell 側で扱う。
+# .claude/skills と skills/ の対応 (構造は README)。symlink の作成は deno だと無制限の
+# --allow-write/--allow-read が要るので shell 側で扱う。
 readonly_mode=${VERIFY_READONLY:-}
 skills_status=0
 for path in .claude/skills/*; do
@@ -55,5 +54,6 @@ for path in skills/*/; do
   fi
 done
 
-deno run --allow-read=. --allow-run=git --allow-net=www.schemastore.org scripts/verify.ts
+git ls-files --cached --others --exclude-standard |
+  deno run --allow-read=. --allow-net=www.schemastore.org scripts/verify.ts
 exit "$skills_status"

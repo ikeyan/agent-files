@@ -1,3 +1,7 @@
 {
-  "lock": true
+  "lock": true,
+  "imports": {
+    "ajv": "npm:ajv@8.17.1",
+    "ajv/2020": "npm:ajv@8.17.1/dist/2020.js"
+  }
 }

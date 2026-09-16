@@ -1,15 +1,15 @@
 /**
  * verify.ts — リポ内の JSON と Markdown を検査する。verify.sh から呼ぶ。
  *
- * 事前条件: リポのルートを cwd にして、`git ls-files` が使えること。
+ * 事前条件: リポのルートを cwd にして、検査対象のパスを 1 行 1 件で stdin に流すこと。
  * 副作用: 検査結果を stdout / stderr に出し、違反が 1 件でもあれば exit 1。
  *
  * JSON: 構文 + JSON Schema。schema は実行のたびに取得する。
  * Markdown: リポ内を指すリンクの解決先と、見出し由来の anchor。
  */
-import { Ajv } from "npm:ajv@8.17.1";
-import { Ajv2020 } from "npm:ajv@8.17.1/dist/2020.js";
-import type { ValidateFunction } from "npm:ajv@8.17.1";
+import { Ajv } from "ajv";
+import { Ajv2020 } from "ajv/2020";
+import type { ValidateFunction } from "ajv";
 
 /** 検査する JSON と、当てる schema。null は構文だけ見る。ここに無いファイルは違反として報告する。 */
 const SCHEMAS: Record<string, string | null> = {
@@ -25,14 +25,8 @@ const report = (file: string, message: string) => violations.push(`${file}: ${me
 
 const exists = (path: string) => Deno.stat(path).then(() => true).catch(() => false);
 
-/** git が知っているファイル (追跡済み + ignore されていない未追跡)。commit 前の新規ファイルも検査対象にする。 */
-const repoFiles = async (pattern: string): Promise<string[]> => {
-  const { stdout } = await new Deno.Command("git", {
-    args: ["ls-files", "--cached", "--others", "--exclude-standard", pattern],
-    stdout: "piped",
-  }).output();
-  return new TextDecoder().decode(stdout).split("\n").filter(Boolean);
-};
+const targets = new TextDecoder().decode(await new Response(Deno.stdin.readable).bytes())
+  .split("\n").filter(Boolean);
 
 // logger: false — schema が使う format キーワード (uri 等) を ajv 本体は解釈せず、
 // 無視した旨を毎回 20 行ほど警告に出すため。format 自体は検査していない。
@@ -53,8 +47,8 @@ const validatorOf = async (url: string): Promise<ValidateFunction> => {
   return validate;
 };
 
-const jsonFiles = await repoFiles("*.json");
-const markdownFiles = await repoFiles("*.md");
+const jsonFiles = targets.filter((f) => f.endsWith(".json"));
+const markdownFiles = targets.filter((f) => f.endsWith(".md"));
 
 for (const file of jsonFiles) {
   let json: unknown;
