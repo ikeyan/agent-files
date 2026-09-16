@@ -14,6 +14,7 @@ Context this skill captures, gathered from a long debugging run on `ikeyan/music
 - **Does deliver**: CI *failure* conclusions, new PR/issue comments (`created`), PR review submissions.
 - **Does deliver since 2026-09-12** (observed on `ikeyan/agent-files#11`, comment authored by a GitHub App): comment *edits*, as `issue_comment.edited`. Before that, `PATCH /issues/comments/{id}` was silent for subscribers.
 - **Does NOT deliver**: CI *success* conclusions, label / status changes.
+  - Unresolved since 2026-09-16: the tool's own description now says it delivers "comments, CI failures, and **successful check-suite rollups**". That contradicts the 2026-04 observation above and may be a later change. Nobody has re-measured a green run, so do not rely on success arriving.
 - Consequence: a green PR is only visible to the session through a comment. Keep one status comment per PR and PATCH it on every run. Whether an edit by `github-actions[bot]` is delivered has not been measured; if it is not, fall back to create-then-sweep below.
 
 ### Fallback: create-then-sweep

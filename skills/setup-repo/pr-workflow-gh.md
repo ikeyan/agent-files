@@ -14,5 +14,15 @@ gh 2.98.0 で `--help` と実行を確認したもの。「未実測」と書い
 - **CI**:
   - 現れている check の一覧: `gh pr checks <n> --json name,bucket,link`
   - 現れている check が全部終端になるまで待つ: `gh pr checks <n> --watch` (待ち時間は有界にする。後から登録された check を拾うかは未実測)
-  - 特定の check が現れて終端になるまで待つループ、check が 0 件のときの挙動と exit コード: `canon: facts/gh/pr-checks-zero-checks-and-exit-codes`
+  - 特定の check が現れて終端になるまで待つ。`gh pr checks` は check が 0 件だと `--json` でも `--watch` でも exit 1 なので、判定は exit コードでなく出力の有無で行う (`--jq` は該当名が無くても exit 0 で空を返す):
+
+    ```sh
+    end=$((SECONDS + <秒数>))
+    until gh pr checks <n> --json name,bucket --jq '.[] | select(.name == "<check>") | .bucket' | grep -qxv pending; do
+      [ $SECONDS -lt $end ] || { echo "timeout"; exit 1; }
+      sleep 15
+    done
+    ```
+
+    根拠と実測: `canon: facts/gh/pr-checks-zero-checks-and-exit-codes`
   - ログ: Actions の check は `link` の URL から `<jobId>` を取って `gh run view --job <jobId> --log-failed` (`canon: facts/gh/pr-checks-link-to-run-logs`)。Actions 以外の check は `link` の URL を見る。

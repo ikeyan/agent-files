@@ -92,4 +92,5 @@ description: Use when creating a new repository, bringing an existing repository
     - push 先: 書き込めることを実測で確かめた remote (fork 運用では `origin` と限らない)。
     - 寄稿規約: 規約が書いてあるファイルを指す。中身は写さない (`CONTRIBUTING.md` から読めるので)。文書に無いがこのリポで通っている規約だけ本文に書く。無ければ「なし」。
   - リポで使っていない仕組み (Codex Review 等) の項目は削る。
+  - canon が読めない環境で動くようにする。cc-web のセッションは canon の作業コピーを持たず、GitHub MCP の repo scope も作業対象リポだけなので `canon:` 参照を解決できない (2026-09-16 実測)。行動に要る手順・コマンドは本文に書き、canon 参照は根拠と実測の置き場として添えるだけにする。
 - push 単位の方針は pr-workflow skill だけに書き、AGENTS.md に重ねない。

@@ -21,7 +21,10 @@ description: Use when pushing a branch, creating a pull request or editing its d
 
 - **作業の開始**: 既定ブランチの最新を取得し、差分がない状態でこのリポの単一検証コマンド (AGENTS.md) を通す。成功を確認してから作業を始める。
 - **ブランチの作成**: 既定ブランチの最新から切る。命名は寄稿規約に従う。既定ブランチに直接コミットしない。
-- **ブランチの更新**: push 先の作業ブランチへ push する。他人のブランチの履歴は書き換えない (base の取り込みは merge)。マージ済み PR のブランチには積まず、既定ブランチから同名で作り直す (`canon: facts/git/force-with-lease-recreated-branch`)。
+- **ブランチの更新**: push 先の作業ブランチへ push する。他人のブランチの履歴は書き換えない (base の取り込みは merge)。マージ済み PR のブランチには積まず、既定ブランチから同名で作り直す。
+  - 作り直したブランチは remote に残る旧ブランチと衝突し、push が non-fast-forward で拒否される。`git fetch <remote> <branch>` した oid が、そのブランチを head とするマージ済み PR の head SHA と一致する (= マージ後に何も積まれていない) ことを PR 情報で確認してから、`git push --force-with-lease=<branch>:<fetch した oid> <remote> <branch>` で上書きする。値を省いた `--force-with-lease` は拒否される。
+  - コミットの祖先関係 (`merge-base --is-ancestor`) はマージ済みの判定に使えない (squash / rebase マージでは旧 tip が既定ブランチの祖先にならない)。
+  - 根拠と実測: `canon: facts/git/force-with-lease-recreated-branch`
 - **push の単位**: コミットごとには push しない。作業の区切り (レビュー依頼・指示された時点) でまとめる。
 - **PR の作成**: 頼まれたときだけ作る。寄稿規約に従う。
 - **PR の説明**: 最新の HEAD に関連することだけを書く。push するたびに更新するので、計測結果を書くなら計測スクリプトを用意する。
@@ -51,6 +54,6 @@ description: Use when pushing a branch, creating a pull request or editing its d
 - **コメント対応後**: 対応したスレッドに返信 (対応コミットの SHA と要点。却下なら理由) してから resolve する。通常コメントは返信のみ。
 - **CI の確認**: 既定は失敗の検知だけ。
   - 成功を見届けるのは理由があるときだけ (ユーザーに指示された、CI 自体を変更していて成功時のログが要る等)。その理由から必要な check を特定し、それが現在の head に現れて終端状態になるまで有界に待つ。打ち切ったらユーザーに報告する。待ち続けない。
-  - 「全部緑」は確認対象にしない。head に走る check の集合は閉じず、「もう増えない」の判定は決定不能 (`canon: facts/github/check-runs-set-is-open`)。
+  - 「全部緑」は確認対象にしない。check run は GitHub App が任意の時点で任意の commit に作れるので集合が閉じず、「もう増えない」の判定は決定不能 (`canon: facts/github/check-runs-set-is-open`)。
   - 同じ理由で、走る check の一覧は CI 設定や required checks からは導けない。現在の head に現れているものを読む。
 - **PR コメントの watch**: しない。cc-web では `subscribe_pr_activity` でイベントが届く。他の環境で watch するなら手段 (ポーリング間隔・終了条件) を決めてここに書く。
