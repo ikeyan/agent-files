@@ -17,3 +17,6 @@ jobs:
         with:
           deno-version: v2.x
       - run: ./verify.sh
+        env:
+          # CI は作業ツリーを直さない。symlink のずれは違反として落とす。
+          VERIFY_READONLY: "1"

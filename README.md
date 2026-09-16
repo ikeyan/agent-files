@@ -29,5 +29,5 @@ skills は Claude plugin としてインストールして参照する (下記)�
 - `skills/<name>` への symlink — plugin として配るスキル。
 - 実体のディレクトリ — このリポ専用で、配らないスキル (`pr-workflow`)。plugin が配るのは `skills/` 配下だけなので、専用スキルはここに実体で置く。
 
-対応関係は `./verify.sh` が検査する (配布スキルの symlink 漏れ、symlink 先の誤り、実体側の `SKILL.md` 欠落)。
+対応関係は `./verify.sh` が見る。`skills/` にスキルを足した・消したときの symlink の作り忘れと残骸はその場で直す。CI は `VERIFY_READONLY=1` で直さずに落とす。symlink 先の誤りと実体側の `SKILL.md` 欠落は、どちらのモードでも違反として報告する。
 

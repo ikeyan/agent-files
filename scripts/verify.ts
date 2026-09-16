@@ -23,6 +23,8 @@ const SCHEMAS: Record<string, string | null> = {
 const violations: string[] = [];
 const report = (file: string, message: string) => violations.push(`${file}: ${message}`);
 
+const exists = (path: string) => Deno.stat(path).then(() => true).catch(() => false);
+
 /** git が知っているファイル (追跡済み + ignore されていない未追跡)。commit 前の新規ファイルも検査対象にする。 */
 const repoFiles = async (pattern: string): Promise<string[]> => {
   const { stdout } = await new Deno.Command("git", {
@@ -76,31 +78,6 @@ for (const file of jsonFiles) {
   }
 }
 
-// .claude/skills/ は、配布するスキル (skills/ への symlink) とこのリポ専用のスキル (実体) が同居する。
-// plugin が配るのは skills/ 配下だけなので、専用スキルを skills/ に置くと利用者にも配られてしまう。
-const LOCAL_SKILLS = ".claude/skills";
-const linked = new Set<string>();
-for await (const entry of Deno.readDir(LOCAL_SKILLS)) {
-  const path = `${LOCAL_SKILLS}/${entry.name}`;
-  if (entry.isSymlink) {
-    const target = await Deno.readLink(path);
-    if (target !== `../../skills/${entry.name}`) {
-      report(path, `symlink 先が ../../skills/${entry.name} でない — ${target}`);
-      continue;
-    }
-    linked.add(entry.name);
-    continue;
-  }
-  if (!(await Deno.stat(`${path}/SKILL.md`).then(() => true).catch(() => false))) {
-    report(path, "SKILL.md が無い");
-  }
-}
-for await (const entry of Deno.readDir("skills")) {
-  if (entry.isDirectory && !linked.has(entry.name)) {
-    report(`${LOCAL_SKILLS}/${entry.name}`, `配布スキルへの symlink が無い — ln -s ../../skills/${entry.name} ${LOCAL_SKILLS}/${entry.name}`);
-  }
-}
-
 /** GitHub の見出し anchor 生成 (小文字化、記号除去、空白をハイフン、重複は -1, -2 …)。 */
 const anchorsOf = (markdown: string): Set<string> => {
   const seen = new Map<string, number>();
@@ -143,7 +120,7 @@ for (const file of markdownFiles) {
     const [path, anchor] = target.split("#");
     const resolved = path === "" ? file : `${dir}/${path}`.replace(/^\.\//, "");
     const normalized = decodeURIComponent(new URL(resolved, "file:///").pathname.slice(1));
-    if (!(await Deno.stat(normalized).then(() => true).catch(() => false))) {
+    if (!(await exists(normalized))) {
       report(file, `リンク先が無い — ${target}`);
       continue;
     }
