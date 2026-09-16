@@ -60,4 +60,4 @@ description: Use when pushing a branch, creating a pull request or editing its d
   - 成功を見届けるのは理由があるときだけ (ユーザーに指示された、CI 自体を変更していて成功時のログが要る等)。その理由から必要な check を特定し、それが現在の head に現れて終端状態になるまで有界に待つ。打ち切ったらユーザーに報告する。待ち続けない。
   - 「全部緑」は確認対象にしない。check run は GitHub App が任意の時点で任意の commit に作れるので集合が閉じず、「もう増えない」の判定は決定不能 (`canon: facts/github/check-runs-set-is-open`)。
   - 同じ理由で、走る check の一覧は CI 設定や required checks からは導けない。現在の head に現れているものを読む。
-- **PR コメントの watch**: しない。cc-web では `subscribe_pr_activity` でイベントが届く。他の環境で watch するなら手段 (ポーリング間隔・終了条件) を決めてここに書く。
+- **PR コメントの watch**: 既定ではしない。待つときは、cc-web では `subscribe_pr_activity`、それ以外は手段ファイルの「PR の watch」を使う。
