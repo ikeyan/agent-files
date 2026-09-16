@@ -4,10 +4,10 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-mapfile -t sh_files < <(git ls-files '*.sh')
+mapfile -t sh_files < <(git ls-files --cached --others --exclude-standard '*.sh')
 shellcheck "${sh_files[@]}"
 
-mapfile -t ts_files < <(git ls-files '*.ts')
+mapfile -t ts_files < <(git ls-files --cached --others --exclude-standard '*.ts')
 deno check "${ts_files[@]}"
 
 deno run --allow-read=. --allow-run=git --allow-net=www.schemastore.org scripts/verify.ts

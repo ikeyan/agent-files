@@ -4,33 +4,55 @@
  * 事前条件: リポのルートを cwd にして、`git ls-files` が使えること。
  * 副作用: 検査結果を stdout / stderr に出し、違反が 1 件でもあれば exit 1。
  *
- * JSON: 構文 + JSON Schema (schemastore)。schema は実行のたびに取得する。
+ * JSON: 構文 + JSON Schema。schema は実行のたびに取得する。
  * Markdown: リポ内を指すリンクの解決先と、見出し由来の anchor。
  */
-import Ajv from "npm:ajv@8.17.1";
-import addFormats from "npm:ajv-formats@3.0.1";
+import { Ajv } from "npm:ajv@8.17.1";
+import { Ajv2020 } from "npm:ajv@8.17.1/dist/2020.js";
+import type { ValidateFunction } from "npm:ajv@8.17.1";
 
-const SCHEMAS: Record<string, string> = {
+/** 検査する JSON と、当てる schema。null は構文だけ見る。ここに無いファイルは違反として報告する。 */
+const SCHEMAS: Record<string, string | null> = {
   ".claude/settings.json": "https://www.schemastore.org/claude-code-settings.json",
   ".claude-plugin/plugin.json": "https://www.schemastore.org/claude-code-plugin-manifest.json",
   ".claude-plugin/marketplace.json": "https://www.schemastore.org/claude-code-marketplace.json",
+  // deno の schema は相対 $ref を持ち ajv に非同期解決が要る。deno 自身が読む設定なので構文だけにする。
+  "deno.json": null,
 };
 
 const violations: string[] = [];
 const report = (file: string, message: string) => violations.push(`${file}: ${message}`);
 
-const tracked = async (pattern: string): Promise<string[]> => {
+/** git が知っているファイル (追跡済み + ignore されていない未追跡)。commit 前の新規ファイルも検査対象にする。 */
+const repoFiles = async (pattern: string): Promise<string[]> => {
   const { stdout } = await new Deno.Command("git", {
-    args: ["ls-files", pattern],
+    args: ["ls-files", "--cached", "--others", "--exclude-standard", pattern],
     stdout: "piped",
   }).output();
   return new TextDecoder().decode(stdout).split("\n").filter(Boolean);
 };
 
-const ajv = addFormats(new Ajv({ allErrors: true, strict: false }));
+// logger: false — schema が使う format キーワード (uri 等) を ajv 本体は解釈せず、
+// 無視した旨を毎回 20 行ほど警告に出すため。format 自体は検査していない。
+const ajvOptions = { allErrors: true, strict: false, logger: false } as const;
+const byDraft = { "draft-07": new Ajv(ajvOptions), "2020-12": new Ajv2020(ajvOptions) };
 
-const jsonFiles = await tracked("*.json");
-const markdownFiles = await tracked("*.md");
+const validators = new Map<string, ValidateFunction>();
+/** 同じ schema を 2 度 compile すると ajv が $id 重複で落ちるので、URL 単位で使い回す。 */
+const validatorOf = async (url: string): Promise<ValidateFunction> => {
+  const cached = validators.get(url);
+  if (cached) return cached;
+  const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+  if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
+  const schema: { $schema?: string } = await res.json();
+  const ajv = schema.$schema?.includes("2020-12") ? byDraft["2020-12"] : byDraft["draft-07"];
+  const validate = ajv.compile(schema);
+  validators.set(url, validate);
+  return validate;
+};
+
+const jsonFiles = await repoFiles("*.json");
+const markdownFiles = await repoFiles("*.md");
 
 for (const file of jsonFiles) {
   let json: unknown;
@@ -40,14 +62,13 @@ for (const file of jsonFiles) {
     report(file, `読めない — ${e instanceof Error ? e.message : e}`);
     continue;
   }
-  const schemaUrl = SCHEMAS[file];
-  if (!schemaUrl) {
+  if (!(file in SCHEMAS)) {
     report(file, "対応する schema が verify.ts の SCHEMAS に無い");
     continue;
   }
-  const res = await fetch(schemaUrl, { signal: AbortSignal.timeout(30_000) });
-  if (!res.ok) throw new Error(`${schemaUrl}: HTTP ${res.status}`);
-  const validate = ajv.compile(await res.json());
+  const schemaUrl = SCHEMAS[file];
+  if (schemaUrl === null) continue;
+  const validate = await validatorOf(schemaUrl);
   if (!validate(json)) {
     for (const err of validate.errors ?? []) {
       report(file, `schema 違反 ${err.instancePath || "/"} ${err.message}`);
@@ -88,7 +109,7 @@ const anchorsFor = async (path: string): Promise<Set<string>> => {
 for (const file of markdownFiles) {
   const text = await Deno.readTextFile(file).catch(() => null);
   if (text === null) {
-    report(file, "git が追跡しているがファイルが無い");
+    report(file, "git の一覧にあるがファイルが無い");
     continue;
   }
   const dir = file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : ".";
