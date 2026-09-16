@@ -14,13 +14,13 @@ import GithubSlugger from "github-slugger";
 import MarkdownIt from "markdown-it";
 
 /** 検査する JSON と、当てる schema。null は構文だけ見る。ここに無いファイルは違反として報告する。 */
-const SCHEMAS: Record<string, string | null> = {
+const SCHEMAS: Record<string, string | null> = Object.assign({ __proto__: null }, {
   ".claude/settings.json": "https://www.schemastore.org/claude-code-settings.json",
   ".claude-plugin/plugin.json": "https://www.schemastore.org/claude-code-plugin-manifest.json",
   ".claude-plugin/marketplace.json": "https://www.schemastore.org/claude-code-marketplace.json",
   // deno の schema は相対 $ref を持ち ajv に非同期解決が要る。deno 自身が読む設定なので構文だけにする。
   "deno.json": null,
-};
+});
 
 const violations: string[] = [];
 const report = (file: string, message: string) => violations.push(`${file}: ${message}`);
@@ -80,10 +80,8 @@ for (const file of jsonFiles) {
     continue;
   }
   const schemaUrl = SCHEMAS[file];
-  if (schemaUrl === null) continue;
-  const validate = await validatorOf(schemaUrl);
-  if (validate === null) continue;
-  if (!validate(json)) {
+  const validate = schemaUrl && await validatorOf(schemaUrl);
+  if (validate && !validate(json)) {
     for (const err of validate.errors ?? []) {
       report(file, `schema 違反 ${err.instancePath || "/"} ${err.message}`);
     }
@@ -91,10 +89,13 @@ for (const file of jsonFiles) {
 }
 
 // Markdown は CommonMark のパーサで読む。コードブロック・インラインコードの中はリンクでも見出しでもない。
-const md = new MarkdownIt();
+const md = new MarkdownIt({ html: true });
 type Token = ReturnType<typeof md.parse>[number];
 
-/** GitHub は先頭の YAML frontmatter を本文として描画しない (パーサに渡すと --- が見出しの下線になる)。 */
+/**
+ * 先頭の --- で囲まれたブロックを落としてからパースする。GitHub はこのブロックを YAML として読めなくても
+ * frontmatter として扱い、本文として描画しない (見出しにもリンクにもならない)。残すと --- が見出しの下線になる。
+ */
 const parse = (markdown: string): Token[] =>
   md.parse(markdown.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, ""), {});
 
