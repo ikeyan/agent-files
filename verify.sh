@@ -18,7 +18,8 @@ check_files shellcheck -- '*.sh'
 check_files deno check -- '*.ts'
 
 # .claude/skills と skills/ の対応 (構造は README)。symlink の作成は deno だと無制限の
-# --allow-write/--allow-read が要るので shell 側で扱う。
+# --allow-write/--allow-read が要るので shell 側で扱う。Claude Code のサンドボックス内では
+# .claude/skills が保護パスで書けないので、直せなければ違反として報告して検査を続ける。
 readonly_mode=${VERIFY_READONLY:-}
 skills_status=0
 if [ ! -d .claude/skills ]; then
@@ -37,8 +38,12 @@ else
           echo "$path: 切れた symlink" >&2
           skills_status=1
         else
-          unlink "$path"
-          echo "$path: 切れた symlink を削除した"
+          if unlink "$path"; then
+            echo "$path: 切れた symlink を削除した"
+          else
+            echo "$path: 切れた symlink を削除できない。 Execute: unlink $path" >&2
+            skills_status=1
+          fi
         fi
         continue
       fi
@@ -63,8 +68,12 @@ else
       echo "$link: 配布スキルへの symlink が無い。 Execute: ln -s ../../skills/$name $link" >&2
       skills_status=1
     else
-      ln -s "../../skills/$name" "$link"
-      echo "$link: 配布スキルへの symlink を作った"
+      if ln -s "../../skills/$name" "$link"; then
+        echo "$link: 配布スキルへの symlink を作った"
+      else
+        echo "$link: 配布スキルへの symlink を作れない。 Execute: ln -s ../../skills/$name $link" >&2
+        skills_status=1
+      fi
     fi
   done
 fi
