@@ -17,27 +17,29 @@ readonly_mode=${VERIFY_READONLY:-}
 skills_status=0
 for path in .claude/skills/*; do
   name=${path##*/}
-  if [ ! -L "$path" ]; then
-    [ -f "$path/SKILL.md" ] || { echo "$path: SKILL.md が無い" >&2; skills_status=1; }
-    if [ -d "skills/$name" ]; then
-      echo "$path: 同名の配布スキルが skills/ にある — どちらが読まれるか紛らわしい" >&2
+  if [ -L "$path" ]; then
+    target=$(readlink "$path")
+    if [ "$target" != "../../skills/$name" ]; then
+      echo "$path: symlink 先が ../../skills/$name でない — $target" >&2
       skills_status=1
+      continue
     fi
-    continue
-  fi
-  target=$(readlink "$path")
-  if [ "$target" != "../../skills/$name" ]; then
-    echo "$path: symlink 先が ../../skills/$name でない — $target" >&2
+    if [ ! -e "$path" ]; then
+      if [ -n "$readonly_mode" ]; then
+        echo "$path: symlink 先の配布スキルが無い (消した・改名した残骸)" >&2
+        skills_status=1
+      else
+        unlink "$path"
+        echo "$path: 切れた symlink を消した"
+      fi
+      continue
+    fi
+  elif [ -d "skills/$name" ]; then
+    echo "$path: 同名の配布スキルが skills/ にある — どちらが読まれるか紛らわしい" >&2
     skills_status=1
-  elif [ ! -e "$path" ]; then
-    if [ -n "$readonly_mode" ]; then
-      echo "$path: symlink 先の配布スキルが無い (消した・改名した残骸)" >&2
-      skills_status=1
-    else
-      unlink "$path"
-      echo "$path: 切れた symlink を消した"
-    fi
   fi
+  # symlink 経由でも実体でも、SKILL.md が無ければスキルとして読まれない。
+  [ -f "$path/SKILL.md" ] || { echo "$path: SKILL.md が無い" >&2; skills_status=1; }
 done
 for path in skills/*/; do
   name=$(basename "$path")
@@ -45,7 +47,10 @@ for path in skills/*/; do
   if [ -e "$link" ] || [ -L "$link" ]; then
     continue
   fi
-  if [ -n "$readonly_mode" ]; then
+  if [ ! -f "$path/SKILL.md" ]; then
+    echo "$path: SKILL.md が無い — symlink は作らない" >&2
+    skills_status=1
+  elif [ -n "$readonly_mode" ]; then
     echo "$link: 配布スキルへの symlink が無い — ln -s ../../skills/$name $link" >&2
     skills_status=1
   else

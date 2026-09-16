@@ -10,7 +10,7 @@ gh 2.98.0 で `--help` と実行を確認したもの。「未実測」と書い
   - `gh api --paginate <endpoint>` — REST。
   - `gh api graphql` — スレッドの `isResolved` / `isOutdated` はここでしか取れない。
 - **返信**: `gh api --method POST repos/<owner>/<repo>/pulls/<n>/comments/<id>/replies -f body=<text>`。`<id>` はスレッド先頭のレビューコメントの数値 id (`#discussion_r…` の数字)。返信への返信はできない。
-- **resolve**: `gh api graphql -f query='mutation($threadId:ID!){resolveReviewThread(input:{threadId:$threadId}){thread{isResolved}}}' -f threadId=<PRRT_…>` (mutation の存在と入力フィールドは introspection で確認、実行は未実測)。
+- **resolve**: `gh api graphql -f query='mutation($threadId:ID!){resolveReviewThread(input:{threadId:$threadId}){thread{isResolved}}}' -f threadId=<PRRT_…>`。
 - **CI**:
   - 現れている check の一覧: `gh pr checks <n> --json name,bucket,link`
   - 現れている check が全部終端になるまで待つ: `gh pr checks <n> --watch` (待ち時間は有界にする。後から登録された check を拾うかは未実測)
