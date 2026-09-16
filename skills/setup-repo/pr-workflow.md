@@ -50,7 +50,10 @@ description: Use when pushing a branch, creating a pull request or editing its d
   - 未対応の指摘 = `isResolved: false` のスレッド全部 (outdated でも) + 対応を求める内容を持ち、まだ返信していない通常コメントと review 本文。
   - 各レビュアーについて、`COMMENTED` を除いた最新の review が `CHANGES_REQUESTED` ならその本文は必ず含む (スレッドを持たない指摘はここにしか現れない)。
   - 情報だけの bot コメントと `APPROVED` の本文は含まない。
-- **Codex Review (chatgpt-codex-connector)**: 使っているリポでは、現在の head に対して完了しているかを確かめてから読む。Codex の指摘は review decision を動かさない (review は `COMMENTED`) ので、未対応かどうかはスレッドの `isResolved` で見る (`canon: facts/github/codex-review-pr-flow`)。
+- **Codex Review (chatgpt-codex-connector)**: 使っているリポでは、現在の head に対して完了しているかを確かめてから読む。
+  - 完了 = 進捗コメント (先頭が `<!-- codex-pull-request-review-summary -->`) の状態表が ✅ Completed で、その Commit 列が現在の head と一致していること。push 直後は前の commit の Completed と前の review が残っているので、head の一致を見ずに完了と判断しない。
+  - Codex の指摘は review decision を動かさない (review は `COMMENTED`) ので、未対応かどうかはスレッドの `isResolved` で見る。
+  - 観察の全体: `canon: facts/github/codex-review-pr-flow`
 - **コメント対応後**: 対応したスレッドに返信 (対応コミットの SHA と要点。却下なら理由) してから resolve する。通常コメントは返信のみ。
 - **CI の確認**: 既定は失敗の検知だけ。
   - 成功を見届けるのは理由があるときだけ (ユーザーに指示された、CI 自体を変更していて成功時のログが要る等)。その理由から必要な check を特定し、それが現在の head に現れて終端状態になるまで有界に待つ。打ち切ったらユーザーに報告する。待ち続けない。
