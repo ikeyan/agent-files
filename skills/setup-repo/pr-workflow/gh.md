@@ -41,7 +41,8 @@ gh 2.98.0 で `--help` と実行を確認したもの。「未実測」と書い
     get() { # <API パス> <jq フィルタ>: 全ページを取り、各ページに jq を当てる
       local page=1 body
       while :; do
-        body=$(curl -fsS --max-time 30 -H "Authorization: Bearer $token" -H "Accept: application/vnd.github+json" "https://api.github.com/$1?per_page=100&page=$page") || return 1
+        # トークンはヘッダとして標準入力から渡す。引数に載せると他のユーザーから ps で見える
+        body=$(printf 'Authorization: Bearer %s\n' "$token" | curl -fsS --max-time 30 -H @- -H "Accept: application/vnd.github+json" "https://api.github.com/$1?per_page=100&page=$page") || return 1
         jq -r "$2" <<<"$body" || return 1
         [ "$(jq 'if type == "array" then length else (.check_runs // .statuses | length) end' <<<"$body")" -eq 100 ] || return 0
         page=$((page + 1))
