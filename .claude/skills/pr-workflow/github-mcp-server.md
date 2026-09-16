@@ -1,0 +1,1 @@
+../../../skills/setup-repo/pr-workflow/github-mcp-server.md

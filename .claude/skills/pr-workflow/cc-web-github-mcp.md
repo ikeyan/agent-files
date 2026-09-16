@@ -1,0 +1,1 @@
+../../../skills/setup-repo/pr-workflow/cc-web-github-mcp.md

@@ -12,10 +12,11 @@ description: Use when pushing a branch, creating a pull request or editing its d
 
 ## 手段
 
-使うほうだけ読む。両方が揃っている環境 (local CLI では `gh` と GitHub MCP の両方が使えることがある) では `gh` を既定にする。
+使うものだけ読む。`gh` が使える環境では `gh` を既定にする。
 
 - [gh.md](gh.md)
-- [github-mcp.md](github-mcp.md) — `gh` が無い環境 (cc-web 等)
+- [github-mcp-server.md](github-mcp-server.md) — GitHub 公式の MCP サーバ (`api.githubcopilot.com`)
+- [cc-web-github-mcp.md](cc-web-github-mcp.md) — Claude Code on the web に組み込まれた GitHub MCP
 
 ## 方針
 
