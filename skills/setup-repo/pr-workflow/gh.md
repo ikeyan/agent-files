@@ -33,6 +33,7 @@ gh 2.98.0 で `--help` と実行を確認したもの。「未実測」と書い
     ```bash
     repo=$1 pr=$2 state=$3 interval=${4:-60}
     token=${GH_TOKEN:-$(gh auth token)}
+    [ -n "$token" ] || { echo "error GitHub のトークンが無い。GH_TOKEN を設定するか gh auth login する"; exit 1; }
     get() { # <API パス> <jq フィルタ>: 全ページを取り、各ページに jq を当てる
       local page=1 body
       while :; do

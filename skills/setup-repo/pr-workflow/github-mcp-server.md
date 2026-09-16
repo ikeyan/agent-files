@@ -10,4 +10,4 @@ GitHub 公式の MCP サーバ (github/github-mcp-server)。リモート版は `
 - **返信**: `add_reply_to_pull_request_comment`。`commentId` は `#discussion_r…` の数値 id で、スレッドの `PRRT_…` ではない。
 - **resolve**: `pull_request_review_write` の method `resolve_thread` (`threadId` に `PRRT_…`)。
 - **CI**: `pull_request_read` の `get_check_runs` (Checks API) と `get_status` (Commit Status API。旧来の status context は `get_check_runs` に出ない)。どちらも 0 件を未着と区別できないので、必要な check が現れるまで再読する。ログは `actions` ツールセットの `get_job_logs`。
-- **イベント**: 購読の仕組みは無い。待つなら gh.md の「PR の watch」を使う (MCP の tool は Monitor のループから呼べない)。
+- **イベント**: 購読の仕組みは無い。待つなら gh.md の「PR の watch」を使う (MCP の tool は Monitor のループから呼べない)。GitHub のトークンが要るので、`gh` が無い環境では `GH_TOKEN` を設定する。
