@@ -3,18 +3,33 @@
 # 既定では .claude/skills の symlink のずれ (作り忘れ・残骸) を直す。VERIFY_READONLY=1 では直さず違反にする (CI 用)。
 # 事前条件: shellcheck と deno が PATH にあること。ネットワーク (www.schemastore.org) に出られること。
 set -euo pipefail
+# nullglob: 空のディレクトリで glob がパターン文字列そのものに化け、存在しないパスを検査してしまうのを防ぐ。
+shopt -s nullglob
 cd "$(dirname "$0")"
 
-mapfile -t sh_files < <(git ls-files --cached --others --exclude-standard '*.sh')
-shellcheck "${sh_files[@]}"
-
-mapfile -t ts_files < <(git ls-files --cached --others --exclude-standard '*.ts')
-deno check "${ts_files[@]}"
+check_files() { # <コマンド…> -- <パターン>: git が知っているファイルが 1 件以上あるときだけコマンドを回す
+  local cmd=() files=()
+  while [ "$1" != "--" ]; do cmd+=("$1"); shift; done
+  shift
+  while IFS= read -r file; do files+=("$file"); done < <(git ls-files --cached --others --exclude-standard "$1")
+  [ ${#files[@]} -gt 0 ] && "${cmd[@]}" "${files[@]}"
+}
+check_files shellcheck -- '*.sh'
+check_files deno check -- '*.ts'
 
 # .claude/skills と skills/ の対応 (構造は README)。symlink の作成は deno だと無制限の
 # --allow-write/--allow-read が要るので shell 側で扱う。
 readonly_mode=${VERIFY_READONLY:-}
 skills_status=0
+if [ ! -d .claude/skills ]; then
+  if [ -n "$readonly_mode" ]; then
+    echo ".claude/skills: ディレクトリが無い" >&2
+    skills_status=1
+  else
+    mkdir -p .claude/skills
+    echo ".claude/skills: ディレクトリを作った"
+  fi
+fi
 for path in .claude/skills/*; do
   name=${path##*/}
   if [ -L "$path" ]; then

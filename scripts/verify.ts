@@ -23,6 +23,15 @@ const SCHEMAS: Record<string, string | null> = {
 const violations: string[] = [];
 const report = (file: string, message: string) => violations.push(`${file}: ${message}`);
 
+/** 壊れた %-エンコードで例外を出さない (URIError で検査全体が止まるのを防ぐ)。 */
+const decode = (s: string): string => {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+};
+
 const exists = (path: string) => Deno.stat(path).then(() => true).catch(() => false);
 
 const targets = new TextDecoder().decode(await new Response(Deno.stdin.readable).bytes())
@@ -33,16 +42,22 @@ const targets = new TextDecoder().decode(await new Response(Deno.stdin.readable)
 const ajvOptions = { allErrors: true, strict: false, logger: false } as const;
 const byDraft = { "draft-07": new Ajv(ajvOptions), "2020-12": new Ajv2020(ajvOptions) };
 
-const validators = new Map<string, ValidateFunction>();
-/** 同じ schema を 2 度 compile すると ajv が $id 重複で落ちるので、URL 単位で使い回す。 */
-const validatorOf = async (url: string): Promise<ValidateFunction> => {
+const validators = new Map<string, ValidateFunction | null>();
+/** 同じ schema を 2 度 compile すると ajv が $id 重複で落ちるので、URL 単位で使い回す。取れなければ null。 */
+const validatorOf = async (url: string): Promise<ValidateFunction | null> => {
   const cached = validators.get(url);
-  if (cached) return cached;
-  const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
-  if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
-  const schema: { $schema?: string } = await res.json();
-  const ajv = schema.$schema?.includes("2020-12") ? byDraft["2020-12"] : byDraft["draft-07"];
-  const validate = ajv.compile(schema);
+  if (cached !== undefined) return cached;
+  let validate: ValidateFunction | null = null;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const schema: { $schema?: string } = await res.json();
+    const ajv = schema.$schema?.includes("2020-12") ? byDraft["2020-12"] : byDraft["draft-07"];
+    validate = ajv.compile(schema);
+  } catch (e) {
+    // 1 つの schema が取れないだけで、残りの JSON と Markdown の検査まで落とさない。
+    report(url, `schema を用意できない — ${e instanceof Error ? e.message : e}`);
+  }
   validators.set(url, validate);
   return validate;
 };
@@ -65,12 +80,30 @@ for (const file of jsonFiles) {
   const schemaUrl = SCHEMAS[file];
   if (schemaUrl === null) continue;
   const validate = await validatorOf(schemaUrl);
+  if (validate === null) continue;
   if (!validate(json)) {
     for (const err of validate.errors ?? []) {
       report(file, `schema 違反 ${err.instancePath || "/"} ${err.message}`);
     }
   }
 }
+
+/** ``` / ~~~ で囲まれた部分を落とす。中の # 行は見出しでなく、[x](y) もリンクではない。 */
+const withoutFences = (markdown: string): string => {
+  let fence: string | null = null;
+  return markdown.split("\n").map((line) => {
+    const marker = line.match(/^\s*(```+|~~~+)/)?.[1];
+    if (fence === null && marker) {
+      fence = marker[0];
+      return "";
+    }
+    if (fence !== null) {
+      if (marker && marker[0] === fence) fence = null;
+      return "";
+    }
+    return line;
+  }).join("\n");
+};
 
 /** GitHub の見出し anchor 生成 (小文字化、記号除去、空白をハイフン、重複は -1, -2 …)。 */
 const anchorsOf = (markdown: string): Set<string> => {
@@ -84,7 +117,7 @@ const anchorsOf = (markdown: string): Set<string> => {
       .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
       .trim()
       .toLowerCase()
-      .replace(/[^\p{L}\p{N}\s-]/gu, "")
+      .replace(/[^\p{L}\p{N}_\s-]/gu, "")
       .replace(/\s/g, "-");
     const n = seen.get(base) ?? 0;
     seen.set(base, n + 1);
@@ -97,7 +130,7 @@ const anchorCache = new Map<string, Set<string>>();
 const anchorsFor = async (path: string): Promise<Set<string>> => {
   const cached = anchorCache.get(path);
   if (cached) return cached;
-  const anchors = anchorsOf(await Deno.readTextFile(path));
+  const anchors = anchorsOf(withoutFences(await Deno.readTextFile(path)));
   anchorCache.set(path, anchors);
   return anchors;
 };
@@ -109,17 +142,17 @@ for (const file of markdownFiles) {
     continue;
   }
   const dir = file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : ".";
-  for (const [, target] of text.matchAll(/\[[^\]]*\]\(([^)\s]+)\)/g)) {
+  for (const [, target] of withoutFences(text).matchAll(/\[[^\]]*\]\(([^)\s]+)\)/g)) {
     if (/^[a-z][a-z0-9+.-]*:/i.test(target)) continue; // http:, mailto: 等の外部
     const [path, anchor] = target.split("#");
     const resolved = path === "" ? file : `${dir}/${path}`.replace(/^\.\//, "");
-    const normalized = decodeURIComponent(new URL(resolved, "file:///").pathname.slice(1));
+    const normalized = decode(new URL(resolved, "file:///").pathname.slice(1));
     if (!(await exists(normalized))) {
       report(file, `リンク先が無い — ${target}`);
       continue;
     }
     if (!anchor || !normalized.endsWith(".md")) continue;
-    if (!(await anchorsFor(normalized)).has(decodeURIComponent(anchor).toLowerCase())) {
+    if (!(await anchorsFor(normalized)).has(decode(anchor).toLowerCase())) {
       report(file, `anchor が見出しに無い — ${target}`);
     }
   }
