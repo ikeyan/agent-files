@@ -83,7 +83,5 @@ description: Use when creating a new repository, bringing an existing repository
   - 「このリポの値」の `<…>` を埋める:
     - push 先: 書き込めることを実測で確かめた remote (fork 運用では `origin` と限らない)。
     - 寄稿規約: `CONTRIBUTING.md` 等を読んで書く。無ければ「なし」。
-    - CI の最低限の check 名: 実際の push で無条件に走ると実測したもの。条件付きの check はその条件と一緒に書く。CI 設定や required checks から推測しない (organization / enterprise の ruleset が注入する workflow はどちらにも現れない)。CI が無ければ「なし」。
-    - CI の静止時間: そのリポで実測する。
   - リポで使っていない仕組み (Codex Review 等) の項目は削る。
 - push 単位の方針は pr-workflow skill だけに書き、AGENTS.md に重ねない。
