@@ -61,12 +61,14 @@ else
   for path in skills/*/; do
     name=$(basename "$path")
     link=".claude/skills/$name"
-    if [ -L "$link" ] || [ -e "$link" ]; then
-      continue
+    if [ -L "$link" ]; then
+      continue # symlink 先の SKILL.md は上のループで見ている
     fi
     if [ ! -f "$path/SKILL.md" ]; then
       echo "$path/SKILL.md: 無い" >&2
       skills_status=1
+    elif [ -e "$link" ]; then
+      continue # 同名の実体で差し替えている
     elif [ -n "$readonly_mode" ]; then
       echo "$link: 配布スキルへの symlink が無い。 Execute: ln -s ../../skills/$name $link" >&2
       skills_status=1
