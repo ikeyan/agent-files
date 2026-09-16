@@ -12,10 +12,10 @@ description: Use when pushing a branch, creating a pull request or editing its d
 
 ## 手段
 
-作業する環境のものだけ読む。同じリポを両方の環境から触ることがある。
+使うほうだけ読む。両方が揃っている環境 (local CLI では `gh` と GitHub MCP の両方が使えることがある) では `gh` を既定にする。
 
-- `gh` が使える環境: [gh.md](gh.md)
-- cc-web (GitHub MCP): [github-mcp.md](github-mcp.md)
+- [gh.md](gh.md)
+- [github-mcp.md](github-mcp.md) — `gh` が無い環境 (cc-web 等)
 
 ## 方針
 
