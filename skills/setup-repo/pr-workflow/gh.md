@@ -28,7 +28,9 @@ gh 2.98.0 で `--help` と実行を確認したもの。「未実測」と書い
 
     check がまだ 0 件でも出力が空になるだけなのでループは回り続ける。旧来の commit status (`gh api repos/<owner>/<repo>/commits/$sha/status`) はこの API に出ない。根拠と実測: `canon: facts/gh/pr-checks-zero-checks-and-exit-codes`
   - ログ: Actions の check は `link` の URL から `<jobId>` を取って `gh run view --job <jobId> --log-failed` (`canon: facts/gh/pr-checks-link-to-run-logs`)。Actions 以外の check は `link` の URL を見る。
-- **PR の watch** (コメントの作成・編集、review、CI の失敗、PR の close を待つ): 次を `$TMPDIR/watch-pr.sh` に保存し、Monitor ツールで `bash $TMPDIR/watch-pr.sh <owner>/<repo> <n> $TMPDIR/pr-<n>.state` を回す (`timeout_ms` は上限の 30 分)。stdout の 1 行が 1 通知になる。
+- **PR の watch** (コメントの作成・編集、review、CI の失敗、PR の close を待つ): Monitor ツールで回す。stdout の 1 行が 1 通知になる。
+  1. watch ごとに専用のディレクトリを作り、出力されたパスを `<dir>` として使う: `mktemp -d -p "${TMPDIR:-/tmp}" watch-pr.XXXXXX`。共有の `/tmp` に固定名で置くと、別のユーザーが先に置いたスクリプトを自分のトークンで実行しうる。
+  2. 次を `<dir>/watch-pr.sh` に保存し、Monitor ツールで `bash <dir>/watch-pr.sh <owner>/<repo> <n> <dir>/state` を回す (`timeout_ms` は上限の 30 分)。
 
     ```bash
     repo=$1 pr=$2 state=$3 interval=${4:-60}
@@ -81,6 +83,6 @@ gh 2.98.0 で `--help` と実行を確認したもの。「未実測」と書い
 
   - HTTP は `gh api` でなく `curl` で送り、`gh` はトークンを取るのにだけ使う。Monitor は Bash と同じサンドボックス内で動き、macOS ではサンドボックス内の `gh api` が TLS 検証に失敗する (`SSL_CERT_FILE` を指定しても変わらない)。`curl` と `jq` が要る。
   - 状態ファイルは前回見た内容。初回は基準を作るだけで、コメントや CI の失敗は出さない (開始時点で既にあるものも出ない)。
-  - 終了条件: PR が閉じられたら 1 行出して終わる。開始時点で閉じていた場合も 1 行出して終わる。Monitor が 30 分で失効したら、同じ状態ファイルで起動し直す。止まっていた間の変化もその時点で出る。
+  - 終了条件: PR が閉じられたら 1 行出して終わる。開始時点で閉じていた場合も 1 行出して終わる。Monitor が 30 分で失効したら、同じ `<dir>` の状態ファイルで起動し直す。止まっていた間の変化もその時点で出る。
   - 間隔は既定 60 秒。1 周に 6 リクエスト前後なので 1 時間に 360 程度で、認証済みの上限 (5,000/時) に収まる。
   - API の取得に失敗し始めたら 1 行出し、同じ間隔で再試行を続ける。失敗が続いても繰り返しは出さない。
