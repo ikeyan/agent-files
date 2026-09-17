@@ -12,7 +12,7 @@ description: Use when recording durable knowledge or feedback for future session
 | 知識の性質 | 置き場所 |
 |---|---|
 | 毎セッション効く規律 (ワークフロー・設計・検証の原則) | AGENTS.md — 常時ロードなので最小に保つ |
-| 狭く検出可能なトリガーを持つ実装者向け指針 (特定のファイル型・タスク型でだけ要る) | skill (`skills/<name>/SKILL.md`) — on-demand ロード |
+| 狭く検出可能なトリガーを持つ実装者向け指針 (特定のファイル型・タスク型でだけ要る) | skill (`skills/<name>/SKILL.md`) — on-demand ロード。中身の書き方は [authoring-skills](../authoring-skills/SKILL.md) |
 | 外部依存 (CLI・ライブラリ・カーネル・API) の確定仕様 | canon の `facts/<topic>/` — 必要時に読む |
 | 過去の事故 (実害・レビューを貫通した欠陥) | canon の `incidents/` |
 
