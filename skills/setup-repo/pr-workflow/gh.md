@@ -13,6 +13,7 @@ gh 2.98.0 で `--help` と実行を確認したもの。「未実測」と書い
 - **resolve**: `gh api graphql -f query='mutation($threadId:ID!){resolveReviewThread(input:{threadId:$threadId}){thread{isResolved}}}' -f threadId=<PRRT_…>`。
 - **CI**:
   - 現れている check の一覧: `gh pr checks <n> --json name,bucket,link`
+  - `gh pr checks` は check が 1 件も無いと `no checks reported` で exit 1 になる (`--json` / `--watch` でも)。CI の失敗とも完了とも扱わない (CI が無いのか未登録なのか区別できない。`canon: facts/gh/pr-checks-zero-checks-and-exit-codes`)。
   - 現れている check が全部終端になるまで待つ: `gh pr checks <n> --watch` (待ち時間は有界にする。push 直後は前のコミットの check を見ることがある。後から登録された check を拾うかは未実測)
   - 特定の check が push したコミットで終端になるまで待つ。`gh pr checks` は push 直後に前のコミットの check を返すことがあるので、SHA を指定して Checks API を読む:
 
