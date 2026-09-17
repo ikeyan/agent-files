@@ -23,7 +23,7 @@ What is and is not delivered, with the measurements: `canon: facts/claude-code/s
 
 Outbound HTTPS goes through a TLS-inspecting proxy with a per-environment host allowlist, and nothing can connect into the session (`canon: facts/claude-code/cc-web-egress-proxy`).
 
-- Before depending on a host, probe it with `curl`. A 403 whose body is `Host not in allowlist` comes from the proxy: the host is blocked for this environment, and only the environment settings in the web UI can allow it. Any other error body comes from the target.
+- Before depending on a host, probe it with `curl`. A 403 whose body is `Host not in allowlist` comes from the proxy: the host is blocked for this environment, and only the environment settings in the web UI can allow it. A JSON body with a `message` field comes from the target.
 - TLS certificate errors naming `O=Anthropic; CN=sandbox-egress-production TLS Inspection CA` come from the proxy.
 - Tokens: check the current session's env for `GH_TOKEN` / `GITHUB_TOKEN` before relying on one; it differs between sessions.
 - Job logs: call `mcp__github__get_job_logs` with `run_id`, `failed_only=true` and a large `tail_lines`.
