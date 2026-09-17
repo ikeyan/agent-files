@@ -27,4 +27,4 @@ description: Use when creating, editing, or reviewing a skill (a SKILL.md or the
 
 ## 文体
 
-リポの REVIEW.md の「自然言語の書き方」に従う。
+[review-perspectives](../review-perspectives/SKILL.md) の担当「自然言語」の観点に従う。

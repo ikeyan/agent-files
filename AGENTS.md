@@ -27,4 +27,4 @@
 
 ## 文書 (Markdown) の書き方
 
-REVIEW.md の「自然言語の書き方」に従う。
+[review-perspectives](skills/review-perspectives/SKILL.md) の担当「自然言語」の観点に従う。
