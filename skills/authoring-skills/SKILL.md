@@ -27,4 +27,4 @@ description: Use when creating, editing, or reviewing a skill (a SKILL.md or the
 
 ## 文体
 
-[writing-comments](../writing-comments/SKILL.md) の「自然言語の書き方」に従う。
+リポの REVIEW.md の「自然言語の書き方」に従う。
