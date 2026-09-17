@@ -21,14 +21,15 @@ gh 2.98.0 で `--help` と実行を確認したもの。「未実測」と書い
     sha=$(printf '%s\n' "$refs" | awk -v r="refs/heads/<branch>" '$2 == r { print $1 }')
     [ -n "$sha" ] || { echo "<remote> に <branch> が無い"; exit 1; }
     end=$((SECONDS + <秒数>))
-    until gh api --paginate "repos/<owner>/<repo>/commits/$sha/check-runs" --jq '.check_runs[] | select(.name == "<check>") | .status' | grep -qx completed; do
+    until statuses=$(gh api --paginate -X GET "repos/<owner>/<repo>/commits/$sha/check-runs" -f check_name='<check>' --jq '.check_runs[].status') &&
+      [ -n "$statuses" ] && ! command grep -qvx completed <<<"$statuses"; do
       [ $SECONDS -lt $end ] || { echo "timeout"; exit 1; }
       sleep 15
     done
-    gh api --paginate "repos/<owner>/<repo>/commits/$sha/check-runs" --jq '.check_runs[] | select(.name == "<check>") | .conclusion'
+    gh api --paginate -X GET "repos/<owner>/<repo>/commits/$sha/check-runs" -f check_name='<check>' --jq '.check_runs[] | "\(.name) \(.app.slug) \(.conclusion) \(.html_url)"'
     ```
 
-    SHA はローカルの `HEAD` からも remote-tracking ref からも取らず、`git ls-remote` でリモートのブランチの先端を直接読む。`ls-remote` のパターンは ref 名の末尾一致なので (`refs/heads/a/refs/heads/<branch>` も当たる)、ref 名が完全一致する行だけを採る。取得に失敗したとき (ネットワーク・認証・remote 名の誤り) は git のエラーのまま止まる。別のブランチをチェックアウトしていても、未 push のコミットがあっても、fetch の refspec がブランチを含まない clone (`--single-branch` 等。push しても remote-tracking ref ができない) でも、push したコミットを指す。自分が push していない PR の head を待つときも、PR の head ブランチを同じように読む (fork なら fork 側の remote)。API の PR の head は push 直後に古いことがあるので使わない (REST の `pulls/<n>` の `head.sha` が新しいコミットになるまで約 1.7 秒かかった)。check がまだ 0 件でも出力が空になるだけなのでループは回り続ける。旧来の commit status (`gh api repos/<owner>/<repo>/commits/$sha/status`) はこの API に出ない。根拠と実測: `canon: facts/gh/pr-checks-zero-checks-and-exit-codes`
+    SHA はローカルの `HEAD` からも remote-tracking ref からも取らず、`git ls-remote` でリモートのブランチの先端を直接読む。`ls-remote` のパターンは ref 名の末尾一致なので (`refs/heads/a/refs/heads/<branch>` も当たる)、ref 名が完全一致する行だけを採る。取得に失敗したとき (ネットワーク・認証・remote 名の誤り) は git のエラーのまま止まる。別のブランチをチェックアウトしていても、未 push のコミットがあっても、fetch の refspec がブランチを含まない clone (`--single-branch` 等。push しても remote-tracking ref ができない) でも、push したコミットを指す。自分が push していない PR の head を待つときも、PR の head ブランチを同じように読む (fork なら fork 側の remote)。API の PR の head は push 直後に古いことがあるので使わない (REST の `pulls/<n>` の `head.sha` が新しいコミットになるまで約 1.7 秒かかった)。同じ名前の check run が複数あり得る (別の workflow や GitHub App が同じ名前で作る) ので、1 件以上あり、その全部が `completed` になるまで待つ。`command grep` にしているのは、Claude Code の Bash ツールでは `grep` が組み込みの ugrep を呼ぶ関数に置き換えられ、`-q` と `-v` を併用したときの終了コードが本物の grep と逆になるため。check がまだ 0 件でも出力が空になるだけなのでループは回り続ける。旧来の commit status (`gh api repos/<owner>/<repo>/commits/$sha/status`) はこの API に出ない。根拠と実測: `canon: facts/gh/pr-checks-zero-checks-and-exit-codes`
   - ログ: Actions の check は `link` の URL から `<jobId>` を取って `gh run view --job <jobId> --log-failed` (`canon: facts/gh/pr-checks-link-to-run-logs`)。Actions 以外の check は `link` の URL を見る。
 - **PR の watch** (コメントの作成・編集、review、CI の失敗、PR の close を待つ): Monitor ツールで回す。stdout の 1 行が 1 通知になる。
   1. watch ごとに専用のディレクトリを作り、出力されたパスを `<dir>` として使う: `mktemp -d -p "${TMPDIR:-/tmp}" watch-pr.XXXXXX`。共有の `/tmp` に固定名で置くと、別のユーザーが先に置いたスクリプトを自分のトークンで実行しうる。
@@ -38,11 +39,12 @@ gh 2.98.0 で `--help` と実行を確認したもの。「未実測」と書い
     repo=$1 pr=$2 state=$3 interval=${4:-60}
     token=${GH_TOKEN:-$(gh auth token)}
     [ -n "$token" ] || { echo "error GitHub のトークンが無い。GH_TOKEN を設定するか gh auth login する"; exit 1; }
-    get() { # <API パス> <jq フィルタ>: 全ページを取り、各ページに jq を当てる
-      local page=1 body
+    get() { # <API パス (クエリ可)> <jq フィルタ>: 全ページを取り、各ページに jq を当てる
+      local page=1 body sep='?'
+      case $1 in *'?'*) sep='&' ;; esac
       while :; do
         # トークンはヘッダとして標準入力から渡す。引数に載せると他のユーザーから ps で見える
-        body=$(printf 'Authorization: Bearer %s\n' "$token" | curl -fsS --max-time 30 -H @- -H "Accept: application/vnd.github+json" "https://api.github.com/$1?per_page=100&page=$page") || return 1
+        body=$(printf 'Authorization: Bearer %s\n' "$token" | curl -fsS --max-time 30 -H @- -H "Accept: application/vnd.github+json" "https://api.github.com/$1${sep}per_page=100&page=$page") || return 1
         jq -r "$2" <<<"$body" || return 1
         [ "$(jq 'if type == "array" then length else (.check_runs // .statuses | length) end' <<<"$body")" -eq 100 ] || return 0
         page=$((page + 1))
@@ -56,7 +58,8 @@ gh 2.98.0 で `--help` と実行を確認したもの。「未実測」と書い
       get "repos/$repo/issues/$pr/comments" '.[] | "ic:\(.id)\t\(.updated_at)\tcomment \(.user.login) \(.html_url)"' || return 1
       get "repos/$repo/pulls/$pr/comments" '.[] | "rc:\(.id)\t\(.updated_at)\treview-comment \(.user.login) \(.html_url)"' || return 1
       get "repos/$repo/pulls/$pr/reviews" '.[] | "rv:\(.id)\t\(.state)\treview \(.state) \(.user.login) \(.html_url)"' || return 1
-      get "repos/$repo/commits/$sha/check-runs" '.check_runs[] | select(.conclusion | IN("failure", "timed_out", "cancelled", "action_required", "startup_failure")) | "cr:\(.id)\t\(.conclusion)\tci-failure \(.name) \(.conclusion) \(.html_url)"' || return 1
+      # filter=all: 既定の latest は再実行で置き換えられた run を返さず、ポーリングの合間に再実行で成功した失敗を見逃す
+      get "repos/$repo/commits/$sha/check-runs?filter=all" '.check_runs[] | select(.conclusion | IN("failure", "timed_out", "cancelled", "action_required", "startup_failure")) | "cr:\(.id)\t\(.conclusion)\tci-failure \(.name) \(.conclusion) \(.html_url)"' || return 1
       get "repos/$repo/commits/$sha/status" '.statuses[] | select(.state == "failure" or .state == "error") | "st:\(.id)\t\(.state)\tci-failure \(.context) \(.state) \(.target_url)"' || return 1
     }
     failing=
