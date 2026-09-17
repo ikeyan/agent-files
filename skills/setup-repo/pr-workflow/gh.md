@@ -43,7 +43,6 @@ gh 2.98.0 で `--help` と実行を確認したもの。「未実測」と書い
       local page=1 body sep='?'
       case $1 in *'?'*) sep='&' ;; esac
       while :; do
-        # トークンはヘッダとして標準入力から渡す。引数に載せると他のユーザーから ps で見える
         body=$(printf 'Authorization: Bearer %s\n' "$token" | curl -fsS --max-time 30 -H @- -H "Accept: application/vnd.github+json" "https://api.github.com/$1${sep}per_page=100&page=$page") || return 1
         jq -r "$2" <<<"$body" || return 1
         [ "$(jq 'if type == "array" then length else (.check_runs // .statuses | length) end' <<<"$body")" -eq 100 ] || return 0
@@ -58,7 +57,6 @@ gh 2.98.0 で `--help` と実行を確認したもの。「未実測」と書い
       get "repos/$repo/issues/$pr/comments" '.[] | "ic:\(.id)\t\(.updated_at)\tcomment \(.user.login) \(.html_url)"' || return 1
       get "repos/$repo/pulls/$pr/comments" '.[] | "rc:\(.id)\t\(.updated_at)\treview-comment \(.user.login) \(.html_url)"' || return 1
       get "repos/$repo/pulls/$pr/reviews" '.[] | "rv:\(.id)\t\(.state)\treview \(.state) \(.user.login) \(.html_url)"' || return 1
-      # filter=all: 既定の latest は再実行で置き換えられた run を返さず、ポーリングの合間に再実行で成功した失敗を見逃す
       get "repos/$repo/commits/$sha/check-runs?filter=all" '.check_runs[] | select(.conclusion | IN("failure", "timed_out", "cancelled", "action_required", "startup_failure")) | "cr:\(.id)\t\(.conclusion)\tci-failure \(.name) \(.conclusion) \(.html_url)"' || return 1
       get "repos/$repo/commits/$sha/status" '.statuses[] | select(.state == "failure" or .state == "error") | "st:\(.id)\t\(.state)\tci-failure \(.context) \(.state) \(.target_url)"' || return 1
     }
@@ -87,7 +85,8 @@ gh 2.98.0 で `--help` と実行を確認したもの。「未実測」と書い
     done
     ```
 
-  - HTTP は `gh api` でなく `curl` で送り、`gh` はトークンを取るのにだけ使う。Monitor は Bash と同じサンドボックス内で動き、macOS ではサンドボックス内の `gh api` が TLS 検証に失敗する (`SSL_CERT_FILE` を指定しても変わらない)。`curl` と `jq` が要る。
+  - HTTP は `gh api` でなく `curl` で送り、`gh` はトークンを取るのにだけ使う。トークンは `curl` の引数でなく標準入力 (`-H @-`) で渡す。引数に載せると同じホストの他のユーザーから `ps` で見える。Monitor は Bash と同じサンドボックス内で動き、macOS ではサンドボックス内の `gh api` が TLS 検証に失敗する (`SSL_CERT_FILE` を指定しても変わらない)。`curl` と `jq` が要る。
+  - CI の失敗は Checks API を `filter=all` で読む。既定の `latest` は再実行で置き換えられた run を返さないので、ポーリングの合間に失敗した run が再実行で成功すると、その失敗を見逃す (docs と denoland/deno の `6c924f8` で確認)。
   - 状態ファイルは前回見た内容。初回は基準を作るだけで、コメントや CI の失敗は出さない (開始時点で既にあるものも出ない)。
   - 終了条件: PR が閉じられたら 1 行出して終わる。開始時点で閉じていた場合も 1 行出して終わる。Monitor が 30 分で失効したら、同じ `<dir>` の状態ファイルで起動し直す。止まっていた間の変化もその時点で出る。
   - 間隔は既定 60 秒。1 周に 6 リクエスト前後なので 1 時間に 360 程度で、認証済みの上限 (5,000/時) に収まる。
