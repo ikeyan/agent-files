@@ -7,24 +7,18 @@ description: Use when a Claude Code on the web (claude.ai/code) session waits fo
 
 > **Scope: the cloud/web sandbox (claude.ai/code).** The egress facts here — a silent TLS-inspecting MITM proxy (`O=Anthropic … TLS Inspection CA`), `Host not in allowlist` 403 bodies, the fixed reachability table — were **verified false for the local Claude Code CLI sandbox**, whose egress is instead an interactive per-host approval dialog with real upstream TLS and no MITM CA. For the local CLI sandbox use **cc-cli-sandbox**; do not apply the facts below there. (The signaling/relay/Monitor patterns are largely env-independent; the egress/proxy specifics are not.)
 
-Context this skill captures, gathered from a long debugging run on `ikeyan/music-analyzer#15` (2026-04-23 / -24). If you're starting a fresh session and planning anything that depends on external notifications or arbitrary network egress, read this first.
+If you're starting a fresh session and planning anything that depends on external notifications or arbitrary network egress, read this first.
 
-## 1. `subscribe_pr_activity` only forwards a narrow slice of PR events
+## 1. `subscribe_pr_activity` delivers only part of PR activity
 
-Measured on `ikeyan/agent-files#13` on 2026-09-16/17; details in `canon: facts/claude-code/subscribe-pr-activity-events`.
+What is and is not delivered, with the measurements: `canon: facts/claude-code/subscribe-pr-activity-events`. What you need to act on:
 
-- **Does deliver**:
-  - CI *failures*, as `check_run.completed`, once per failing check run and again on every repeat failure.
-  - CI *success*, as a `check_suite.completed` rollup, **only once per `head_sha`** (measured on a repo with a single check suite; repos with several suites are unmeasured). The payload has no `conclusion`.
-  - New PR/issue comments (`created`), per the 2026-04 observation. On 2026-09-16 new review-comment replies (`pull_request_review_comment.created`) written by your own account from another session were delivered too; a new plain issue comment was not exercised.
-  - Comment *edits*, as `issue_comment.edited` (observed since 2026-09-12; before that, `PATCH /issues/comments/{id}` was silent).
-  - PR review submissions, plus one `pull_request_review_comment.created` per inline finding.
-  - Draft, ready-for-review, closed and reopened transitions. Only closing without merging was measured; whether a merge is delivered is unmeasured.
-- **Does NOT deliver**: pushes (`synchronize`), label / assignee / milestone / body changes, merge-conflict transitions (the harness instructions say conflicts are notified; they were not), and any later green on a `head_sha` whose success had already been delivered, whether from a rerun or from a push back to that SHA (a first green after a failure on a `head_sha` is unmeasured).
-- Consequences:
-  - Do not wait on a success event to learn that CI is green. `check_suite.completed` has no `conclusion` and is only a cue to re-check the specific check you need: read that check by commit SHA over REST with a token (`commits/<sha>/check-runs`, passing the check name with `curl --get --data-urlencode "check_name=…"` since names such as `build (ubuntu-latest)` break a raw URL; every run with that name, all pages; `commits/<sha>/status` for CI that reports legacy commit statuses), taking the SHA you pushed from `git ls-remote`. MCP's `get_check_runs` cannot confirm the pushed commit: its results carry no commit SHA and can be the previous commit's runs right after a push, and cc-web's `get_status` returned no `sha`. If there is no token, report that CI could not be confirmed. Do not use the combined status's top-level `state` (it is `pending` when there are no statuses, even when every check run is green). The event does not cover legacy statuses, is not sent again for a SHA whose success was already delivered (a rerun, or a push back to it), and is unmeasured for a first green after a failure on the same SHA.
-  - Instead of polling you can have CI PATCH a status comment on every run (edits are delivered). Whether an edit by `github-actions[bot]` is delivered has not been measured; if it is not, fall back to create-then-sweep below.
-  - Detect pushes by re-reading the PR and comparing the head SHA. The `head_sha` of CI events is only a hint: a push that runs no CI, or a push back to a SHA whose success was already delivered, sends no event. Detect conflicts with `mergeable_state`.
+- **Delivered**: CI failures, a CI success rollup (at most once per commit, without a conclusion), new review comments, comment edits, review submissions, draft / ready / close / reopen.
+- **Not delivered**: pushes, label / assignee / milestone / body changes, merge-conflict transitions.
+- **So**:
+  - Do not wait on a success event to learn that CI is green. Treat it as a cue to re-check the specific check you need, and read that check by the pushed commit's SHA over REST with a token: take the SHA from `git ls-remote`, read `commits/<sha>/check-runs` with the name passed as `curl --get --data-urlencode "check_name=…"` (every run with that name, all pages), and `commits/<sha>/status` for CI that reports legacy commit statuses. MCP's `get_check_runs` and `get_status` cannot tell you which commit a result belongs to (`canon: facts/github/github-mcp-server-pull-request-read-fields`). With no token, report that CI could not be confirmed.
+  - Detect pushes by re-reading the PR and comparing the head SHA. Detect conflicts with `mergeable_state`.
+  - Instead of polling you can have CI PATCH a status comment on every run (edits are delivered). If edits by `github-actions[bot]` turn out not to be delivered, use create-then-sweep below.
 
 ### Fallback: create-then-sweep
 
@@ -88,14 +82,14 @@ Distinguish proxy rejection from target rejection by reading the body: `"Host no
 ### No inbound; tokens vary by session
 
 - No public ingress: cannot receive arbitrary webhooks from GitHub / Slack / Stripe etc. directly. Anything that needs "external system pushes to the sandbox" has to ride on an allowlisted host.
-- Tokens: in the 2026-04 sessions no GitHub token was in the env. In a 2026-09-16 session the env had `GH_TOKEN` and `GITHUB_TOKEN` set, and `git push --dry-run` to the session's repo passed over HTTPS via `GIT_ASKPASS`; a real push to a protected ref is untested (`canon: facts/claude-code/cc-web-session-repo-scope`). Check the env of the current session instead of assuming either.
-- Job logs: `mcp__github__get_job_logs` exists (2026-09-16). Call it with `run_id`, `failed_only=true` and a large `tail_lines`; with `job_id` and a small `tail_lines` you only see post-job cleanup. `get_check_run` returns the name, conclusion and URLs, but its `output` title / summary / text are empty for Actions jobs that write no annotations.
+- Tokens: check the current session's env for `GH_TOKEN` / `GITHUB_TOKEN` instead of assuming; it has differed between sessions (`canon: facts/claude-code/cc-web-session-repo-scope`).
+- Job logs: call `mcp__github__get_job_logs` with `run_id`, `failed_only=true` and a large `tail_lines` (`canon: facts/claude-code/subscribe-pr-activity-events`).
 
 ### Pattern that works: route signals through GitHub
 
 Use GitHub as the relay substrate (it's allowlisted):
 
-- **CI success** → poll the specific check you need, or relay it through a PR comment (section 1). Success events are only a cue to re-check.
+- **CI success** → read the specific check by SHA, or relay it through a PR comment (section 1).
 - **External event → sandbox** → write it to an issue comment / gist from whatever source triggers it, poll from the sandbox via `mcp__github__*` or `curl api.github.com`.
 - **Sandbox → external** → only if there's a GitHub-mediated hop.
 

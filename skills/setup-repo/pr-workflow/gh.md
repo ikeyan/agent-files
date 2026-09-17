@@ -14,7 +14,7 @@ gh 2.98.0 で `--help` と実行を確認したもの。「未実測」と書い
 - **CI**:
   - 現れている check の一覧: `gh pr checks <n> --json name,bucket,link`
   - 現れている check が全部終端になるまで待つ: `gh pr checks <n> --watch` (待ち時間は有界にする。push 直後は前のコミットの check を見ることがある。後から登録された check を拾うかは未実測)
-  - 特定の check が現れて終端になるまで待つ。push 直後の `gh pr checks` は前のコミットの check を返すことがあり、そのまま待つと古い結果で終端と誤判定する。push したコミットの SHA を指定して Checks API を見る:
+  - 特定の check が push したコミットで終端になるまで待つ。`gh pr checks` は push 直後に前のコミットの check を返すことがあるので、SHA を指定して Checks API を読む:
 
     ```sh
     refs=$(git ls-remote <remote> "refs/heads/<branch>") || exit 1
@@ -29,10 +29,14 @@ gh 2.98.0 で `--help` と実行を確認したもの。「未実測」と書い
     gh api --paginate -X GET "repos/<owner>/<repo>/commits/$sha/check-runs" -f check_name='<check>' --jq '.check_runs[] | "\(.name) \(.app.slug) \(.conclusion) \(.html_url)"'
     ```
 
-    SHA はローカルの `HEAD` からも remote-tracking ref からも取らず、`git ls-remote` でリモートのブランチの先端を直接読む。`ls-remote` のパターンは ref 名の末尾一致なので (`refs/heads/a/refs/heads/<branch>` も当たる)、ref 名が完全一致する行だけを採る。取得に失敗したとき (ネットワーク・認証・remote 名の誤り) は git のエラーのまま止まる。別のブランチをチェックアウトしていても、未 push のコミットがあっても、fetch の refspec がブランチを含まない clone (`--single-branch` 等。push しても remote-tracking ref ができない) でも、push したコミットを指す。自分が push していない PR の head を待つときも、PR の head ブランチを同じように読む (fork なら fork 側の remote)。API の PR の head は push 直後に古いことがあるので使わない (REST の `pulls/<n>` の `head.sha` が新しいコミットになるまで約 1.7 秒かかった)。同じ名前の check run が複数あり得る (別の workflow や GitHub App が同じ名前で作る) ので、1 件以上あり、その全部が `completed` になるまで待つ。`command grep` にしているのは、Claude Code の Bash ツールでは `grep` が組み込みの ugrep を呼ぶ関数に置き換えられ、`-q` と `-v` を併用したときの終了コードが本物の grep と逆になるため。check がまだ 0 件でも出力が空になるだけなのでループは回り続ける。旧来の commit status (`gh api repos/<owner>/<repo>/commits/$sha/status`) はこの API に出ない。根拠と実測: `canon: facts/gh/pr-checks-zero-checks-and-exit-codes`
+    - SHA は `git ls-remote` で読み、ref 名が完全一致する行を採る。ローカルの `HEAD`・remote-tracking ref・API の PR の head からは取らない。自分が push していない PR も、その head ブランチを同じように読む (fork なら fork 側の remote)。
+    - 同じ名前の run は全部が `completed` になるまで待つ。
+    - 判定の `command grep` を `grep` に戻さない (Bash ツールの `grep` は `-q` と `-v` の併用で終了コードが逆になる)。
+    - 旧来の commit status で報告する CI は、この API でなく `gh api repos/<owner>/<repo>/commits/$sha/status` の該当する context を見る。
+    - 根拠: `canon: facts/gh/pr-checks-zero-checks-and-exit-codes`、`canon: facts/claude-code/bash-tool-grep-wrapper-qv-exit-code`
   - ログ: Actions の check は `link` の URL から `<jobId>` を取って `gh run view --job <jobId> --log-failed` (`canon: facts/gh/pr-checks-link-to-run-logs`)。Actions 以外の check は `link` の URL を見る。
-- **PR の watch** (コメントの作成・編集、review、CI の失敗、PR の close を待つ): Monitor ツールで回す。stdout の 1 行が 1 通知になる。
-  1. watch ごとに専用のディレクトリを作り、出力されたパスを `<dir>` として使う: `mktemp -d -p "${TMPDIR:-/tmp}" watch-pr.XXXXXX`。共有の `/tmp` に固定名で置くと、別のユーザーが先に置いたスクリプトを自分のトークンで実行しうる。
+- **PR の watch** (コメントの作成・編集、review、CI の失敗、PR の close を待つ): Monitor ツールで回す。stdout の 1 行が 1 通知になる。`curl` と `jq` が要る。
+  1. watch ごとに専用のディレクトリを作り、出力されたパスを `<dir>` として使う: `mktemp -d -p "${TMPDIR:-/tmp}" watch-pr.XXXXXX`。共有の `/tmp` に固定名で置かない (`canon: facts/shell/mktemp-tmpdir-handling-bsd-vs-gnu`)。
   2. 次を `<dir>/watch-pr.sh` に保存し、Monitor ツールで `bash <dir>/watch-pr.sh <owner>/<repo> <n> <dir>/state` を回す (`timeout_ms` は上限の 30 分)。
 
     ```bash
@@ -85,9 +89,7 @@ gh 2.98.0 で `--help` と実行を確認したもの。「未実測」と書い
     done
     ```
 
-  - HTTP は `gh api` でなく `curl` で送り、`gh` はトークンを取るのにだけ使う。トークンは `curl` の引数でなく標準入力 (`-H @-`) で渡す。引数に載せると同じホストの他のユーザーから `ps` で見える。Monitor は Bash と同じサンドボックス内で動き、macOS ではサンドボックス内の `gh api` が TLS 検証に失敗する (`SSL_CERT_FILE` を指定しても変わらない)。`curl` と `jq` が要る。
-  - CI の失敗は Checks API を `filter=all` で読む。既定の `latest` は再実行で置き換えられた run を返さないので、ポーリングの合間に失敗した run が再実行で成功すると、その失敗を見逃す (docs と denoland/deno の `6c924f8` で確認)。
-  - 状態ファイルは前回見た内容。初回は基準を作るだけで、コメントや CI の失敗は出さない (開始時点で既にあるものも出ない)。
-  - 終了条件: PR が閉じられたら 1 行出して終わる。開始時点で閉じていた場合も 1 行出して終わる。Monitor が 30 分で失効したら、同じ `<dir>` の状態ファイルで起動し直す。止まっていた間の変化もその時点で出る。
-  - 間隔は既定 60 秒。1 周に 6 リクエスト前後なので 1 時間に 360 程度で、認証済みの上限 (5,000/時) に収まる。
-  - API の取得に失敗し始めたら 1 行出し、同じ間隔で再試行を続ける。失敗が続いても繰り返しは出さない。
+  - HTTP を `gh api` に書き換えない、トークンを `curl` の引数に載せない、CI の失敗の取得から `filter=all` を外さない。根拠: `canon: facts/claude-code/monitor-runs-in-sandbox-gh-tls`、`canon: facts/shell/process-args-visible-via-ps`、`canon: facts/github/check-runs-filter-latest-hides-reruns`
+  - 状態ファイルは前回見た内容。初回は基準を作るだけで何も出さない (開始時点で既にあるものも出ない)。
+  - 終了条件: PR が閉じられたら (開始時点で閉じていた場合も) 1 行出して終わる。Monitor が 30 分で失効したら、同じ `<dir>` の状態ファイルで起動し直す。止まっていた間の変化もその時点で出る。
+  - 間隔は既定 60 秒。API の取得に失敗し始めたら 1 行出し、同じ間隔で再試行を続ける。
