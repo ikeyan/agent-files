@@ -31,9 +31,9 @@ description: Use when reviewing a diff before commit or push, when asked to revi
    { git diff "$base"; git ls-files --others --exclude-standard -z | xargs -0 -I{} sh -c 'git diff --no-index /dev/null "$1"; [ $? -le 1 ]' _ {}; } > <diff ファイル>
    ```
 
-   - `<既定ブランチ>` は通常 `origin/HEAD`。`origin/HEAD` が無い・消えたブランチを指すなら `git remote set-head origin --auto` で張り直す。
+   - `<既定ブランチ>` は `origin/HEAD`。使う前に `git remote set-head origin --auto` で、リモートの今の既定ブランチに張り直す (手元の `origin/HEAD` は、リモートで既定ブランチの名前が変わっても古いまま残る)。
    - `merge-base` が何も出さずに失敗し、`git rev-parse --is-shallow-repository` が `true` なら、分岐点が取得されていない。`git fetch --unshallow` してからやり直す。
-   - `origin` が無い、または上の手当てで base が決まらなければ、どこからの変更をレビューするかをユーザーに確かめる。
+   - `origin` が無い、`set-head` が失敗した、または上の手当てで base が決まらなければ、どこからの変更をレビューするかをユーザーに確かめる。
 
 2. 表の各行について、そのモデルのエージェントを並列に起動し、次のプロンプトを渡す。`<観点ファイル>` はこのスキルの `perspectives/<観点>.md` の絶対パス。
 
