@@ -3,18 +3,21 @@
 Use this when edits to a status comment by `github-actions[bot]` are not delivered by `subscribe_pr_activity`. Post a fresh comment every time (triggers the create event) and delete previous marker'd comments afterwards:
 
 ```bash
+# The token goes in as a header line on stdin, not in curl's arguments.
+auth() { printf 'Authorization: Bearer %s\n' "$GH_TOKEN"; }
+
 # Snapshot old marker'd comments BEFORE creating the new one so the
 # fresh one isn't accidentally deleted.
-old_ids=$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" \
+old_ids=$(auth | curl -fsS -H @- \
   "$api/issues/$PR/comments?per_page=100" \
   | jq -r --arg m '<!-- ci-status -->' \
       '.[] | select(.body | contains($m)) | .id')
 
-curl -fsS -X POST -H "Authorization: Bearer $GH_TOKEN" -H 'Content-Type: application/json' \
+auth | curl -fsS -X POST -H @- -H 'Content-Type: application/json' \
   -d "$payload" "$api/issues/$PR/comments" -o /dev/null
 
 for id in $old_ids; do
-  curl -sS -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
+  auth | curl -sS -X DELETE -H @- \
     "$api/issues/comments/$id" -o /dev/null || true
 done
 ```

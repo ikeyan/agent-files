@@ -11,7 +11,7 @@ Claude Code on the web に組み込まれた GitHub MCP (`mcp__github__`)。gith
 - **CI**: 成功を見届けるときは、pr-workflow の「CI の確認」どおり必要な check を特定し、push したコミットの SHA を指定して結果を読む (`send_later` の check-in 等で再読する)。
   - `get_check_runs` と `get_status` では判定しない。`get_check_runs` は結果がどのコミットのものか確かめられない (`canon: facts/github/github-mcp-server-pull-request-read-fields`)。この実装の `get_status` が `sha` を返すかは確かめていない。
   - push したコミットの SHA を `git ls-remote <remote> "refs/heads/<branch>"` で読み、ref 名が完全一致する行を採る。
-  - トークンで `curl` から `https://api.github.com/repos/<owner>/<repo>/commits/<sha>/check-runs` を読む。check 名は `--get --data-urlencode "check_name=<check>"` で、トークンは標準入力から `-H @-` で渡す。全ページについて、その名前の run が 1 件以上あり全部が `completed` になるまで待つ。旧来の commit status で報告する CI は `commits/<sha>/status` の該当する context を見る。
+  - トークンで `curl` から `https://api.github.com/repos/<owner>/<repo>/commits/<sha>/check-runs` を読む。check 名は `--get --data-urlencode "check_name=<check>"` で、トークンは引数に載せずヘッダー行として標準入力から渡す (`printf 'Authorization: Bearer %s\n' "$token" | curl -fsS -H @- …`。`-H @-` はコロンの無い行を黙って捨てるので、トークンだけを流さない)。全ページについて、その名前の run が 1 件以上あり全部が `completed` になるまで待つ。旧来の commit status で報告する CI は `commits/<sha>/status` の該当する context を見る。
   - トークンが無ければ、確かめられなかったとユーザーに報告する。
   - 失敗の詳細は `get_job_logs` を `run_id`・`failed_only=true`・大きめの `tail_lines` で取る (`get_check_run` の `output` は Actions の job では空のことがある)。
 - **イベント**: `subscribe_pr_activity` (`owner` / `repo` / `pullNumber`)。配送の実測は `canon: facts/claude-code/subscribe-pr-activity-events`。行動に要るのは次:

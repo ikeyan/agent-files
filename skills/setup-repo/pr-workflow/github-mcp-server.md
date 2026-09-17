@@ -13,7 +13,7 @@ GitHub 公式の MCP サーバ (github/github-mcp-server)。リモート版は `
   - `get_check_runs` では判定しない (結果がどのコミットの run か分からない。`canon: facts/github/github-mcp-server-pull-request-read-fields`)。
   - `gh` があれば gh.md の「CI」の手順で読む。無ければ:
     - push したコミットの SHA を `git ls-remote <remote> "refs/heads/<branch>"` で読み、ref 名が完全一致する行を採る。
-    - トークンで `curl` から `https://api.github.com/repos/<owner>/<repo>/commits/<sha>/check-runs` を読む。check 名は `--get --data-urlencode "check_name=<check>"` で、トークンは標準入力から `-H @-` で渡す。
+    - トークンで `curl` から `https://api.github.com/repos/<owner>/<repo>/commits/<sha>/check-runs` を読む。check 名は `--get --data-urlencode "check_name=<check>"` で、トークンは引数に載せずヘッダー行として標準入力から渡す (`printf 'Authorization: Bearer %s\n' "$token" | curl -fsS -H @- …`。`-H @-` はコロンの無い行を黙って捨てるので、トークンだけを流さない)。
     - 全ページについて、その名前の run が 1 件以上あり全部が `completed` になるまで待つ。
     - トークンが無ければ、確かめられなかったとユーザーに報告する。
   - 旧来の commit status で報告する CI (外部 CI 等) は `get_status` の該当する context で見る。結果の `sha` が push したコミットの SHA と一致するときだけ使い、最上位の `state` は使わない。
