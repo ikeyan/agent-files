@@ -5,7 +5,7 @@
  * 副作用: 検査結果を stdout / stderr に出し、違反が 1 件でもあれば exit 1。
  *
  * JSON: 構文 + JSON Schema。schema は実行のたびに取得する。
- * Markdown: リポ内を指すリンクの解決先と、見出し由来の anchor。
+ * Markdown: リポ内を指すリンク・anchor が生きていること。
  */
 import { Ajv } from "ajv";
 import { Ajv2020 } from "ajv/2020";
