@@ -27,10 +27,13 @@ description: Use when reviewing a diff before commit or push, when asked to revi
 1. レビュー対象の diff を、リポの外 (`$TMPDIR` 等) のファイルに書き出す。既定は、既定ブランチとの分岐点から先のコミットと未コミットの変更と未追跡のファイル:
 
    ```sh
-   def=$(git symbolic-ref -q refs/remotes/origin/HEAD || { git remote set-head origin --auto >/dev/null && git symbolic-ref refs/remotes/origin/HEAD; }) || exit 1
-   base=$(git merge-base "$def" HEAD) || exit 1
+   base=$(git merge-base <既定ブランチ> HEAD) || exit 1
    { git diff "$base"; git ls-files --others --exclude-standard -z | xargs -0 -I{} sh -c 'git diff --no-index /dev/null "$1"; [ $? -le 1 ]' _ {}; } > <diff ファイル>
    ```
+
+   - `<既定ブランチ>` は通常 `origin/HEAD`。`origin/HEAD` が無い・消えたブランチを指すなら `git remote set-head origin --auto` で張り直す。
+   - `merge-base` が何も出さずに失敗し、`git rev-parse --is-shallow-repository` が `true` なら、分岐点が取得されていない。`git fetch --unshallow` してからやり直す。
+   - `origin` が無い、または上の手当てで base が決まらなければ、どこからの変更をレビューするかをユーザーに確かめる。
 
 2. 表の各行について、そのモデルのエージェントを並列に起動し、次のプロンプトを渡す。`<観点ファイル>` はこのスキルの `perspectives/<観点>.md` の絶対パス。
 
