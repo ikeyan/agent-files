@@ -51,7 +51,9 @@ description: Use when creating a new repository, bringing an existing repository
 - フォーマッター・リンター・静的解析器を入れる (oxfmt, oxlint, typescript 等、言語や目的に応じて)。
 - テストの仕組みを用意する (外部依存の挙動も内部ロジックも)。property testing・table driven test を活用する。
 - 単一検証コマンドを用意する (AGENTS.md 設計指針)。上記すべてを 1 つの入口に集約する。
-- レビューは review-perspectives skill で行う。観点は plugin で配られるので、リポに REVIEW.md とその同期チェックを置かない (既存のリポにあれば消す)。
+- レビューは review-perspectives skill で行う。観点は plugin で配られる。
+  - managed Code Review (Claude GitHub App) を使うリポでは、効かせたい観点をルートの `REVIEW.md` に書く。managed Code Review はルートの `REVIEW.md` しか読まない (`canon: facts/claude-code/review-md-consumers`)。
+  - 使わないリポには `REVIEW.md` とその同期チェックを置かず、既存のリポにあれば消す。
 
 ## 4. 検証済み事実台帳
 
