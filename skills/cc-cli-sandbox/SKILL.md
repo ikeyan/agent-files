@@ -9,7 +9,7 @@ Scope: the **local** OS sandbox that wraps Bash-tool commands in the Claude Code
 
 ## cc-web-sandbox-signals does NOT apply here
 
-That skill claims a silent TLS-intercepting proxy (every cert signed by an Anthropic `TLS Inspection CA`), a `Host not in allowlist` 403 body, and a fixed reachability table. Verified false here: an allowed host serves its **real upstream cert** (e.g. `github.com` → Sectigo, not an Anthropic MITM CA) and egress is an interactive approval dialog, not a silent MITM. cc-web-sandbox-signals reflects the cloud/web env only.
+That skill claims a silent TLS-intercepting proxy (every cert signed by an Anthropic `TLS Inspection CA`), and a `Host not in allowlist` 403 body. Verified false here: an allowed host serves its **real upstream cert** (e.g. `github.com` → Sectigo, not an Anthropic MITM CA) and egress is an interactive approval dialog, not a silent MITM. cc-web-sandbox-signals reflects the cloud/web env only.
 
 ## Detecting whether you're in-sandbox
 

@@ -1,114 +1,46 @@
 ---
 name: cc-web-sandbox-signals
-description: Cloud/WEB Claude Code sandbox (claude.ai/code) signaling & egress gotchas. NOT the local CLI sandbox — its egress differs (interactive per-host approval, real upstream TLS, no Anthropic MITM CA); for that use cc-cli-sandbox, do not apply these facts there. Use whenever a web/cloud session deals with external notifications, sandbox network egress, or webhook delivery — including CI result notifications ('why didn't Claude see my green CI?'), `subscribe_pr_activity` filter quirks (CI success silent), 'Host not in allowlist' proxy errors, reachability questions for hosts like smee.io / webhook.site / httpbin.org / api.github.com, routing external events into the sandbox via GitHub as a relay, or `Monitor` setup for SSE / WebSocket streams. Trigger even when the skill isn't named — 'CI passed but nothing happened', 'sandbox can't reach X', 'how do I get a webhook into my session', 'Anthropic TLS Inspection CA' are strong signals. Covers the event filter, the MITM egress allowlist, the create-then-sweep comment pattern, and Monitor streaming.
+description: Use when a Claude Code on the web (claude.ai/code) session waits for PR events or CI results, relies on subscribe_pr_activity, needs a GitHub token or CI job logs, needs an external event or webhook to reach it, cannot reach an external host (a 403 such as "Host not in allowlist", or TLS certificate errors from the egress proxy), or streams events with Monitor. Not for the local CLI sandbox (use cc-cli-sandbox).
 ---
 
 # Claude Code WEB sandbox: signaling and egress gotchas
 
-> **Scope: the cloud/web sandbox (claude.ai/code).** The egress facts here — a silent TLS-inspecting MITM proxy (`O=Anthropic … TLS Inspection CA`), `Host not in allowlist` 403 bodies, the fixed reachability table — were **verified false for the local Claude Code CLI sandbox**, whose egress is instead an interactive per-host approval dialog with real upstream TLS and no MITM CA. For the local CLI sandbox use **cc-cli-sandbox**; do not apply the facts below there. (The signaling/relay/Monitor patterns are largely env-independent; the egress/proxy specifics are not.)
+Scope: claude.ai/code only. The local CLI sandbox behaves differently; use cc-cli-sandbox there.
 
-Context this skill captures, gathered from a long debugging run on `ikeyan/music-analyzer#15` (2026-04-23 / -24). If you're starting a fresh session and planning anything that depends on external notifications or arbitrary network egress, read this first.
+## 1. `subscribe_pr_activity` delivers only part of PR activity
 
-## 1. `subscribe_pr_activity` only forwards a narrow slice of PR events
+What is and is not delivered, with the measurements: `canon: facts/claude-code/subscribe-pr-activity-events`. What you need to act on:
 
-- **Does deliver**: CI *failure* conclusions, new PR/issue comments (`created`), PR review submissions.
-- **Does deliver since 2026-09-12** (observed on `ikeyan/agent-files#11`, comment authored by a GitHub App): comment *edits*, as `issue_comment.edited`. Before that, `PATCH /issues/comments/{id}` was silent for subscribers.
-- **Does NOT deliver**: CI *success* conclusions, label / status changes.
-  - Unresolved since 2026-09-16: the tool's own description now says it delivers "comments, CI failures, and **successful check-suite rollups**". That contradicts the 2026-04 observation above and may be a later change. Nobody has re-measured a green run, so do not rely on success arriving.
-- Consequence: a green PR is only visible to the session through a comment. Keep one status comment per PR and PATCH it on every run. Whether an edit by `github-actions[bot]` is delivered has not been measured; if it is not, fall back to create-then-sweep below.
+- **Delivered**: CI failures, a CI success rollup (at most once per commit, without a conclusion), new PR/issue comments and review comments (including ones your own account wrote, so ignore your own replies), comment edits, review submissions, draft / ready / close / reopen.
+- **Nothing is delivered** for a PR that PR Steward is already watching. The tool result says so: read it after subscribing, and if it does, re-read the PR and CI on a schedule instead of waiting.
+- **Not delivered**: pushes, label / assignee / milestone / body changes, merge-conflict transitions.
+- **So**:
+  - Do not wait on a success event to learn that CI is green. Treat it as a cue to re-check the specific check you need, and read that check by the pushed commit's SHA over REST with a token: take the SHA from `git ls-remote`, read `commits/<sha>/check-runs` with the name passed as `curl --get --data-urlencode "check_name=…"` and the token as a header line on stdin, not in the arguments (`printf 'Authorization: Bearer %s\n' "$token" | curl -fsS -H @- …`; `-H @-` silently drops a line without a colon, so never pipe the bare token) (every run with that name, all pages), and the matching context in `commits/<sha>/status` for CI that reports legacy commit statuses (not the top-level `state`, which is `pending` when there are no statuses even if every check run is green). Do not judge from MCP `get_check_runs`: it does not say which commit its results belong to (`canon: facts/github/github-mcp-server-pull-request-read-fields`). Nor from cc-web's `mcp__github__` `get_status`: whether it returns a `sha` is unverified. With no token, report that CI could not be confirmed.
+  - Detect pushes by re-reading the PR and comparing the head SHA. Detect conflicts with `mergeable_state`.
+  - Instead of polling you can have CI PATCH a status comment on every run (edits are delivered). If edits by `github-actions[bot]` turn out not to be delivered, use [create-then-sweep](create-then-sweep.md).
 
-### Fallback: create-then-sweep
+## 2. Network egress
 
-Post a fresh comment every time (triggers the create event) and delete previous marker'd comments afterwards:
+Outbound HTTPS goes through a TLS-inspecting proxy with a per-environment host allowlist, and nothing can connect into the session (`canon: facts/claude-code/cc-web-egress-proxy`).
 
-```bash
-# Snapshot old marker'd comments BEFORE creating the new one so the
-# fresh one isn't accidentally deleted.
-old_ids=$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" \
-  "$api/issues/$PR/comments?per_page=100" \
-  | jq -r --arg m '<!-- ci-status -->' \
-      '.[] | select(.body | contains($m)) | .id')
+- Before depending on a host, probe it with `curl`. A 403 whose body is `Host not in allowlist` comes from the proxy: the host is blocked for this environment, and only the environment settings in the web UI can allow it. A JSON body with a `message` field comes from the target.
+- TLS certificate errors naming `O=Anthropic; CN=sandbox-egress-production TLS Inspection CA` come from the proxy.
+- Tokens: check the current session's env for `GH_TOKEN` / `GITHUB_TOKEN` before relying on one; it differs between sessions.
+- Job logs: call `mcp__github__get_job_logs` with `run_id`, `failed_only=true` and a large `tail_lines`.
 
-curl -fsS -X POST -H "Authorization: Bearer $GH_TOKEN" -H 'Content-Type: application/json' \
-  -d "$payload" "$api/issues/$PR/comments" -o /dev/null
+### Route signals through GitHub
 
-for id in $old_ids; do
-  curl -sS -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
-    "$api/issues/comments/$id" -o /dev/null || true
-done
-```
+External systems cannot push into the session, so relay through GitHub:
 
-Gate on all required jobs passing with a separate `needs:` job rather than per-job, so you get one notification per green PR rather than per green job:
+- **CI success** → read the specific check by SHA, or relay it through a PR comment (section 1).
+- **External event → session** → have the source write an issue comment or gist, and poll it from the session via `mcp__github__*` or `curl api.github.com`.
+- **Session → external** → go through a GitHub-mediated hop.
 
-```yaml
-notify-pr-green:
-  needs: [check, e2e]            # skipped automatically when any fails
-  if: github.event_name == 'pull_request'
-  permissions:
-    pull-requests: write           # only this job needs write
-  runs-on: ubuntu-24.04
-  steps:
-    - ...                          # curl as above
-```
+## 3. `Monitor` for streaming sources
 
-### What NOT to bother with
+Monitor turns every stdout line into a conversation event. Use it for SSE, WebSocket and tail-f bridges:
 
-- Adding a dummy always-failing check to coerce a notification (noisy, breaks branch protection).
-- Relying on the subscribe_pr_activity tool itself — its filter isn't configurable from the tool side.
-
-## 2. The sandbox has a MITM egress allowlist
-
-Outbound HTTPS is proxied through a TLS-intercepting gateway. You can see the proxy because every cert is signed by `O=Anthropic; CN=sandbox-egress-production TLS Inspection CA`.
-
-### What's reachable
-
-Verified by probing from the sandbox:
-
-| Host                              | Status                    |
-| --------------------------------- | ------------------------- |
-| `api.github.com`                  | reachable (public, rate-limited to 60/hr anonymous) |
-| `github.com` / `raw.githubusercontent.com` | reachable             |
-| `registry.npmjs.org`              | reachable                 |
-| `nodejs.org`, `binaries.prisma.sh`| reachable                 |
-| `smee.io`                         | **403 "Host not in allowlist"** |
-| `webhook.site`, `httpbin.org`     | **403 "Host not in allowlist"** |
-| `example.com`, `cloudflare.com`   | **403 "Host not in allowlist"** |
-
-Distinguish proxy rejection from target rejection by reading the body: `"Host not in allowlist"` is the proxy. A JSON error body with a `message` field is the target.
-
-### No inbound, no tokens
-
-- No public ingress: cannot receive arbitrary webhooks from GitHub / Slack / Stripe etc. directly. Anything that needs "external system pushes to the sandbox" has to ride on an allowlisted host.
-- `GITHUB_TOKEN` / other creds are NOT in the sandbox env. The `mcp__github__*` tools have auth on the server side but don't expose a token to the session.
-- `mcp__github__*` does NOT include workflow-run-log fetch. You can read PR / check-run metadata, but not step stdout. Falling back to having the user paste `gh run view --log-failed` output is often faster than fighting WebFetch.
-
-### Pattern that works: route signals through GitHub
-
-Use GitHub as the relay substrate (it's allowlisted):
-
-- **CI success notifications** → PR comments (section 1).
-- **External event → sandbox** → write it to an issue comment / gist from whatever source triggers it, poll from the sandbox via `mcp__github__*` or `curl api.github.com`.
-- **Sandbox → external** → only if there's a GitHub-mediated hop.
-
-## 3. `Monitor` tool notes, for streaming sources
-
-Monitor treats every stdout line as a conversation event. It's the right tool for SSE / WebSocket / tail-f bridges:
-
-- SSE via `curl -N --no-buffer`
-- WebSocket via a Bun one-liner:
-
-  ```ts
-  // ws-to-lines.ts
-  const ws = new WebSocket(process.argv[2]!);
-  ws.addEventListener("message", (e) => console.log(String(e.data)));
-  ws.addEventListener("close", () => process.exit(0));
-  ws.addEventListener("error", (e) => { console.error(e); process.exit(1); });
-  ```
-
-- Line-buffer everything (`grep --line-buffered`) or events arrive in large batches when pipe buffering kicks in.
-
-But `Monitor` doesn't help you if the host is blocked by the egress allowlist (section 2) — test the URL with `curl` first.
-
-## 4. Persistence across sessions
-
-Learnings from these facts don't survive unless captured. Put them here (SKILL.md) or in the repo's `CLAUDE.md`, not in chat-only recollection — the same sandbox behaviour will surprise the next session otherwise.
+- SSE: `curl -N --no-buffer`.
+- WebSocket: [ws-to-lines.ts](ws-to-lines.ts), run with Bun.
+- Line-buffer every stage (`grep --line-buffered`), or events arrive in large batches.
+- Probe the URL with `curl` first (section 2).
