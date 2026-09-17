@@ -36,6 +36,16 @@ const decode = (s: string): string => {
 
 const exists = (path: string) => Deno.stat(path).then(() => true).catch(() => false);
 
+const memoized1 = <T, U>(fn: (arg: T) => U) => {
+  const cache = new Map<T, U>();
+  return (arg: T): U => {
+    if (cache.has(arg)) return cache.get(arg)!;
+    const result = fn(arg);
+    cache.set(arg, result);
+    return result;
+  };
+}
+
 const targets = new TextDecoder().decode(await new Response(Deno.stdin.readable).bytes())
   .split("\n").filter(Boolean);
 
@@ -44,25 +54,20 @@ const targets = new TextDecoder().decode(await new Response(Deno.stdin.readable)
 const ajvOptions = { allErrors: true, strict: false, logger: false } as const;
 const byDraft = { "draft-07": new Ajv(ajvOptions), "2020-12": new Ajv2020(ajvOptions) };
 
-const validators = new Map<string, ValidateFunction | null>();
 /** 同じ schema を 2 度 compile すると ajv が $id 重複で落ちるので、URL 単位で使い回す。取れなければ null。 */
-const validatorOf = async (url: string): Promise<ValidateFunction | null> => {
-  const cached = validators.get(url);
-  if (cached !== undefined) return cached;
-  let validate: ValidateFunction | null = null;
+const validatorOf = memoized1(async (url: string): Promise<ValidateFunction | null> => {
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const schema: { $schema?: string } = await res.json();
     const ajv = schema.$schema?.includes("2020-12") ? byDraft["2020-12"] : byDraft["draft-07"];
-    validate = ajv.compile(schema);
+    return ajv.compile(schema);
   } catch (e) {
     // 1 つの schema が取れないだけで、残りの JSON と Markdown の検査まで落とさない。
     report(url, `schema を用意できない — ${e instanceof Error ? e.message : e}`);
+    return null;
   }
-  validators.set(url, validate);
-  return validate;
-};
+});
 
 const jsonFiles = targets.filter((f) => f.endsWith(".json"));
 const markdownFiles = targets.filter((f) => f.endsWith(".md"));
@@ -129,14 +134,7 @@ const targetsOf = (markdown: string): string[] => {
   return out;
 };
 
-const anchorCache = new Map<string, Set<string>>();
-const anchorsFor = async (path: string): Promise<Set<string>> => {
-  const cached = anchorCache.get(path);
-  if (cached) return cached;
-  const anchors = anchorsOf(await Deno.readTextFile(path));
-  anchorCache.set(path, anchors);
-  return anchors;
-};
+const anchorsFor = memoized1(async (path: string): Promise<Set<string>> => anchorsOf((await Deno.readTextFile(path))));
 
 for (const file of markdownFiles) {
   const text = await Deno.readTextFile(file).catch(() => null);
