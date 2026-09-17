@@ -24,10 +24,11 @@ description: Use when reviewing a diff before commit or push, when asked to revi
 
 ## 手順
 
-1. レビュー対象の diff をファイルに書き出す。既定は、分岐点から先のコミットと未コミットの変更と未追跡のファイル:
+1. レビュー対象の diff を、リポの外 (`$TMPDIR` 等) のファイルに書き出す。既定は、既定ブランチとの分岐点から先のコミットと未コミットの変更と未追跡のファイル:
 
    ```sh
-   base=$(git merge-base @{upstream} HEAD 2>/dev/null || git merge-base origin/HEAD HEAD) || exit 1
+   def=$(git symbolic-ref -q refs/remotes/origin/HEAD || { git remote set-head origin --auto >/dev/null && git symbolic-ref refs/remotes/origin/HEAD; }) || exit 1
+   base=$(git merge-base "$def" HEAD) || exit 1
    { git diff "$base"; git ls-files --others --exclude-standard -z | xargs -0 -I{} sh -c 'git diff --no-index /dev/null "$1"; [ $? -le 1 ]' _ {}; } > <diff ファイル>
    ```
 
