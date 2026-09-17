@@ -9,7 +9,7 @@ Claude Code on the web に組み込まれた GitHub MCP (`mcp__github__`)。gith
 - **返信**: `add_reply_to_pull_request_comment`。`commentId` は `#discussion_r…` の数値 id。イベントの `comment_id` はそのまま渡せる。
 - **resolve**: `resolve_review_thread` (`owner` / `repo` / `threadId`)、または `pull_request_review_write` の method `resolve_thread`。`PRRT_…` はイベントに無いので `get_review_comments` で取り直す。
 - **CI**: 成功を見届けるときは、pr-workflow の「CI の確認」どおり必要な check を特定し、push したコミットの SHA を指定して結果を読む (`send_later` の check-in 等で再読する)。
-  - `get_check_runs` と `get_status` では判定しない。`get_check_runs` は結果がどのコミットのものか確かめられない (`canon: facts/github/github-mcp-server-pull-request-read-fields`)。この実装の `get_status` は `sha` を返さなかった (`canon: facts/claude-code/subscribe-pr-activity-event-log`)。
+  - `get_check_runs` と `get_status` では判定しない。`get_check_runs` は結果がどのコミットのものか確かめられない (`canon: facts/github/github-mcp-server-pull-request-read-fields`)。この実装の `get_status` が `sha` を返すかは確かめていない。
   - push したコミットの SHA を `git ls-remote <remote> "refs/heads/<branch>"` で読み、ref 名が完全一致する行を採る。
   - トークンで `curl` から `https://api.github.com/repos/<owner>/<repo>/commits/<sha>/check-runs` を読む。check 名は `--get --data-urlencode "check_name=<check>"` で、トークンは標準入力から `-H @-` で渡す。全ページについて、その名前の run が 1 件以上あり全部が `completed` になるまで待つ。旧来の commit status で報告する CI は `commits/<sha>/status` の該当する context を見る。
   - トークンが無ければ、確かめられなかったとユーザーに報告する。
