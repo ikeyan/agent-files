@@ -77,14 +77,7 @@ description: Use when creating a new repository, bringing an existing repository
 
 ## 6. PR / ブランチ運用
 
-- リポ固有の PR・ブランチ運用を `.claude/skills/pr-workflow/` に置く。既定の 3 ファイルをコピーする (方針だけを読んで、使う環境の手段だけを開く構成):
-
-  | コピー元 | コピー先 |
-  |---|---|
-  | [pr-workflow.md](pr-workflow.md) | `.claude/skills/pr-workflow/SKILL.md` |
-  | [pr-workflow-gh.md](pr-workflow-gh.md) | `.claude/skills/pr-workflow/gh.md` |
-  | [pr-workflow-github-mcp.md](pr-workflow-github-mcp.md) | `.claude/skills/pr-workflow/github-mcp.md` |
-
+- リポ固有の PR・ブランチ運用を `.claude/skills/pr-workflow/` に置く。既定の [pr-workflow/](pr-workflow/SKILL.md) をディレクトリごとコピーする (方針の [SKILL.md](pr-workflow/SKILL.md) だけを読み、使う環境の手段 [gh.md](pr-workflow/gh.md) / [github-mcp.md](pr-workflow/github-mcp.md) だけを開く構成)。
 - コピーしたらそのリポに合わせて編集する:
   - 方針は既定を採る。リポごとに変えるならユーザーに確認する。
   - 手段のファイルは両方残す (同じリポを cc-web と local の両方から触る)。setup した環境で 1 回実測して通らなかった手段・実測できなかった手段には未実測と書き添える (AGENTS.md「実行時契約の実測」)。
