@@ -15,8 +15,8 @@ Claude Code on the web に組み込まれた GitHub MCP (`mcp__github__`)。gith
   - トークンが無ければ、確かめられなかったとユーザーに報告する。
   - 失敗の詳細は `get_job_logs` を `run_id`・`failed_only=true`・大きめの `tail_lines` で取る (`get_check_run` の `output` は Actions の job では空のことがある)。
 - **イベント**: `subscribe_pr_activity` (`owner` / `repo` / `pullNumber`)。配送の実測は `canon: facts/claude-code/subscribe-pr-activity-events`。行動に要るのは次:
-  - 届く: CI の失敗、CI の成功 (コミットごとに 1 回まで)、新しいレビューコメント、コメントの編集、review、draft 化・ready・close・reopen。
+  - 届く: CI の失敗、CI の成功 (コミットごとに 1 回まで)、新しいコメント、コメントの編集、review、draft 化・ready・close・reopen。自分のアカウントが書いたコメント (自分の返信を含む) も届くので、書き手を見て自分の返信には反応しない。
   - 届かない: push、label などのメタデータの変更、merge conflict。
   - CI の成功はイベントで待たない。成功のイベントは特定した check を見直すきっかけにすぎない。
   - push は `pull_request_read` の `get` で head の SHA を取り直して比べる。コンフリクトは `get` の `mergeable_state` を見る。
-  - close で購読は解除され、reopen で再購読される。PR Steward が watch 中の PR ではイベントが届かない。
+  - close で購読は解除され、reopen で再購読される。PR Steward が watch 中の PR ではイベントが届かない。そのときは tool の結果にその旨が出るので、購読したら結果を読み、出ていればイベントを待たずに `get` と CI を定期的に読み直す。
