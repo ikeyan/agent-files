@@ -18,41 +18,7 @@ What is and is not delivered, with the measurements: `canon: facts/claude-code/s
 - **So**:
   - Do not wait on a success event to learn that CI is green. Treat it as a cue to re-check the specific check you need, and read that check by the pushed commit's SHA over REST with a token: take the SHA from `git ls-remote`, read `commits/<sha>/check-runs` with the name passed as `curl --get --data-urlencode "check_name=…"` (every run with that name, all pages), and the matching context in `commits/<sha>/status` for CI that reports legacy commit statuses (not the top-level `state`, which is `pending` when there are no statuses even if every check run is green). Do not judge from MCP `get_check_runs`: it does not say which commit its results belong to (`canon: facts/github/github-mcp-server-pull-request-read-fields`). Nor from cc-web's `mcp__github__` `get_status`: whether it returns a `sha` is unverified. With no token, report that CI could not be confirmed.
   - Detect pushes by re-reading the PR and comparing the head SHA. Detect conflicts with `mergeable_state`.
-  - Instead of polling you can have CI PATCH a status comment on every run (edits are delivered). If edits by `github-actions[bot]` turn out not to be delivered, use create-then-sweep below.
-
-### Fallback: create-then-sweep
-
-Post a fresh comment every time (triggers the create event) and delete previous marker'd comments afterwards:
-
-```bash
-# Snapshot old marker'd comments BEFORE creating the new one so the
-# fresh one isn't accidentally deleted.
-old_ids=$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" \
-  "$api/issues/$PR/comments?per_page=100" \
-  | jq -r --arg m '<!-- ci-status -->' \
-      '.[] | select(.body | contains($m)) | .id')
-
-curl -fsS -X POST -H "Authorization: Bearer $GH_TOKEN" -H 'Content-Type: application/json' \
-  -d "$payload" "$api/issues/$PR/comments" -o /dev/null
-
-for id in $old_ids; do
-  curl -sS -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
-    "$api/issues/comments/$id" -o /dev/null || true
-done
-```
-
-Gate on all required jobs passing with a separate `needs:` job rather than per-job, so you get one notification per green PR rather than per green job:
-
-```yaml
-notify-pr-green:
-  needs: [check, e2e]            # skipped automatically when any fails
-  if: github.event_name == 'pull_request'
-  permissions:
-    pull-requests: write           # only this job needs write
-  runs-on: ubuntu-24.04
-  steps:
-    - ...                          # curl as above
-```
+  - Instead of polling you can have CI PATCH a status comment on every run (edits are delivered). If edits by `github-actions[bot]` turn out not to be delivered, use [create-then-sweep](create-then-sweep.md).
 
 ### What NOT to bother with
 
