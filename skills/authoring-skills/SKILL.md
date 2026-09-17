@@ -16,7 +16,7 @@ description: Use when creating, editing, or reviewing a skill (a SKILL.md or the
 
 - スキル利用者が行動するのに要る指示だけを書く。
 - 外部の性質の説明・実測の条件と経緯は canon (`facts/<topic>/`) に置き、本文からは `canon: facts/<topic>/<page>` で参照する。
-- canon を読めない環境 (cc-web 等) でも使うスキルでは、行動に要る手順・注意は本文に残し、canon 参照は根拠として添えるだけにする。削るときは「この一文が無いと利用者が誤った行動をするか」で判定する。
+- 書くかどうかは「この一文が無いと実行者が誤った行動をするか」で決め、canon を読めるかでは決めない。canon にある内容でも行動に要るなら書く。要らない内容を、canon を読めない環境のためと写さない (cc-web でも `add_repo` で canon を足せば読める。`canon: facts/claude-code/cc-web-session-repo-scope`)。
 - 善意の編集で壊れる箇所 (外すと壊れるフラグ・書き換えてはいけないコマンド) は「〜を外さない」と短く書き、理由は canon に置く。
 
 ## ファイルの分け方
