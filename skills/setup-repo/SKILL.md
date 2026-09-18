@@ -52,6 +52,7 @@ description: Use when creating a new repository, bringing an existing repository
 - テストの仕組みを用意する (外部依存の挙動も内部ロジックも)。property testing・table driven test を活用する。
 - 単一検証コマンドを用意する (AGENTS.md 設計指針)。上記すべてを 1 つの入口に集約する。
 - レビューは review-perspectives skill で行う。観点は plugin で配られる。
+  - テストフレームワーク・ランタイム・リポ自身の終了ハンドラや資源の型の名前を、`review-perspectives/<観点>.md` に書く (review-perspectives の [repo-supplement.md](../review-perspectives/repo-supplement.md))。
   - managed Code Review (Claude GitHub App) を使うリポでは、効かせたい観点をルートの `REVIEW.md` に書く。managed Code Review はルートの `REVIEW.md` しか読まない (`canon: facts/claude-code/review-md-consumers`)。
   - 使わないリポには `REVIEW.md` とその同期チェックを置かず、既存のリポにあれば消す。
 
