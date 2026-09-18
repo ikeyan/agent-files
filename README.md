@@ -31,3 +31,15 @@ skills は Claude plugin としてインストールして参照する (下記)�
 
 対応関係は `./verify.sh` が見る。`skills/` にスキルを足した・消したときの symlink の作り忘れと残骸はその場で直す。CI は `VERIFY_READONLY=1` で直さずに落とす。symlink 先の誤りと実体側の `SKILL.md` 欠落は、どちらのモードでも違反として報告する。
 
+## builtin の `/code-review` を review-perspectives に向ける
+
+レビューの入口は review-perspectives に一本化する。builtin の `/code-review` とその別名 `/review` は、同名の個人スキルで置き換える (plugin のスキルは名前空間が付くので builtin を置き換えない。`code-review` の個人スキルは別名 `/review` を置き換えないので、`review` も置く)。
+
+```sh
+mkdir -p ~/.claude/skills/code-review ~/.claude/skills/review
+cp user-skills/code-review/SKILL.md ~/.claude/skills/code-review/SKILL.md
+sed 's/^name: code-review$/name: review/' user-skills/code-review/SKILL.md > ~/.claude/skills/review/SKILL.md
+```
+
+個人スキルは次のセッションから効く。他の plugin が持つレビュー用スキル (`engineering:code-review` 等) は、`~/.claude/settings.json` の `permissions.deny` に `Skill(<名前>)` と `Skill(<名前> *)` を足して止める。deny が止めるのは Claude の Skill ツール呼び出しで、ユーザーが打つ `/<名前>` は止めない。
+
