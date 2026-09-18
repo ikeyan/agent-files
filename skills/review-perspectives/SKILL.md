@@ -28,6 +28,8 @@ description: Use when reviewing a diff before commit or push, when asked to revi
 | 資源の解放 | haiku | 獲得した資源は失敗経路でも解放する |
 | 写しへの反映 | haiku | 書き込みは全ての写しに反映する |
 | 送った本文 | haiku | 送った本文を保持して適用する |
+| 行ごとの走査 | haiku | 行ごとに壊れる入力を探す |
+| 言語の落とし穴 | haiku | 言語の落とし穴 |
 | 守り直し | haiku | 消した行が守っていたものを守り直す |
 | 呼び出し元 | haiku | 契約の変更に呼び出し元が追随する |
 | テスト | haiku | 変えた振る舞いをテストが固定する |
