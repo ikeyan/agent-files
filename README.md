@@ -33,7 +33,10 @@ skills は Claude plugin としてインストールして参照する (下記)�
 
 ## builtin の `/code-review` を review-perspectives に向ける
 
-レビューの入口は review-perspectives に一本化する。builtin の `/code-review` とその別名 `/review` は、同名の個人スキルで置き換える (plugin のスキルは名前空間が付くので builtin を置き換えない。`code-review` の個人スキルは別名 `/review` を置き換えないので、`review` も置く)。
+レビューの入口は review-perspectives に一本化する。builtin の `/code-review` とその別名 `/review` は、同名の個人スキルで置き換える。
+
+- 置き場所は `~/.claude/skills/`。plugin のスキルは名前空間 (`/ikeyan-skills:<name>`) が付くので、builtin を置き換えない。
+- 置くのは `code-review` と `review` の 2 つ。`code-review` の個人スキルは、別名 `/review` を置き換えない。
 
 ```sh
 mkdir -p ~/.claude/skills/code-review ~/.claude/skills/review
