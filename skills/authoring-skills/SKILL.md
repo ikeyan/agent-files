@@ -27,4 +27,4 @@ description: Use when creating, editing, or reviewing a skill (a SKILL.md or the
 
 ## 文体
 
-リポの REVIEW.md の「自然言語の書き方」に従う。
+review-perspectives の観点 [ハードラップしない](../review-perspectives/perspectives/ハードラップしない.md)・[論理構造を散文に埋め込まない](../review-perspectives/perspectives/論理構造を散文に埋め込まない.md)・[読者を想定して書く](../review-perspectives/perspectives/読者を想定して書く.md) に従う。

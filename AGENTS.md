@@ -27,4 +27,4 @@
 
 ## 文書 (Markdown) の書き方
 
-REVIEW.md の「自然言語の書き方」に従う。
+review-perspectives の観点 [ハードラップしない](skills/review-perspectives/perspectives/ハードラップしない.md)・[論理構造を散文に埋め込まない](skills/review-perspectives/perspectives/論理構造を散文に埋め込まない.md)・[読者を想定して書く](skills/review-perspectives/perspectives/読者を想定して書く.md) に従う。
