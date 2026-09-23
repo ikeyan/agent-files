@@ -51,7 +51,7 @@ fi
 
 work=$common/review-perspectives/$name
 mkdir -p "$work"
-run=$(mktemp -d "${TMPDIR:-/tmp}/review-perspectives.XXXXXX")
+run=$(cd "$(mktemp -d "${TMPDIR:-/tmp}/review-perspectives.XXXXXX")" && pwd -P)
 ok=
 repo=$(git rev-parse --show-toplevel)
 start=$PWD
@@ -67,11 +67,9 @@ head=$(git rev-parse --verify -q 'HEAD^{commit}') || head=
 if [ -z "$head" ]; then
   base=$empty_tree
 else
-  base=$(git merge-base "$base_ref" HEAD) || {
-    [ "$(git rev-parse --is-shallow-repository)" = true ] || { echo "target-diff.sh: $base_ref と HEAD に共通の祖先が無い" >&2; exit 1; }
-    git fetch --unshallow
-    base=$(git merge-base "$base_ref" HEAD)
-  }
+  # shallow だと merge-base も first-parent の走査も途中で切れる (走査は失敗せず短い結果を返す)
+  if [ "$(git rev-parse --is-shallow-repository)" = true ]; then git fetch -q --unshallow; fi
+  base=$(git merge-base "$base_ref" HEAD) || { echo "target-diff.sh: $base_ref と HEAD に共通の祖先が無い" >&2; exit 1; }
   # 既定ブランチに入った revision は merge-base が自身になる。first-parent の線上で最寄りの祖先から先を対象にする。
   if [ -n "$rev" ] && [ "$base" = "$head" ]; then
     base=$empty_tree

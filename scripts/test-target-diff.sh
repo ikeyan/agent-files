@@ -92,6 +92,10 @@ git clone -q --single-branch --branch stacked origin.git single
 run single && expect "--single-branch" "s1.txt" "s1.txt"
 git clone -q --depth 1 --branch stacked "file://$tmp/origin.git" shallow
 run shallow && expect "shallow" "s1.txt" "s1.txt"
+git clone -q --depth 1 --branch main "file://$tmp/origin.git" shallow-main
+run shallow-main main && expect "shallow で対象が既定ブランチの tip" "ff2.txt" "ff2.txt"
+mkdir clone/rel-tmp
+TMPDIR=rel-tmp run clone topic && expect "相対 TMPDIR" "t1.txt t2.txt" "t1.txt t2.txt"
 
 # unborn HEAD (initial commit の前、origin はある)
 git init -q -b fresh unborn && git -C unborn remote add origin "$tmp/origin.git" && echo x > unborn/x.txt
