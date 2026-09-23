@@ -13,13 +13,14 @@ status=0
 commit() { # <ファイル名>: そのファイルを作ってコミットする
   echo "$1" > "$1" && git add -- "$1" && git commit -q -m "$1"
 }
-run() { # <実行するディレクトリ> [<対象>] [-- <path>...]: スクリプトを回し、出力を $out に、diff・repo・tree を $diff・$repo・$tree に置く。止まったら違反
+run() { # <実行するディレクトリ> [<対象>] [-- <path>...]: スクリプトを回し、出力を $out に、diff・repo・tree・rules を $diff・$repo・$tree・$rules に置く。止まったら違反
   local dir=$1; shift
   out=$(cd "$dir" && "${bash:-bash}" "$script" "$@") || { echo "run $dir $*: 止まった" >&2; status=1; return 1; }
-  [ "$(grep -c -v -E '^(work|run|repo|diff|tree)=' <<< "$out")" = 0 ] || { echo "run $dir $*: 出力に形式外の行がある — $out" >&2; status=1; return 1; }
+  [ "$(grep -c -v -E '^(work|run|repo|diff|tree|rules)=' <<< "$out")" = 0 ] || { echo "run $dir $*: 出力に形式外の行がある — $out" >&2; status=1; return 1; }
   tree=$(sed -n 's/^tree=//p' <<< "$out")
   diff=$(sed -n 's/^diff=//p' <<< "$out")
   repo=$(sed -n 's/^repo=//p' <<< "$out")
+  rules=$(sed -n 's/^rules=//p' <<< "$out")
 }
 fails() { # <名前> <実行するディレクトリ> [<対象>] [-- <path>...]: スクリプトが止まることを期待する
   local name=$1 dir=$2; shift 2
@@ -88,6 +89,11 @@ run . "$merge" && expect "merge commit" "t1.txt t2.txt" "M t1.txt t2.txt"
 run . "$merge" && expect "同じ対象の 2 回目" "t1.txt t2.txt" "M t1.txt t2.txt"
 run . "$root" && expect "root commit" "a.txt" "a.txt"
 run . origin/ff && expect "fast-forward でマージ済みのブランチ" "ff2.txt" "ff2.txt"
+GIT_EXTERNAL_DIFF=true GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=diff.noprefix GIT_CONFIG_VALUE_0=true GIT_CONFIG_KEY_1=color.diff GIT_CONFIG_VALUE_1=always \
+  run . topic && expect "diff の出力を変える git の設定" "t1.txt t2.txt" "t1.txt t2.txt"
+run . -- sub && r1=$rules; mkdir review-perspectives && echo s > review-perspectives/x.md
+if run . -- sub && [ "$rules" = "$r1" ]; then echo "rules: リポ固有の検索対象の追加で変わらない" >&2; status=1; fi
+rm -r review-perspectives
 run . HEAD && expect "revision の HEAD (origin/HEAD でない)" "f1.txt" "f1.txt"
 
 # clone の形: --single-branch、shallow
@@ -98,6 +104,8 @@ git clone -q --depth 1 --branch stacked "file://$tmp/origin.git" shallow
 run shallow && expect "shallow" "s1.txt" "s1.txt"
 git clone -q --depth 1 --branch main "file://$tmp/origin.git" shallow-main
 run shallow-main main && expect "shallow で対象が既定ブランチの tip" "ff2.txt" "ff2.txt"
+git clone -q --depth 1 --branch stacked "file://$tmp/origin.git" shallow-upstream && git -C shallow-upstream remote add upstream "$tmp/no-such.git" && git -C shallow-upstream config branch.stacked.remote upstream
+run shallow-upstream && expect "shallow で今のブランチが別の remote を追う" "s1.txt" "s1.txt"
 mkdir clone/rel-tmp
 TMPDIR=rel-tmp run clone topic && expect "相対 TMPDIR" "t1.txt t2.txt" "t1.txt t2.txt"
 rm -rf clone/rel-tmp

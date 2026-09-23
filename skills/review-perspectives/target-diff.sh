@@ -6,15 +6,15 @@
 #   <対象> が数字だけ: PR 番号 (gh で head・base ブランチ・コミット一覧を引く。分岐点は PR の最初のコミットの親なので、マージ済みでも全コミットが対象)
 #   <対象> がそれ以外: 手元のブランチ、origin のブランチ、revision の順に解決する。既定ブランチの first-parent の線上にある revision は、その 1 コミットだけが対象 (fast-forward や rebase でマージ済みのブランチの分岐点は履歴に残らない。全コミットは PR 番号で指定する)
 #   <path>: log と diff をそのパスに限る。glob も pathspec magic も無いそのままのパス名で、cwd からの相対パスかリポジトリの中の絶対パス
-# 出力 (stdout、1 行 1 つ): work=<レビュー対象ごとの作業ディレクトリ> run=<この実行の生成物のディレクトリ ($TMPDIR の下。消えて困るものは置かない)> repo=<レビュアーに渡すリポジトリのルート> diff=<target.diff> tree=<レビュー対象の内容全体 (未追跡を含む) の tree id>
+# 出力 (stdout、1 行 1 つ): work=<レビュー対象ごとの作業ディレクトリ> run=<この実行の生成物のディレクトリ ($TMPDIR の下。消えて困るものは置かない)> repo=<レビュアーに渡すリポジトリのルート> diff=<target.diff> tree=<レビュー対象の内容全体 (未追跡を含む) の tree id> rules=<レビューの規則 (SKILL.md・観点・リポ固有の検索対象) の hash>
 # 事前条件: origin があり、その HEAD が既定ブランチを指している。PR 番号は gh の認証。
 # 事後条件: 対象を指定したら repo は run の下の linked worktree。レビュー後に git worktree remove <repo> してから rm -r <run> で消す。失敗して終わるときは自分で消す。同じ対象を並行して回しても run は別で、work の exclusions.md と origin の remote-tracking ref だけを共有する。
 #
 # 受け付ける環境の形 (canon: facts/git/repository-shapes) と扱い:
-#   処理する: linked worktree、--single-branch の clone、shallow clone、unborn HEAD、root commit、既定ブランチに入った revision と merge commit、既定ブランチ以外へ向く PR、手元だけ・リモートだけのブランチ、未追跡の項目の全種 (- 始まりの名前、シンボリックリンク、入れ子のリポジトリ)
+#   処理する: linked worktree、--single-branch の clone、shallow clone、unborn HEAD、root commit、既定ブランチに入った revision と merge commit、既定ブランチ以外へ向く PR、手元だけ・リモートだけのブランチ、未追跡の項目の全種 (- 始まりの名前、シンボリックリンク、入れ子のリポジトリ)、diff と log の出力を変える git の設定 (diff.external・GIT_EXTERNAL_DIFF・textconv・color・diff.noprefix・log.showSignature)
 #   対象外:   submodule と入れ子のリポジトリの中身 (gitlink の commit id だけを見る。中の変更はそのリポジトリで回す)、本来の index の内容 (作業ツリーを正とする。staged した後に作業ツリーを戻した内容は出ない)、.gitignore で無視された項目 (git add -A が拾わないので diff にも tree にも入らない)
 #   止まる:   同時に始めた別の実行と fetch が衝突した (cannot lock ref。やり直せば通る)、origin が無い、origin の HEAD が既定ブランチを指していない (set-head --auto の Cannot determine remote HEAD)、<対象> が解決できない、共通の祖先が無い、<path> がリポジトリの外 (絶対パスの .. でルートより上を通るものを含む)、レビュー対象が空 (変更が無い、<path> が何にも一致しない、コミットが打ち消し合って patch が空)
-# 外さないもの: fetch の refspec と --prune、set-head --auto、--path-format=absolute --git-common-dir、add -A の前の read-tree (理由は canon の同ページ)
+# 外さないもの: fetch の refspec と --prune、unshallow の origin、set-head --auto、--path-format=absolute --git-common-dir、add -A の前の read-tree、patch の diff-index、log の --no-show-signature (理由は canon の同ページ)
 set -euo pipefail
 
 target=
@@ -24,6 +24,7 @@ if [ $# -gt 0 ]; then
   shift
 fi
 paths=("$@")
+here=$(cd "$(dirname "$0")" && pwd -P)
 export GIT_LITERAL_PATHSPECS=1
 repo=$(git rev-parse --show-toplevel)
 prefix=$(git rev-parse --show-prefix)
@@ -49,7 +50,7 @@ done
 
 git fetch -q --prune origin '+refs/heads/*:refs/remotes/origin/*'
 # shallow だと PR の最初のコミットの親も、merge-base も first-parent の走査も途中で切れる (走査は失敗せず短い結果を返す)
-if [ "$(git rev-parse --is-shallow-repository)" = true ]; then git fetch -q --unshallow; fi
+if [ "$(git rev-parse --is-shallow-repository)" = true ]; then git fetch -q --unshallow origin; fi
 git remote set-head origin --auto > /dev/null
 common=$(git rev-parse --path-format=absolute --git-common-dir)
 base_ref=origin/HEAD
@@ -104,13 +105,15 @@ fi
 export GIT_INDEX_FILE=$run/index
 if [ -n "$head" ]; then git read-tree HEAD; else git read-tree --empty; fi
 git add -A --no-warn-embedded-repo
-git diff --cached "$base" -- "${paths[@]+"${paths[@]}"}" > "$run/patch.diff"
+git diff-index -p -M --cached "$base" -- "${paths[@]+"${paths[@]}"}" > "$run/patch.diff"
 [ -s "$run/patch.diff" ] || { echo "target-diff.sh: レビュー対象が空" >&2; exit 1; }
 {
-  if [ -n "$head" ]; then git log --reverse --format='commit %h%n%n%B' "$base..HEAD" -- "${paths[@]+"${paths[@]}"}"; fi
+  if [ -n "$head" ]; then git log --no-show-signature --reverse --format='commit %h%n%n%B' "$base..HEAD" -- "${paths[@]+"${paths[@]}"}"; fi
   cat "$run/patch.diff"
 } > "$run/target.diff"
 
 tree=$(git write-tree)
+shopt -s nullglob
+rules=$(git hash-object "$here"/SKILL.md "$here"/perspectives/*.md review-perspectives/*.md | git hash-object --stdin)
 ok=1
-printf 'work=%s\nrun=%s\nrepo=%s\ndiff=%s\ntree=%s\n' "$work" "$run" "$repo" "$run/target.diff" "$tree"
+printf 'work=%s\nrun=%s\nrepo=%s\ndiff=%s\ntree=%s\nrules=%s\n' "$work" "$run" "$repo" "$run/target.diff" "$tree" "$rules"
