@@ -17,7 +17,7 @@
 
 ## このリポの検証
 
-- 単一検証コマンドは `./verify.sh` (shellcheck・`deno check`・JSON の構文と schema・Markdown のリポ内リンク・`.claude/skills` と `skills/` の対応)。CI も同じものを回す。
+- 単一検証コマンドは `./verify.sh` (shellcheck・`deno check`・review-perspectives の `target-diff.sh` の fixture・JSON の構文と schema・Markdown のリポ内リンク・`.claude/skills` と `skills/` の対応)。CI も同じものを回す。
 - `./verify.sh` は `.claude/skills` の symlink のずれをその場で直す。CI は `VERIFY_READONLY=1` で直さず落とす。
 - 必要なもの: `shellcheck`、`deno`、`www.schemastore.org` への到達。
 

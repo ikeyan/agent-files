@@ -16,6 +16,7 @@ check_files() { # <コマンド…> -- <パターン>: git が知っているフ
 }
 check_files shellcheck -- '*.sh'
 check_files deno check -- '*.ts'
+scripts/test-target-diff.sh
 
 # .claude/skills と skills/ の対応 (構造は README)。symlink の作成は deno だと無制限の
 # --allow-write/--allow-read が要るので shell 側で扱う。Claude Code のサンドボックス内では

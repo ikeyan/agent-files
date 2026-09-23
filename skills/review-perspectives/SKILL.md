@@ -38,6 +38,7 @@ description: Use when reviewing a diff before commit or push, when asked to revi
 | 規約 | haiku | 規約文書の規則に従う |
 | 外部依存 | haiku | 公開された契約に依存したほうが安定する, 車輪の再発明を避ける, セットアップの再現可能性, 一時的な回避策には解除条件を残す |
 | 設計判断 | haiku | 代替案を同じ物差しで比べる, 設定は実装の都合ではなくユーザーの選択を表すべき, 実測に基づいて主張しているか, 希少な資源と資産を認識する |
+| 定義域 | sonnet | 入力と環境の定義域を仕様で閉じる |
 
 - 表で観点が 1 つだけの担当は、単独のままにする。他の観点と同じエージェントに渡すと、haiku は指摘しないか、一部だけを指摘するか、誤った解を出す。
 - モデルが sonnet の担当は、haiku だと指摘が出ない。haiku は、事前検査より操作自体の失敗を使う では存在確認の削除に向かってプローブを検出せず、原因のある機構を直す では特例を外部依存による正当な実装と是認する。
@@ -48,45 +49,16 @@ description: Use when reviewing a diff before commit or push, when asked to revi
 
 ## 手順
 
-1. レビュー対象のブランチの作業ディレクトリ `$work` を作り、レビュー対象を `$work/target.diff` に書き出す (`.git/` の下は diff に入らず、clone と同じ寿命で残る)。`<ブランチ名>` は対象の指定があればその PR の head ブランチ・ブランチ名・revision、無ければ今のブランチ (対象が違えば `exclusions.md` も別になる)。対象は、既定ブランチとの分岐点から先のコミットのメッセージと diff、未コミットの変更、未追跡のファイル:
+1. レビュー対象を書き出す。`<対象>` は PR 番号・ブランチ名・revision のどれかで、無ければ今のチェックアウト (既定ブランチとの分岐点から先のコミットのメッセージと diff、未コミットの変更、未追跡のファイル)。`<パス>` を付けるとそのパスに限る:
 
    ```sh
-   work=$(git rev-parse --path-format=absolute --git-common-dir)/review-perspectives/<ブランチ名> && mkdir -p "$work" || exit 1
-   git fetch origin '+refs/heads/*:refs/remotes/origin/*' && git remote set-head origin --auto || exit 1
-   base=$(git merge-base origin/HEAD HEAD) || exit 1
-   { git log --reverse --format='commit %h%n%n%B' "$base"..HEAD; export GIT_INDEX_FILE=$work/index && git read-tree HEAD && git -c advice.addEmbeddedRepo=false add -A && git diff --cached "$base"; } > "$work/target.diff" || exit 1
-   unset GIT_INDEX_FILE
+   <このスキルのディレクトリ>/target-diff.sh [<対象>] [-- <パス>...]
    ```
 
-   未コミットの変更と未追跡のファイルは、作業ディレクトリの一時 index に作業ツリー全体を add して base と比べる。本来の index には触れない。未追跡のシンボリックリンクはリンクとして、入れ子のリポジトリは gitlink (`Subproject commit`) として diff に出る。
+   出力の `work=` がレビュー対象の作業ディレクトリ (`.git/` の下にあり、diff に入らず、clone と同じ寿命で残る。対象が違えば `exclusions.md` も別になる)、`repo=` が手順 2 でレビュアーに渡すリポジトリ、`diff=` が `target.diff`。受け付ける入力と環境の形と、各々の扱いは、スクリプトの先頭に書いてある。
 
-   - 対象の指定があるときは、上のコマンドを次のように変える。
-     - PR 番号: `git fetch origin refs/pull/<n>/head` で取得し、`FETCH_HEAD` を revision にする。revision の手順 2 の `origin/HEAD` は PR の base ブランチ `origin/$(gh pr view <n> --json baseRefName --jq .baseRefName)` にする (既定ブランチ以外へ向いた PR がある)。
-     - ブランチ名: `git rev-parse --verify -q refs/heads/<ブランチ名>` が通れば手元のそのブランチを、通らなければ `git fetch origin <ブランチ名>` で取得した `FETCH_HEAD` を revision にする (push していないブランチはリモートに無い)。
-     - revision:
-       1. `git worktree add --detach "$work/tree" <revision>` で取り出す。
-       2. `$work` を決めた後のコマンドをその中で実行する (`HEAD` が revision になり、未コミットの変更と未追跡のファイルは空)。ただし `base` の行は次にする。revision が既定ブランチに入っていると `merge-base` は revision 自身を返すので、そのときだけ、既定ブランチの first-parent の線上で最も近い、revision 自身でない祖先を分岐点にする (merge commit で入った PR はその全コミット、first-parent の線上の revision はその 1 コミットが対象になる。それ以外は `merge-base` のまま。マージ済みの topic から積んだブランチで first-parent の線まで戻ると、マージ済みの変更が対象に入る):
-
-          ```sh
-          base=$(git merge-base origin/HEAD HEAD) || exit 1
-          [ "$base" != "$(git rev-parse HEAD)" ] || base=$(git rev-list --first-parent origin/HEAD | while read -r c; do [ "$c" != "$base" ] && git merge-base --is-ancestor "$c" HEAD && echo "$c" && break; done)
-          [ -n "$base" ] || base=$(git hash-object -t tree /dev/null)
-          ```
-
-          祖先の無い root commit は空ツリーと比べる (`log` の範囲にも `diff` にも空ツリーの id を渡せる)。
-
-       3. 手順 2 の `リポジトリ` にそのパスを渡す。
-       4. レビューが終わったら `git worktree remove "$work/tree"` で消す。
-     - パス: `git log`・`git add`・`git diff` に `-- <パス>` を付ける。
-   - 外さないもの:
-     - `--path-format=absolute --git-common-dir`。相対パス `.git/…` に戻さない (`canon: facts/git/linked-worktree-git-file`)。
-     - fetch の refspec `+refs/heads/*:refs/remotes/origin/*`。`--single-branch` の clone は fetch の設定が作業ブランチしか写さず、`origin/<既定ブランチ>` ができないまま `set-head` が `Not a valid ref` で失敗する。
-     - `set-head --auto`。fetch は、手元に既にある `origin/HEAD` をリモートの今の既定ブランチへ張り直さない。
-   - 失敗したとき:
-     - `merge-base` が何も出さずに失敗し、`git rev-parse --is-shallow-repository` が `true` なら、分岐点が取得されていない。`git fetch --unshallow` してからやり直す。
-     - `HEAD` が無い (initial commit の前) と `merge-base` と `read-tree HEAD` が `Not a valid object name HEAD` で失敗する。`base` を空ツリー `$(git hash-object -t tree /dev/null)` にし、`git log` を省き、`git read-tree HEAD` を `git read-tree --empty` にして、未追跡の全ファイルを対象にする。
-     - `worktree add` が `already exists` で失敗したら、前のレビューが途中で止まって worktree が残っている。`git worktree remove --force "$work/tree"` で消してからやり直す。
-     - `origin` が無い、fetch か `set-head` が失敗した、または上の手当てで base が決まらなければ、どこからの変更をレビューするかをユーザーに確かめる。
+   - 対象を指定したときは、レビューが終わったら `git worktree remove "$work/tree"` で消す。
+   - origin が無い、fetch が失敗した、または `共通の祖先が無い` で止まったら、どこからの変更をレビューするかをユーザーに確かめる。
 
 2. 表の各行について、そのモデルのエージェントを並列に起動し、次のプロンプトを渡す。リポのルートに `review-perspectives/<観点>.md` があれば、その観点の検索対象として一緒に渡す (書き方は [repo-supplement.md](repo-supplement.md))。観点の検出手順が列挙する対象が diff に無い担当 (文書だけの diff での 資源の解放 等) は起動しない。`<観点ファイル>` はこのスキルの `perspectives/<観点>.md` の絶対パス。
 
@@ -96,6 +68,7 @@ description: Use when reviewing a diff before commit or push, when asked to revi
    - レビュー対象 (各コミットのメッセージと、それに続く diff): <作業ディレクトリの target.diff の絶対パス>
    - リポジトリ: <リポのルートの絶対パス>
    - リポ固有の検索対象: <リポのルートの review-perspectives/<観点>.md の絶対パス> (あるときだけ。無い観点はこの行を書かない)
+   - canon: <canon のルートの絶対パス> (手元にあるときだけ)
 
    diff に出てくる各ファイルを現在の全体で、その変更を見ていない初見読者として読み、diff の変更をレビュー観点に照らしてレビューしてください。観点の検出手順が求めるなら、リポジトリの他のファイルも読んでください。リポ固有の検索対象があれば、検出手順の列挙にその名前・型を加えてください。指摘ごとに「箇所 (ファイルと該当部分の引用)」「どの観点に、なぜ違反するか」「書き換え後の文」を書いてください。指摘が無ければ「指摘なし」。
    ```
