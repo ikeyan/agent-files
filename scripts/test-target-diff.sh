@@ -13,10 +13,10 @@ status=0
 commit() { # <ファイル名>: そのファイルを作ってコミットする
   echo "$1" > "$1" && git add -- "$1" && git commit -q -m "$1"
 }
-run() { # <実行するディレクトリ> [<対象>] [-- <path>...]: スクリプトを回し、出力を $out に、diff を $diff に置く。止まったら違反
+run() { # <実行するディレクトリ> [<対象>] [-- <path>...]: スクリプトを回し、出力を $out に、diff・repo・tree を $diff・$repo・$tree に置く。止まったら違反
   local dir=$1; shift
   out=$(cd "$dir" && "${bash:-bash}" "$script" "$@") || { echo "run $dir $*: 止まった" >&2; status=1; return 1; }
-  [ "$(grep -c -v -E '^(work|run|repo|diff|tree)=' <<< "$out")" = 0 ] || { echo "run $dir $*: 出力に形式外の行がある — $out" >&2; status=1; }
+  [ "$(grep -c -v -E '^(work|run|repo|diff|tree)=' <<< "$out")" = 0 ] || { echo "run $dir $*: 出力に形式外の行がある — $out" >&2; status=1; return 1; }
   tree=$(sed -n 's/^tree=//p' <<< "$out")
   diff=$(sed -n 's/^diff=//p' <<< "$out")
   repo=$(sed -n 's/^repo=//p' <<< "$out")
@@ -33,7 +33,10 @@ expect() { # <名前> <期待するパス (空白区切り)> <期待するコミ
   [ "$commits" = "${3:+$3 }" ] || { echo "$1: コミットが違う — 期待 [$3] 実際 [$commits]" >&2; status=1; }
 }
 
-# 履歴: main は c1 → c2 → M (topic の t1・t2 を --no-ff でマージ) → ff1 → ff2 (ff を fast-forward でマージ)。stacked は topic から s1。remote-only は main から r1。
+# 履歴:
+#   main: c1 → c2 → M (topic の t1・t2 を --no-ff でマージ) → ff1 → ff2 (ff を fast-forward でマージ)
+#   stacked: topic から s1
+#   remote-only: main から r1
 cd "$tmp"
 git init -q -b main src && cd src
 commit a.txt && commit b.txt
@@ -135,7 +138,9 @@ run clone/sub subch -- "$tmp/clone" && expect "絶対パスの path (リポの�
 run clone/sub subch -- "$tmp/clone/" && expect "絶対パスの path (リポのルート、末尾 /)" "sub/s.txt" "sub/s.txt"
 run clone/sub subch -- "/$tmp/clone//sub/s.txt" && expect "絶対パスの path (重なった区切り)" "sub/s.txt" "sub/s.txt"
 run clone/sub subch -- "$tmp/clone//" && expect "絶対パスの path (リポのルート、重なった区切り)" "sub/s.txt" "sub/s.txt"
+before=$(find "$tmp" -maxdepth 1 -name 'review-perspectives.*' | wc -l)
 fails "リポジトリの外の path" clone -- "$tmp/src/a.txt"
+[ "$(find "$tmp" -maxdepth 1 -name 'review-perspectives.*' | wc -l)" = "$before" ] || { echo "リポジトリの外の path: run が残る" >&2; status=1; }
 fails "ルートより上を通る .." clone -- "$tmp/clone/../clone/a.txt"
 ln -s clone link
 run link/sub subch -- "$tmp/link/sub/s.txt" && expect "シンボリックリンク経由の絶対パス" "sub/s.txt" "sub/s.txt"
