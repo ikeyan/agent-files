@@ -54,11 +54,14 @@ description: Use when reviewing a diff before commit or push, when asked to revi
    work=$(git rev-parse --path-format=absolute --git-common-dir)/review-perspectives/<ブランチ名> && mkdir -p "$work" || exit 1
    git fetch origin && git remote set-head origin --auto || exit 1
    base=$(git merge-base origin/HEAD HEAD) || exit 1
-   { git log --reverse --format='commit %h%n%n%B' "$base"..HEAD; git diff "$base"; git ls-files --others --exclude-standard -z | xargs -0 -I{} sh -c '[ ! -d "$1" ] || { echo "入れ子のリポジトリは diff にできない: $1" >&2; exit 1; }; git diff --no-index -- /dev/null "$1"; [ $? -le 1 ]' _ {}; } > "$work/target.diff" || exit 1
+   { git log --reverse --format='commit %h%n%n%B' "$base"..HEAD; export GIT_INDEX_FILE=$work/index && git read-tree HEAD && git -c advice.addEmbeddedRepo=false add -A && git diff --cached "$base"; } > "$work/target.diff" || exit 1
+   unset GIT_INDEX_FILE
    ```
 
+   未コミットの変更と未追跡のファイルは、作業ディレクトリの一時 index に作業ツリー全体を add して base と比べる。本来の index には触れない。未追跡のシンボリックリンクはリンクとして、入れ子のリポジトリは gitlink (`Subproject commit`) として diff に出る。
+
    - 対象の指定があるときは、上のコマンドを次のように変える。
-     - PR 番号: `git fetch origin refs/pull/<n>/head` で取得し、`FETCH_HEAD` を revision にする。
+     - PR 番号: `git fetch origin refs/pull/<n>/head` で取得し、`FETCH_HEAD` を revision にする。revision の手順 2 の `origin/HEAD` は PR の base ブランチ `origin/$(gh pr view <n> --json baseRefName --jq .baseRefName)` にする (既定ブランチ以外へ向いた PR がある)。
      - ブランチ名: `git fetch origin <ブランチ名>` で取得し、`FETCH_HEAD` を revision にする。
      - revision:
        1. `git worktree add --detach "$work/tree" <revision>` で取り出す。
@@ -71,7 +74,7 @@ description: Use when reviewing a diff before commit or push, when asked to revi
 
        3. 手順 2 の `リポジトリ` にそのパスを渡す。
        4. レビューが終わったら `git worktree remove "$work/tree"` で消す。
-     - パス: `git log` と `git diff` に `-- <パス>` を付け、未追跡のファイルはそのパスの下だけを列挙する。
+     - パス: `git log`・`git add`・`git diff` に `-- <パス>` を付ける。
    - 外さないもの:
      - `--path-format=absolute --git-common-dir`。相対パス `.git/…` に戻さない (`canon: facts/git/linked-worktree-git-file`)。
      - `set-head --auto`。fetch は、手元に既にある `origin/HEAD` をリモートの今の既定ブランチへ張り直さない。
