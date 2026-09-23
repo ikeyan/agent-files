@@ -45,7 +45,8 @@ elif [[ $target =~ ^[0-9]+$ ]]; then
   git fetch -q origin "refs/pull/$target/head"
   rev=$(git rev-parse FETCH_HEAD)
   pr_base=$(git rev-parse --verify -q "$first^") || pr_base=$(git hash-object -t tree /dev/null)
-elif rev=$(git rev-parse --verify -q "refs/heads/$target") || rev=$(git rev-parse --verify -q "refs/remotes/origin/$target"); then
+# origin/HEAD は既定ブランチを指す symref なので、HEAD を origin のブランチとして引かない (ブランチ名に HEAD は使えない)
+elif rev=$(git rev-parse --verify -q "refs/heads/$target") || { [ "$target" != HEAD ] && rev=$(git rev-parse --verify -q "refs/remotes/origin/$target"); }; then
   name=$target
 else
   rev=$(git rev-parse --verify "$target^{commit}")

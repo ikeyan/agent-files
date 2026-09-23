@@ -85,6 +85,7 @@ run . "$merge" && expect "merge commit" "t1.txt t2.txt" "M t1.txt t2.txt"
 run . "$merge" && expect "同じ対象の 2 回目" "t1.txt t2.txt" "M t1.txt t2.txt"
 run . "$root" && expect "root commit" "a.txt" "a.txt"
 run . origin/ff && expect "fast-forward でマージ済みのブランチ" "ff2.txt" "ff2.txt"
+run . HEAD && expect "revision の HEAD (origin/HEAD でない)" "f1.txt" "f1.txt"
 
 # clone の形: --single-branch、shallow
 cd "$tmp"
