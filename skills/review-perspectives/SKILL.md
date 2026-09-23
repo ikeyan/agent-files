@@ -54,7 +54,7 @@ description: Use when reviewing a diff before commit or push, when asked to revi
    work=$(git rev-parse --path-format=absolute --git-common-dir)/review-perspectives/<ブランチ名> && mkdir -p "$work" || exit 1
    git fetch origin && git remote set-head origin --auto || exit 1
    base=$(git merge-base origin/HEAD HEAD) || exit 1
-   { git log --reverse --format='commit %h%n%n%B' "$base"..HEAD; git diff "$base"; git ls-files --others --exclude-standard -z | xargs -0 -I{} sh -c 'git diff --no-index -- /dev/null "$1"; [ $? -le 1 ]' _ {}; } > "$work/target.diff"
+   { git log --reverse --format='commit %h%n%n%B' "$base"..HEAD; git diff "$base"; git ls-files --others --exclude-standard -z | xargs -0 -I{} sh -c '[ ! -d "$1" ] || { echo "入れ子のリポジトリは diff にできない: $1" >&2; exit 1; }; git diff --no-index -- /dev/null "$1"; [ $? -le 1 ]' _ {}; } > "$work/target.diff" || exit 1
    ```
 
    - 対象の指定があるときは、上のコマンドを次のように変える。
@@ -62,7 +62,13 @@ description: Use when reviewing a diff before commit or push, when asked to revi
      - ブランチ名: `git fetch origin <ブランチ名>` で取得し、`FETCH_HEAD` を revision にする。
      - revision:
        1. `git worktree add --detach "$work/tree" <revision>` で取り出す。
-       2. `$work` を決めた後のコマンドをその中で実行する (`HEAD` が revision になり、未コミットの変更と未追跡のファイルは空)。revision が既定ブランチに入っていると `merge-base` は revision 自身を返し、対象が空になる。そのときは `base=$(git rev-parse HEAD^)` にして、その 1 コミット (merge commit なら第 1 親からの差分) を対象にする。
+       2. `$work` を決めた後のコマンドをその中で実行する (`HEAD` が revision になり、未コミットの変更と未追跡のファイルは空)。ただし `base` は `merge-base` でなく次で決める。revision が既定ブランチに入っていると `merge-base` は revision 自身を返すので、既定ブランチの first-parent の線上で最も近い、revision 自身でない祖先を分岐点にする (merge commit で入った PR はその全コミット、first-parent の線上の revision はその 1 コミットが対象になる):
+
+          ```sh
+          base=$(git rev-list --first-parent origin/HEAD | while read -r c; do [ "$c" != "$(git rev-parse HEAD)" ] && git merge-base --is-ancestor "$c" HEAD && echo "$c" && break; done)
+          [ -n "$base" ] || exit 1
+          ```
+
        3. 手順 2 の `リポジトリ` にそのパスを渡す。
        4. レビューが終わったら `git worktree remove "$work/tree"` で消す。
      - パス: `git log` と `git diff` に `-- <パス>` を付け、未追跡のファイルはそのパスの下だけを列挙する。
