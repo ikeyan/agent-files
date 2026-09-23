@@ -58,8 +58,12 @@ description: Use when reviewing a diff before commit or push, when asked to revi
 
    - 対象の指定があるときは、上のコマンドを次のように変える。
      - PR 番号: `git fetch origin refs/pull/<n>/head` で取得し、`FETCH_HEAD` を revision にする。
-     - ブランチ名: それを revision にする。
-     - revision: `git worktree add --detach .git/review-perspectives/<ブランチ名>/tree <revision>` で取り出し、上のコマンドをその中で実行する (`HEAD` が revision になり、未コミットの変更と未追跡のファイルは空)。手順 2 の `リポジトリ` にもそのパスを渡す。レビューが終わったら `git worktree remove` で消す。
+     - ブランチ名: `git fetch origin <ブランチ名>` で取得し、`FETCH_HEAD` を revision にする。
+     - revision:
+       1. `git worktree add --detach .git/review-perspectives/<ブランチ名>/tree <revision>` で取り出す。
+       2. 上のコマンドをその中で実行する (`HEAD` が revision になり、未コミットの変更と未追跡のファイルは空)。
+       3. 手順 2 の `リポジトリ` にそのパスを渡す。
+       4. レビューが終わったら `git worktree remove` で消す。
      - パス: `git log` と `git diff` に `-- <パス>` を付け、未追跡のファイルはそのパスの下だけを列挙する。
    - `set-head --auto` を外さない: fetch は、手元に既にある `origin/HEAD` をリモートの今の既定ブランチへ張り直さない。
    - `merge-base` が何も出さずに失敗し、`git rev-parse --is-shallow-repository` が `true` なら、分岐点が取得されていない。`git fetch --unshallow` してからやり直す。
