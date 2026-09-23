@@ -6,7 +6,7 @@
 #   <対象> が数字だけ: PR 番号 (gh で head と base ブランチを引く)
 #   <対象> がそれ以外: 手元のブランチ、origin のブランチ、revision の順に解決する。既定ブランチの first-parent の線上にある revision は、その 1 コミットだけが対象
 #                       (fast-forward や rebase でマージ済みのブランチの全コミットは、分岐点が履歴に残らないので PR 番号で指定する)
-#   <path>: log と diff をそのパスに限る。glob も pathspec magic も無い、cwd からのそのままのパス名
+#   <path>: log と diff をそのパスに限る。glob も pathspec magic も無いそのままのパス名で、cwd からの相対パスかリポジトリの中の絶対パス
 # 出力 (stdout、1 行 1 つ): work=<レビュー対象ごとの作業ディレクトリ> run=<この実行の生成物のディレクトリ ($TMPDIR の下。消えて困るものは置かない)> repo=<レビュアーに渡すリポジトリのルート> diff=<target.diff> tree=<レビュー対象の内容全体 (未追跡を含む) の tree id>
 # 事前条件: origin があり、その HEAD が既定ブランチを指している。PR 番号は gh の認証。
 # 事後条件: 対象を指定したら repo は run の下の linked worktree。レビュー後に git worktree remove <repo> してから rm -r <run> で消す。失敗して終わるときは自分で消す。
@@ -17,7 +17,7 @@
 #             既定ブランチに入った revision と merge commit、既定ブランチ以外へ向く PR、手元だけ・リモートだけのブランチ、
 #             未追跡の項目の全種 (- 始まりの名前、シンボリックリンク、入れ子のリポジトリ)
 #   対象外:   submodule と入れ子のリポジトリの中身 (gitlink の commit id だけを見る。中の変更はそのリポジトリで回す)
-#   止まる:   同時に始めた別の実行と fetch が衝突した (cannot lock ref。やり直せば通る)、origin が無い、origin の HEAD が既定ブランチを指していない (set-head --auto の Cannot determine remote HEAD)、<対象> が解決できない、共通の祖先が無い、レビュー対象が空 (変更が無い、<path> が何にも一致しない、コミットが打ち消し合って patch が空)
+#   止まる:   同時に始めた別の実行と fetch が衝突した (cannot lock ref。やり直せば通る)、origin が無い、origin の HEAD が既定ブランチを指していない (set-head --auto の Cannot determine remote HEAD)、<対象> が解決できない、共通の祖先が無い、<path> がリポジトリの外、レビュー対象が空 (変更が無い、<path> が何にも一致しない、コミットが打ち消し合って patch が空)
 # 外さないもの: fetch の refspec と --prune、set-head --auto、--path-format=absolute --git-common-dir、add -A の前の read-tree (理由は canon の同ページ)
 set -euo pipefail
 
@@ -55,14 +55,20 @@ run=$(cd "$(mktemp -d "${TMPDIR:-/tmp}/review-perspectives.XXXXXX")" && pwd -P)
 ok=
 repo=$(git rev-parse --show-toplevel)
 prefix=$(git rev-parse --show-prefix)
+for i in "${!paths[@]}"; do
+  case ${paths[i]} in
+    "$repo"/*) paths[i]=${paths[i]#"$repo"/} ;;
+    /*) echo "target-diff.sh: <path> がリポジトリの外: ${paths[i]}" >&2; exit 1 ;;
+    *) paths[i]=$prefix${paths[i]} ;;
+  esac
+done
 start=$PWD
 trap '[ -n "$ok" ] || { cd "$start" && rm -rf "$run" && git worktree prune; }' EXIT
 if [ -n "$rev" ]; then
   repo=$run/tree
   git worktree add -q --detach "$repo" "$rev"
-  cd "$repo"
-  paths=("${paths[@]+"${paths[@]/#/$prefix}"}")
 fi
+cd "$repo"
 
 empty_tree=$(git hash-object -t tree /dev/null)
 head=$(git rev-parse --verify -q 'HEAD^{commit}') || head=

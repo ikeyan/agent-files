@@ -123,6 +123,9 @@ fails "origin の HEAD が無い" badhead
 git -C clone checkout -q -b subch origin/main && echo s > clone/sub/s.txt && git -C clone add sub/s.txt && git -C clone commit -qm "sub/s.txt"
 run clone/sub subch -- s.txt && expect "サブディレクトリからの path (対象あり)" "sub/s.txt" "sub/s.txt"
 run clone/sub -- u.txt && expect "サブディレクトリからの path (対象なし)" "sub/u.txt" ""
+run clone/sub subch -- "$tmp/clone/sub/s.txt" && expect "絶対パスの path (対象あり)" "sub/s.txt" "sub/s.txt"
+run clone/sub -- "$tmp/clone/sub/u.txt" && expect "絶対パスの path (対象なし)" "sub/u.txt" ""
+fails "リポジトリの外の path" clone -- "$tmp/src/a.txt"
 
 # path に指定したファイルがコミットで削除されている
 git -C clone checkout -q -b del origin/main && git -C clone rm -qf a.txt && git -C clone commit -qm "rm a.txt"
