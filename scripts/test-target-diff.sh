@@ -132,7 +132,10 @@ run clone/sub subch -- "$tmp/clone/sub/s.txt" && expect "絶対パスの path (�
 run clone/sub -- "$tmp/clone/sub/u.txt" && expect "絶対パスの path (対象なし)" "sub/u.txt" ""
 run clone/sub subch -- "$tmp/clone" && expect "絶対パスの path (リポのルート)" "sub/s.txt" "sub/s.txt"
 run clone/sub subch -- "$tmp/clone/" && expect "絶対パスの path (リポのルート、末尾 /)" "sub/s.txt" "sub/s.txt"
+run clone/sub subch -- "/$tmp/clone//sub/s.txt" && expect "絶対パスの path (重なった区切り)" "sub/s.txt" "sub/s.txt"
+run clone/sub subch -- "$tmp/clone//" && expect "絶対パスの path (リポのルート、重なった区切り)" "sub/s.txt" "sub/s.txt"
 fails "リポジトリの外の path" clone -- "$tmp/src/a.txt"
+fails "ルートより上を通る .." clone -- "$tmp/clone/../clone/a.txt"
 ln -s clone link
 run link/sub subch -- "$tmp/link/sub/s.txt" && expect "シンボリックリンク経由の絶対パス" "sub/s.txt" "sub/s.txt"
 run link/sub subch -- "$tmp/link" && expect "シンボリックリンク経由のルート" "sub/s.txt" "sub/s.txt"
@@ -144,6 +147,13 @@ run linksub subch -- "$tmp/linksub" && expect "サブディレクトリへのシ
 git -C clone commit -q --allow-empty -m "aa/bb/cc/escape"
 run clone 'HEAD^{/../../escape}' -- sub/s.txt && expect "revision の式" "sub/s.txt" "sub/s.txt"
 case $(sed -n 's/^work=//p' <<< "$out") in "$tmp/clone/.git/review-perspectives/"*) ;; *) echo "revision の式: 作業ディレクトリが .git の外 — $out" >&2; status=1 ;; esac
+
+# 消えたブランチの exclusions.md と同じパスになる名前のブランチも、別の作業ディレクトリになる
+git -C clone branch -q gone origin/topic
+run clone gone && gone_work=$(sed -n 's/^work=//p' <<< "$out") && touch "$gone_work/exclusions.md"
+git -C clone branch -q -D gone && git -C clone branch -q gone/exclusions.md origin/topic
+run clone gone/exclusions.md && expect "消えたブランチの中のファイル名のブランチ" "t1.txt t2.txt" "t1.txt t2.txt"
+[ "$(sed -n 's/^work=//p' <<< "$out")" != "$gone_work" ] || { echo "消えたブランチ: 作業ディレクトリを共有している" >&2; status=1; }
 
 # path に指定したファイルがコミットで削除されている
 git -C clone checkout -q -b del origin/main && git -C clone rm -qf a.txt && git -C clone commit -qm "rm a.txt"

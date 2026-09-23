@@ -18,7 +18,7 @@
 #             未追跡の項目の全種 (- 始まりの名前、シンボリックリンク、入れ子のリポジトリ)
 #   対象外:   submodule と入れ子のリポジトリの中身 (gitlink の commit id だけを見る。中の変更はそのリポジトリで回す)、
 #             本来の index の内容 (作業ツリーを正とする。staged した後に作業ツリーを戻した内容は出ない)
-#   止まる:   同時に始めた別の実行と fetch が衝突した (cannot lock ref。やり直せば通る)、origin が無い、origin の HEAD が既定ブランチを指していない (set-head --auto の Cannot determine remote HEAD)、<対象> が解決できない、共通の祖先が無い、<path> がリポジトリの外、レビュー対象が空 (変更が無い、<path> が何にも一致しない、コミットが打ち消し合って patch が空)
+#   止まる:   同時に始めた別の実行と fetch が衝突した (cannot lock ref。やり直せば通る)、origin が無い、origin の HEAD が既定ブランチを指していない (set-head --auto の Cannot determine remote HEAD)、<対象> が解決できない、共通の祖先が無い、<path> がリポジトリの外 (絶対パスの .. でルートより上を通るものを含む)、レビュー対象が空 (変更が無い、<path> が何にも一致しない、コミットが打ち消し合って patch が空)
 # 外さないもの: fetch の refspec と --prune、set-head --auto、--path-format=absolute --git-common-dir、add -A の前の read-tree (理由は canon の同ページ)
 set -euo pipefail
 
@@ -48,12 +48,12 @@ elif [[ $target =~ ^[0-9]+$ ]]; then
 elif rev=$(git rev-parse --verify -q "refs/heads/$target") || rev=$(git rev-parse --verify -q "refs/remotes/origin/$target"); then
   name=$target
 else
-  # revision の式は .. や / を含みうるので、作業ディレクトリ名には解決した id を使う
   rev=$(git rev-parse --verify "$target^{commit}")
   name=$rev
 fi
 
-work=$common/review-perspectives/$name
+# ブランチ名は / を含み、消えたブランチの作業ディレクトリの中の exclusions.md とも重なりうるので、名前の hash をディレクトリ名にする
+work=$common/review-perspectives/$(printf '%s' "$name" | git hash-object --stdin)
 mkdir -p "$work"
 run=$(cd "$(mktemp -d "${TMPDIR:-/tmp}/review-perspectives.XXXXXX")" && pwd -P)
 ok=
@@ -64,7 +64,10 @@ prefix=$(git rev-parse --show-prefix)
 lroot=$repo
 case $PWD in */"${prefix%/}") lroot=${PWD%/"${prefix%/}"} ;; esac
 [ -n "$prefix" ] || lroot=$PWD
+s=/
 for i in "${!paths[@]}"; do
+  # 絶対パスは前方一致で写すので、重なった区切りを 1 つに畳む (相対パスの . や .. は git が畳む)
+  while [[ ${paths[i]} == *$s$s* ]]; do paths[i]=${paths[i]//$s$s/$s}; done
   case ${paths[i]} in
     "$repo"|"$repo"/|"$lroot"|"$lroot"/) paths[i]=. ;;
     "$PWD"|"$PWD"/) paths[i]=${prefix:-.} ;;
