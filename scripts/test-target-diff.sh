@@ -15,6 +15,7 @@ commit() { # <ファイル名>: そのファイルを作ってコミットする
 run() { # <実行するディレクトリ> [<対象>] [-- <path>...]: スクリプトを回し、出力を $out に、diff を $diff に置く。止まったら違反
   local dir=$1; shift
   out=$(cd "$dir" && "${bash:-bash}" "$script" "$@") || { echo "run $dir $*: 止まった" >&2; status=1; return 1; }
+  [ "$(grep -c -v -E '^(work|run|repo|diff)=' <<< "$out")" = 0 ] || { echo "run $dir $*: 出力に形式外の行がある — $out" >&2; status=1; }
   diff=$(sed -n 's/^diff=//p' <<< "$out")
   repo=$(sed -n 's/^repo=//p' <<< "$out")
 }

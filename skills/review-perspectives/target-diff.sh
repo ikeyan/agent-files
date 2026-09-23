@@ -30,7 +30,7 @@ paths=("$@")
 export GIT_LITERAL_PATHSPECS=1
 
 git fetch -q --prune origin '+refs/heads/*:refs/remotes/origin/*'
-git remote set-head origin --auto
+git remote set-head origin --auto > /dev/null
 common=$(git rev-parse --path-format=absolute --git-common-dir)
 base_ref=origin/HEAD
 rev=
