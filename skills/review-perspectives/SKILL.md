@@ -59,7 +59,11 @@ description: Use when reviewing a diff before commit or push, when asked to revi
    - `set-head --auto` を外さない: fetch は、手元に既にある `origin/HEAD` をリモートの今の既定ブランチへ張り直さない。
    - `merge-base` が何も出さずに失敗し、`git rev-parse --is-shallow-repository` が `true` なら、分岐点が取得されていない。`git fetch --unshallow` してからやり直す。
    - `origin` が無い、fetch か `set-head` が失敗した、または上の手当てで base が決まらなければ、どこからの変更をレビューするかをユーザーに確かめる。
-   - レビュー対象が今のチェックアウトと違う revision (PR 番号・ブランチ名) なら、上の `HEAD` をその revision にし、`git worktree add --detach .git/review-perspectives/<ブランチ名>/tree <revision>` で取り出して、手順 2 の `リポジトリ` にそのパスを渡す。レビューが終わったら `git worktree remove` で消す。レビュアーはリポジトリのパスのファイルを読むので、チェックアウト中のツリーを渡すと、対象に無い版のファイルを読む。
+   - レビュー対象が今のチェックアウトと違う revision (PR 番号・ブランチ名) のとき:
+     1. 上の `HEAD` をその revision にする。
+     2. `git worktree add --detach .git/review-perspectives/<ブランチ名>/tree <revision>` で取り出す。
+     3. 手順 2 の `リポジトリ` にそのパスを渡す。
+     4. レビューが終わったら `git worktree remove` で消す。
 
 2. 表の各行について、そのモデルのエージェントを並列に起動し、次のプロンプトを渡す。リポのルートに `review-perspectives/<観点>.md` があれば、その観点の検索対象として一緒に渡す (書き方は [repo-supplement.md](repo-supplement.md))。観点の検出手順が列挙する対象が diff に無い担当 (文書だけの diff での 資源の解放 等) は起動しない。`<観点ファイル>` はこのスキルの `perspectives/<観点>.md` の絶対パス。
 
@@ -73,7 +77,9 @@ description: Use when reviewing a diff before commit or push, when asked to revi
    diff に出てくる各ファイルを現在の全体で、その変更を見ていない初見読者として読み、diff の変更をレビュー観点に照らしてレビューしてください。観点の検出手順が求めるなら、リポジトリの他のファイルも読んでください。リポ固有の検索対象があれば、検出手順の列挙にその名前・型を加えてください。指摘ごとに「箇所 (ファイルと該当部分の引用)」「どの観点に、なぜ違反するか」「書き換え後の文」を書いてください。指摘が無ければ「指摘なし」。
    ```
 
-3. 全ての担当の結果を集め、作業ディレクトリの `exclusions.md` (手順 5) にある指摘のうち、反証の根拠の引用が現在のファイルにそのまま残っているものを外してから、残りを確定・あり得る・反証のどれかに判定する。条件は下の検証プロンプトのとおり。
+3. 全ての担当の結果を集め、判定する。
+   - 作業ディレクトリの `exclusions.md` (手順 5) にある指摘は、反証の根拠の引用が現在のファイルにそのまま残っていれば外す。
+   - 残りを確定・あり得る・反証のどれかに判定する。条件は下の検証プロンプトのとおり。
    - 文書と整理の指摘は自分で判定する。観点の規則と違反する行の両方を引用できれば確定、観点の判定規則が除外していれば反証。
    - コードの挙動についての指摘は、候補を作業ディレクトリの `candidates.md` にまとめ、sonnet の検証エージェント 1 体に次のプロンプトで渡す。haiku は誤った候補の主張をそのまま確定にする。
 
