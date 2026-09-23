@@ -111,6 +111,11 @@ fails "一致しない path (対象あり)" clone topic -- no-such-dir
 # macOS 標準の bash 3.2 でも同じ (pathspec 無しの空配列の展開)
 if [ -x /bin/bash ]; then bash=/bin/bash run clone && expect "bash 3.2" "--stat :c.txt a.txt f1.txt linkdir nested sub/[b].txt sub/u.txt" "f1.txt"; fi
 
+# staged した後に作業ツリーを戻した内容は対象外 (作業ツリーが正)
+git -C clone checkout -q -b staged origin/main && echo staged > clone/b.txt && git -C clone add b.txt && echo b.txt > clone/b.txt
+fails "staged だけの変更" clone -- b.txt
+git -C clone reset -q
+
 # コミットが打ち消し合って patch が空なら止まる
 git -C clone checkout -q -b cancel origin/main && (cd clone && commit z.txt && git rm -q z.txt && git commit -qm "rm z.txt")
 fails "打ち消し合うコミット" clone cancel
@@ -128,6 +133,9 @@ run clone/sub -- "$tmp/clone/sub/u.txt" && expect "絶対パスの path (対象�
 run clone/sub subch -- "$tmp/clone" && expect "絶対パスの path (リポのルート)" "sub/s.txt" "sub/s.txt"
 run clone/sub subch -- "$tmp/clone/" && expect "絶対パスの path (リポのルート、末尾 /)" "sub/s.txt" "sub/s.txt"
 fails "リポジトリの外の path" clone -- "$tmp/src/a.txt"
+ln -s clone link
+run link/sub subch -- "$tmp/link/sub/s.txt" && expect "シンボリックリンク経由の絶対パス" "sub/s.txt" "sub/s.txt"
+run link/sub subch -- "$tmp/link" && expect "シンボリックリンク経由のルート" "sub/s.txt" "sub/s.txt"
 
 # path に指定したファイルがコミットで削除されている
 git -C clone checkout -q -b del origin/main && git -C clone rm -qf a.txt && git -C clone commit -qm "rm a.txt"
