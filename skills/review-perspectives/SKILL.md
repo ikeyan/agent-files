@@ -62,9 +62,9 @@ description: Use when reviewing a diff before commit or push, when asked to revi
      - ブランチ名: `git fetch origin <ブランチ名>` で取得し、`FETCH_HEAD` を revision にする。
      - revision:
        1. `git worktree add --detach "$work/tree" <revision>` で取り出す。
-       2. `$work` を決めた後のコマンドをその中で実行する (`HEAD` が revision になり、未コミットの変更と未追跡のファイルは空)。
+       2. `$work` を決めた後のコマンドをその中で実行する (`HEAD` が revision になり、未コミットの変更と未追跡のファイルは空)。revision が既定ブランチに入っていると `merge-base` は revision 自身を返し、対象が空になる。そのときは `base=$(git rev-parse HEAD^)` にして、その 1 コミット (merge commit なら第 1 親からの差分) を対象にする。
        3. 手順 2 の `リポジトリ` にそのパスを渡す。
-       4. レビューが終わったら `git worktree remove` で消す。
+       4. レビューが終わったら `git worktree remove "$work/tree"` で消す。
      - パス: `git log` と `git diff` に `-- <パス>` を付け、未追跡のファイルはそのパスの下だけを列挙する。
    - 外さないもの:
      - `--path-format=absolute --git-common-dir`。相対パス `.git/…` に戻さない (`canon: facts/git/linked-worktree-git-file`)。
