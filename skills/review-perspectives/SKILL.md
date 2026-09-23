@@ -48,7 +48,7 @@ description: Use when reviewing a diff before commit or push, when asked to revi
 
 ## 手順
 
-1. ブランチの作業ディレクトリ `$work` を作り、レビュー対象を `$work/target.diff` に書き出す (`.git/` の下は diff に入らず、clone と同じ寿命で残る)。対象は、既定ブランチとの分岐点から先のコミットのメッセージと diff、未コミットの変更、未追跡のファイル:
+1. レビュー対象のブランチの作業ディレクトリ `$work` を作り、レビュー対象を `$work/target.diff` に書き出す (`.git/` の下は diff に入らず、clone と同じ寿命で残る)。`<ブランチ名>` は対象の指定があればその PR の head ブランチ・ブランチ名・revision、無ければ今のブランチ (対象が違えば `exclusions.md` も別になる)。対象は、既定ブランチとの分岐点から先のコミットのメッセージと diff、未コミットの変更、未追跡のファイル:
 
    ```sh
    work=$(git rev-parse --path-format=absolute --git-common-dir)/review-perspectives/<ブランチ名> && mkdir -p "$work" || exit 1
@@ -84,6 +84,7 @@ description: Use when reviewing a diff before commit or push, when asked to revi
      - `set-head --auto`。fetch は、手元に既にある `origin/HEAD` をリモートの今の既定ブランチへ張り直さない。
    - 失敗したとき:
      - `merge-base` が何も出さずに失敗し、`git rev-parse --is-shallow-repository` が `true` なら、分岐点が取得されていない。`git fetch --unshallow` してからやり直す。
+     - `HEAD` が無い (initial commit の前) と `merge-base` と `read-tree HEAD` が `Not a valid object name HEAD` で失敗する。`base` を空ツリー `$(git hash-object -t tree /dev/null)` にし、`git log` を省き、`git read-tree HEAD` を `git read-tree --empty` にして、未追跡の全ファイルを対象にする。
      - `worktree add` が `already exists` で失敗したら、前のレビューが途中で止まって worktree が残っている。`git worktree remove --force "$work/tree"` で消してからやり直す。
      - `origin` が無い、fetch か `set-head` が失敗した、または上の手当てで base が決まらなければ、どこからの変更をレビューするかをユーザーに確かめる。
 
@@ -100,7 +101,7 @@ description: Use when reviewing a diff before commit or push, when asked to revi
    ```
 
 3. 全ての担当の結果を集め、判定する。
-   - 作業ディレクトリの `exclusions.md` (手順 5) にある指摘は、反証の根拠の引用が現在のファイルにそのまま残っていれば外す。
+   - 作業ディレクトリの `exclusions.md` (手順 5) にある指摘は、記録した blob id が現在のファイルの `git hash-object <ファイル>` と一致すれば外す。
    - 残りを確定・あり得る・反証のどれかに判定する。条件は下の検証プロンプトのとおり。
    - 文書と整理の指摘は自分で判定する。観点の規則と違反する行の両方を引用できれば確定、観点の判定規則が除外していれば反証。
    - コードの挙動についての指摘は、候補を作業ディレクトリの `candidates.md` にまとめ、sonnet の検証エージェント 1 体に次のプロンプトで渡す。haiku は誤った候補の主張をそのまま確定にする。
@@ -119,7 +120,7 @@ description: Use when reviewing a diff before commit or push, when asked to revi
    ```
 
 4. 同じ箇所への指摘をまとめる。削る指摘と書き換える指摘が重なったら、削った後の文に書き換えを当てた 1 つの案にする。
-5. まとめた指摘を判定つきで報告する。起動しなかった担当とその理由も書く。反証した指摘は、箇所・主張・反証の根拠の引用を、作業ディレクトリの `exclusions.md` に書き足す。同じブランチのレビューと修正を繰り返す間、手順 3 で同じ指摘を検証し直さずに外す。根拠の引用が現在のファイルに無くなった項目は、根拠の行が変わったので検証に戻す。
+5. まとめた指摘を判定つきで報告する。起動しなかった担当とその理由も書く。反証した指摘は、箇所 (ファイルと、その `git hash-object <ファイル>` の blob id)・主張・反証の根拠を、作業ディレクトリの `exclusions.md` に書き足す。同じブランチのレビューと修正を繰り返す間、手順 3 で同じ指摘を検証し直さずに外す。ファイルが少しでも変わると blob id が変わり、検証に戻る。根拠の行が残っていても周りの制御の流れが変わると反証が崩れることがあるので、引用の残存では判定しない。
 
 ## 観点ファイルの型
 
