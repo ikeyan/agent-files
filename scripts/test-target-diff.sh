@@ -136,6 +136,14 @@ fails "リポジトリの外の path" clone -- "$tmp/src/a.txt"
 ln -s clone link
 run link/sub subch -- "$tmp/link/sub/s.txt" && expect "シンボリックリンク経由の絶対パス" "sub/s.txt" "sub/s.txt"
 run link/sub subch -- "$tmp/link" && expect "シンボリックリンク経由のルート" "sub/s.txt" "sub/s.txt"
+ln -s clone/sub linksub
+run linksub subch -- "$tmp/linksub/s.txt" && expect "サブディレクトリへのシンボリックリンク経由の絶対パス" "sub/s.txt" "sub/s.txt"
+run linksub subch -- "$tmp/linksub" && expect "サブディレクトリへのシンボリックリンク自身" "sub/s.txt" "sub/s.txt"
+
+# revision の式に .. が入っても作業ディレクトリは .git/ の下
+git -C clone commit -q --allow-empty -m "aa/bb/cc/escape"
+run clone 'HEAD^{/../../escape}' -- sub/s.txt && expect "revision の式" "sub/s.txt" "sub/s.txt"
+case $(sed -n 's/^work=//p' <<< "$out") in "$tmp/clone/.git/review-perspectives/"*) ;; *) echo "revision の式: 作業ディレクトリが .git の外 — $out" >&2; status=1 ;; esac
 
 # path に指定したファイルがコミットで削除されている
 git -C clone checkout -q -b del origin/main && git -C clone rm -qf a.txt && git -C clone commit -qm "rm a.txt"

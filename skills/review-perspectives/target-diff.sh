@@ -45,11 +45,12 @@ elif [[ $target =~ ^[0-9]+$ ]]; then
   git fetch -q origin "refs/pull/$target/head"
   rev=$(git rev-parse FETCH_HEAD)
   pr_base=$(git rev-parse --verify -q "$first^") || pr_base=$(git hash-object -t tree /dev/null)
-else
+elif rev=$(git rev-parse --verify -q "refs/heads/$target") || rev=$(git rev-parse --verify -q "refs/remotes/origin/$target"); then
   name=$target
-  rev=$(git rev-parse --verify -q "refs/heads/$target") ||
-    rev=$(git rev-parse --verify -q "refs/remotes/origin/$target") ||
-    rev=$(git rev-parse --verify "$target^{commit}")
+else
+  # revision の式は .. や / を含みうるので、作業ディレクトリ名には解決した id を使う
+  rev=$(git rev-parse --verify "$target^{commit}")
+  name=$rev
 fi
 
 work=$common/review-perspectives/$name
@@ -58,12 +59,17 @@ run=$(cd "$(mktemp -d "${TMPDIR:-/tmp}/review-perspectives.XXXXXX")" && pwd -P)
 ok=
 repo=$(git rev-parse --show-toplevel)
 prefix=$(git rev-parse --show-prefix)
-# シンボリックリンク経由で入ると、呼び出し側の論理パス ($PWD) は物理パスの $repo と一致しない
-lroot=$PWD; [ -z "$prefix" ] || lroot=${PWD%/"${prefix%/}"}
+# シンボリックリンク経由で入ると、呼び出し側の論理パス ($PWD) は物理パスの $repo と一致しない。
+# $PWD の下は prefix で写し、$PWD が prefix で終わるならその上を論理ルートとして扱う。
+lroot=$repo
+case $PWD in */"${prefix%/}") lroot=${PWD%/"${prefix%/}"} ;; esac
+[ -n "$prefix" ] || lroot=$PWD
 for i in "${!paths[@]}"; do
   case ${paths[i]} in
     "$repo"|"$repo"/|"$lroot"|"$lroot"/) paths[i]=. ;;
+    "$PWD"|"$PWD"/) paths[i]=${prefix:-.} ;;
     "$repo"/*) paths[i]=${paths[i]#"$repo"/} ;;
+    "$PWD"/*) paths[i]=$prefix${paths[i]#"$PWD"/} ;;
     "$lroot"/*) paths[i]=${paths[i]#"$lroot"/} ;;
     /*) echo "target-diff.sh: <path> がリポジトリの外: ${paths[i]}" >&2; exit 1 ;;
     *) paths[i]=$prefix${paths[i]} ;;
