@@ -151,6 +151,11 @@ git -C clone checkout -q -b staged origin/main && echo staged > clone/b.txt && g
 fails "staged だけの変更" clone -- b.txt
 git -C clone reset -q
 
+# commit の無い未追跡の入れ子のリポジトリがあれば止まる
+git init -q clone/unborn-nested
+fails "commit の無い入れ子のリポジトリ" clone
+rm -rf clone/unborn-nested
+
 # コミットが打ち消し合って patch が空なら止まる
 git -C clone checkout -q -b cancel origin/main && (cd clone && commit z.txt && git rm -q z.txt && git commit -qm "rm z.txt")
 fails "打ち消し合うコミット" clone cancel

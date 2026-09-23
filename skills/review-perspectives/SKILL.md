@@ -71,6 +71,7 @@ description: Use when reviewing a diff before commit or push, when asked to revi
    - `cannot lock ref` で止まったら、同時に回している別の実行の fetch と衝突したので、やり直す。
    - origin が無い、fetch か `set-head` が失敗した、対象が解決できない、または `共通の祖先が無い` で止まったら、どこからの変更をレビューするかをユーザーに確かめる。
    - `<path> がリポジトリの外` で止まったら、どのパスをレビューするかをユーザーに確かめる。
+   - `does not have a commit checked out` で止まったら、その入れ子のリポジトリに commit を作るか、外に動かすかをユーザーに確かめる。
    - `レビュー対象が空` で止まったら、レビューするものが無いことをユーザーに伝えて終わる。
 
 2. 表の各行について、そのモデルのエージェントを並列に起動し、次のプロンプトを渡す。リポのルートに `review-perspectives/<観点>.md` があれば、その観点の検索対象として一緒に渡す (書き方は [repo-supplement.md](repo-supplement.md))。観点の検出手順が列挙する対象が diff に無い担当 (文書だけの diff での 資源の解放 等) は起動しない。`<観点ファイル>` はこのスキルの `perspectives/<観点>.md` の絶対パス。

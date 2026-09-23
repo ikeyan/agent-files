@@ -11,9 +11,9 @@
 # 事後条件: 対象を指定したら repo は run の下の linked worktree。レビュー後に git worktree remove <repo> してから rm -r <run> で消す。失敗して終わるときは自分で消す。同じ対象を並行して回しても run は別で、work の exclusions.md と origin の remote-tracking ref だけを共有する。
 #
 # 受け付ける環境の形 (canon: facts/git/repository-shapes) と扱い:
-#   処理する: linked worktree、/ にあるリポジトリ、--single-branch の clone、shallow clone、unborn HEAD、root commit、既定ブランチに入った revision と merge commit、既定ブランチ以外へ向く PR、手元だけ・リモートだけのブランチ、未追跡の項目の全種 (- 始まりの名前、シンボリックリンク、入れ子のリポジトリ)、diff と log の出力を変える git の設定 (diff.external・GIT_EXTERNAL_DIFF・textconv・color・diff.noprefix・log.showSignature)、リポジトリの hook (走らせない)、gh の既定のリポジトリ (GH_REPO・gh repo set-default) が origin と違う
+#   処理する: linked worktree、/ にあるリポジトリ、--single-branch の clone、shallow clone、unborn HEAD、root commit、既定ブランチに入った revision と merge commit、既定ブランチ以外へ向く PR、手元だけ・リモートだけのブランチ、未追跡の項目の全種 (- 始まりの名前、シンボリックリンク、commit のある入れ子のリポジトリ)、diff と log の出力を変える git の設定 (diff.external・GIT_EXTERNAL_DIFF・textconv・color・diff.noprefix・log.showSignature)、リポジトリの hook (走らせない)、gh の既定のリポジトリ (GH_REPO・gh repo set-default) が origin と違う
 #   対象外:   submodule と入れ子のリポジトリの中身 (gitlink の commit id だけを見る。中の変更はそのリポジトリで回す)、本来の index の内容 (作業ツリーを正とする。staged した後に作業ツリーを戻した内容は出ない)、.gitignore で無視された項目 (git add -A が拾わないので diff にも tree にも入らない)
-#   止まる:   同時に始めた別の実行と fetch が衝突した (cannot lock ref。やり直せば通る)、origin が無い、origin の HEAD が既定ブランチを指していない (set-head --auto の Cannot determine remote HEAD)、<対象> が解決できない (PR 番号で origin が GitHub のリポジトリでない・gh が認証されていないものを含む)、PR の base の commit が origin のブランチから辿れない (マージの後で base を force push・削除した)、共通の祖先が無い、<path> がリポジトリの外、レビュー対象が空 (変更が無い、<path> が何にも一致しない、コミットが打ち消し合って patch が空)
+#   止まる:   同時に始めた別の実行と fetch が衝突した (cannot lock ref。やり直せば通る)、origin が無い、origin の HEAD が既定ブランチを指していない (set-head --auto の Cannot determine remote HEAD)、<対象> が解決できない (PR 番号で origin が GitHub のリポジトリでない・gh が認証されていないものを含む)、PR の base の commit が origin のブランチから辿れない (マージの後で base を force push・削除した)、共通の祖先が無い、<path> がリポジトリの外、未追跡の入れ子のリポジトリに commit が無い (git add -A の does not have a commit checked out)、レビュー対象が空 (変更が無い、<path> が何にも一致しない、コミットが打ち消し合って patch が空)
 # 外さないもの: fetch の refspec と --prune と --no-write-fetch-head、unshallow の origin、set-head --auto、--path-format=absolute --git-common-dir、add -A の前の read-tree、patch の diff-index、log の --no-show-signature (理由は canon の同ページ)
 set -euo pipefail
 
