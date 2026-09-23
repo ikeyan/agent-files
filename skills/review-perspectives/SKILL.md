@@ -65,10 +65,11 @@ description: Use when reviewing a diff before commit or push, when asked to revi
      - ブランチ名: `git fetch origin <ブランチ名>` で取得し、`FETCH_HEAD` を revision にする。
      - revision:
        1. `git worktree add --detach "$work/tree" <revision>` で取り出す。
-       2. `$work` を決めた後のコマンドをその中で実行する (`HEAD` が revision になり、未コミットの変更と未追跡のファイルは空)。ただし `base` は `merge-base` でなく次で決める。revision が既定ブランチに入っていると `merge-base` は revision 自身を返すので、既定ブランチの first-parent の線上で最も近い、revision 自身でない祖先を分岐点にする (merge commit で入った PR はその全コミット、first-parent の線上の revision はその 1 コミットが対象になる):
+       2. `$work` を決めた後のコマンドをその中で実行する (`HEAD` が revision になり、未コミットの変更と未追跡のファイルは空)。ただし `base` の行は次にする。revision が既定ブランチに入っていると `merge-base` は revision 自身を返すので、そのときだけ、既定ブランチの first-parent の線上で最も近い、revision 自身でない祖先を分岐点にする (merge commit で入った PR はその全コミット、first-parent の線上の revision はその 1 コミットが対象になる。それ以外は `merge-base` のまま。マージ済みの topic から積んだブランチで first-parent の線まで戻ると、マージ済みの変更が対象に入る):
 
           ```sh
-          base=$(git rev-list --first-parent origin/HEAD | while read -r c; do [ "$c" != "$(git rev-parse HEAD)" ] && git merge-base --is-ancestor "$c" HEAD && echo "$c" && break; done)
+          base=$(git merge-base origin/HEAD HEAD) || exit 1
+          [ "$base" != "$(git rev-parse HEAD)" ] || base=$(git rev-list --first-parent origin/HEAD | while read -r c; do [ "$c" != "$base" ] && git merge-base --is-ancestor "$c" HEAD && echo "$c" && break; done)
           [ -n "$base" ] || exit 1
           ```
 
@@ -81,6 +82,7 @@ description: Use when reviewing a diff before commit or push, when asked to revi
      - `set-head --auto`。fetch は、手元に既にある `origin/HEAD` をリモートの今の既定ブランチへ張り直さない。
    - 失敗したとき:
      - `merge-base` が何も出さずに失敗し、`git rev-parse --is-shallow-repository` が `true` なら、分岐点が取得されていない。`git fetch --unshallow` してからやり直す。
+     - `worktree add` が `already exists` で失敗したら、前のレビューが途中で止まって worktree が残っている。`git worktree remove --force "$work/tree"` で消してからやり直す。
      - `origin` が無い、fetch か `set-head` が失敗した、または上の手当てで base が決まらなければ、どこからの変更をレビューするかをユーザーに確かめる。
 
 2. 表の各行について、そのモデルのエージェントを並列に起動し、次のプロンプトを渡す。リポのルートに `review-perspectives/<観点>.md` があれば、その観点の検索対象として一緒に渡す (書き方は [repo-supplement.md](repo-supplement.md))。観点の検出手順が列挙する対象が diff に無い担当 (文書だけの diff での 資源の解放 等) は起動しない。`<観点ファイル>` はこのスキルの `perspectives/<観点>.md` の絶対パス。
