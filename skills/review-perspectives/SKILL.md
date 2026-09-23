@@ -62,7 +62,7 @@ description: Use when reviewing a diff before commit or push, when asked to revi
 
    - 対象の指定があるときは、上のコマンドを次のように変える。
      - PR 番号: `git fetch origin refs/pull/<n>/head` で取得し、`FETCH_HEAD` を revision にする。revision の手順 2 の `origin/HEAD` は PR の base ブランチ `origin/$(gh pr view <n> --json baseRefName --jq .baseRefName)` にする (既定ブランチ以外へ向いた PR がある)。
-     - ブランチ名: `git fetch origin <ブランチ名>` で取得し、`FETCH_HEAD` を revision にする。
+     - ブランチ名: `git rev-parse --verify -q refs/heads/<ブランチ名>` が通れば手元のそのブランチを、通らなければ `git fetch origin <ブランチ名>` で取得した `FETCH_HEAD` を revision にする (push していないブランチはリモートに無い)。
      - revision:
        1. `git worktree add --detach "$work/tree" <revision>` で取り出す。
        2. `$work` を決めた後のコマンドをその中で実行する (`HEAD` が revision になり、未コミットの変更と未追跡のファイルは空)。ただし `base` の行は次にする。revision が既定ブランチに入っていると `merge-base` は revision 自身を返すので、そのときだけ、既定ブランチの first-parent の線上で最も近い、revision 自身でない祖先を分岐点にする (merge commit で入った PR はその全コミット、first-parent の線上の revision はその 1 コミットが対象になる。それ以外は `merge-base` のまま。マージ済みの topic から積んだブランチで first-parent の線まで戻ると、マージ済みの変更が対象に入る):
