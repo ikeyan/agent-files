@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # skills/review-perspectives/target-diff.sh を、その先頭が受け付けると宣言する環境の形ごとに一時リポで実行し、出力を検査する。verify.sh から呼ぶ。
-# PR 番号 (gh が要る) は回さない。
+# PR 番号は、gh の代わりに決めた head ブランチと base の commit を出す stub を PATH に置いて回す。
 set -euo pipefail
 script=$(cd "$(dirname "$0")/.." && pwd)/skills/review-perspectives/target-diff.sh
 tmp=$(cd "$(mktemp -d "${TMPDIR:-/tmp}/target-diff.XXXXXX")" && pwd -P)
@@ -101,6 +101,16 @@ r1=$rules; mv review-perspectives/x.md review-perspectives/y.md
 if run . -- sub && [ "$rules" = "$r1" ]; then echo "rules: リポ固有の検索対象の名前の変更で変わらない" >&2; status=1; fi
 rm -r review-perspectives
 run . HEAD && expect "revision の HEAD (origin/HEAD でない)" "f1.txt" "f1.txt"
+
+# PR 番号: base を進めて head に取り込んだ PR は、取り込んだ base のコミットを含まない
+git checkout -q -b prhead origin/main && commit p1.txt
+git checkout -q -b prbase origin/main && commit b1.txt && git push -q origin prbase
+git checkout -q prhead && git merge -q -m M2 prbase && commit p2.txt && git push -q origin prhead:refs/pull/1/head
+mkdir "$tmp/bin" && printf '#!/bin/sh\nprintf "prhead\\t%%s\\n" "%s"\n' "$(git rev-parse prbase)" > "$tmp/bin/gh" && chmod +x "$tmp/bin/gh"
+PATH=$tmp/bin:$PATH run . 1 && expect "base を取り込んだ PR" "p1.txt p2.txt" "M2 p1.txt p2.txt"
+git checkout -q prbase && git merge -q --no-ff -m M3 prhead && git push -q origin prbase
+PATH=$tmp/bin:$PATH run . 1 && expect "base を取り込んでからマージした PR (baseRefOid はマージの前の base)" "p1.txt p2.txt" "M2 p1.txt p2.txt"
+git checkout -q feature
 
 # clone の形: --single-branch、shallow
 cd "$tmp"
