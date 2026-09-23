@@ -15,6 +15,7 @@
 #   処理する: linked worktree、--single-branch の clone、shallow clone、unborn HEAD、root commit、
 #             既定ブランチに入った revision と merge commit、既定ブランチ以外へ向く PR、手元だけ・リモートだけのブランチ、
 #             未追跡の項目の全種 (- 始まりの名前、シンボリックリンク、入れ子のリポジトリ)
+#   対象外:   submodule と入れ子のリポジトリの中身 (gitlink の commit id だけを見る。中の変更はそのリポジトリで回す)
 #   止まる:   origin が無い、origin の HEAD が既定ブランチを指していない (set-head --auto の Cannot determine remote HEAD)、<対象> が解決できない、共通の祖先が無い、レビュー対象が空 (変更が無い、<path> が何にも一致しない、コミットが打ち消し合って patch が空)
 # 外さないもの: fetch の refspec、set-head --auto、--path-format=absolute --git-common-dir、add -A の前の read-tree (理由は canon の同ページ)
 set -euo pipefail
