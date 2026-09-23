@@ -54,7 +54,7 @@ description: Use when reviewing a diff before commit or push, when asked to revi
    work=$(git rev-parse --path-format=absolute --git-common-dir)/review-perspectives/<ブランチ名> && mkdir -p "$work" || exit 1
    git fetch origin && git remote set-head origin --auto || exit 1
    base=$(git merge-base origin/HEAD HEAD) || exit 1
-   { git log --reverse --format='commit %h%n%n%B' "$base"..HEAD; git diff "$base"; git ls-files --others --exclude-standard -z | xargs -0 -I{} sh -c 'git diff --no-index /dev/null "$1"; [ $? -le 1 ]' _ {}; } > "$work/target.diff"
+   { git log --reverse --format='commit %h%n%n%B' "$base"..HEAD; git diff "$base"; git ls-files --others --exclude-standard -z | xargs -0 -I{} sh -c 'git diff --no-index -- /dev/null "$1"; [ $? -le 1 ]' _ {}; } > "$work/target.diff"
    ```
 
    - 対象の指定があるときは、上のコマンドを次のように変える。
