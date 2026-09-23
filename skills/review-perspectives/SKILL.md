@@ -48,7 +48,7 @@ description: Use when reviewing a diff before commit or push, when asked to revi
 
 ## 手順
 
-1. ブランチの作業ディレクトリ `.git/review-perspectives/<ブランチ名>/` を作り、レビュー対象を `target.diff` に書き出す (`.git/` の下は diff に入らず、clone と同じ寿命で残る)。既定は、既定ブランチとの分岐点から先のコミットのメッセージと diff、未コミットの変更、未追跡のファイル:
+1. ブランチの作業ディレクトリ `.git/review-perspectives/<ブランチ名>/` を作り、レビュー対象を `target.diff` に書き出す (`.git/` の下は diff に入らず、clone と同じ寿命で残る)。対象は、既定ブランチとの分岐点から先のコミットのメッセージと diff、未コミットの変更、未追跡のファイル:
 
    ```sh
    git fetch origin && git remote set-head origin --auto || exit 1
@@ -56,14 +56,14 @@ description: Use when reviewing a diff before commit or push, when asked to revi
    { git log --reverse --format='commit %h%n%n%B' "$base"..HEAD; git diff "$base"; git ls-files --others --exclude-standard -z | xargs -0 -I{} sh -c 'git diff --no-index /dev/null "$1"; [ $? -le 1 ]' _ {}; } > .git/review-perspectives/<ブランチ名>/target.diff
    ```
 
+   - 対象の指定があるときは、上のコマンドを次のように変える。
+     - PR 番号: `git fetch origin refs/pull/<n>/head` で取得し、`FETCH_HEAD` を revision にする。
+     - ブランチ名: それを revision にする。
+     - revision: `git worktree add --detach .git/review-perspectives/<ブランチ名>/tree <revision>` で取り出し、上のコマンドをその中で実行する (`HEAD` が revision になり、未コミットの変更と未追跡のファイルは空)。手順 2 の `リポジトリ` にもそのパスを渡す。レビューが終わったら `git worktree remove` で消す。
+     - パス: `git log` と `git diff` に `-- <パス>` を付け、未追跡のファイルはそのパスの下だけを列挙する。
    - `set-head --auto` を外さない: fetch は、手元に既にある `origin/HEAD` をリモートの今の既定ブランチへ張り直さない。
    - `merge-base` が何も出さずに失敗し、`git rev-parse --is-shallow-repository` が `true` なら、分岐点が取得されていない。`git fetch --unshallow` してからやり直す。
    - `origin` が無い、fetch か `set-head` が失敗した、または上の手当てで base が決まらなければ、どこからの変更をレビューするかをユーザーに確かめる。
-   - レビュー対象が今のチェックアウトと違う revision (PR 番号・ブランチ名) のとき:
-     1. 上の `HEAD` をその revision にする。
-     2. `git worktree add --detach .git/review-perspectives/<ブランチ名>/tree <revision>` で取り出す。
-     3. 手順 2 の `リポジトリ` にそのパスを渡す。
-     4. レビューが終わったら `git worktree remove` で消す。
 
 2. 表の各行について、そのモデルのエージェントを並列に起動し、次のプロンプトを渡す。リポのルートに `review-perspectives/<観点>.md` があれば、その観点の検索対象として一緒に渡す (書き方は [repo-supplement.md](repo-supplement.md))。観点の検出手順が列挙する対象が diff に無い担当 (文書だけの diff での 資源の解放 等) は起動しない。`<観点ファイル>` はこのスキルの `perspectives/<観点>.md` の絶対パス。
 
