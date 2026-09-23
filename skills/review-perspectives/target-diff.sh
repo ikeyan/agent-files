@@ -5,7 +5,7 @@
 #   <対象> 無し: 今のチェックアウト (既定ブランチとの分岐点から先のコミット、未コミットの変更、未追跡のファイル)
 #   <対象> が数字だけ: PR 番号 (gh で head と base ブランチを引く)
 #   <対象> がそれ以外: 手元のブランチ、origin のブランチ、revision の順に解決する
-#   <path>: log・add・diff をそのパスに限る。glob も pathspec magic も無いそのままのパス名
+#   <path>: log と diff をそのパスに限る。glob も pathspec magic も無いそのままのパス名
 # 出力 (stdout、1 行 1 つ): work=<レビュー対象ごとの作業ディレクトリ> run=<この実行の生成物のディレクトリ> repo=<レビュアーに渡すリポジトリのルート> diff=<target.diff>
 # 事前条件: origin があり、その HEAD が既定ブランチを指している。PR 番号は gh の認証。
 # 事後条件: 対象を指定したら repo は run の下の linked worktree。レビュー後に git worktree remove <repo> してから rm -r <run> で消す。失敗して終わるときは自分で消す。
@@ -17,7 +17,7 @@
 #             未追跡の項目の全種 (- 始まりの名前、シンボリックリンク、入れ子のリポジトリ)
 #   対象外:   submodule と入れ子のリポジトリの中身 (gitlink の commit id だけを見る。中の変更はそのリポジトリで回す)
 #   止まる:   同時に始めた別の実行と fetch が衝突した (cannot lock ref。やり直せば通る)、origin が無い、origin の HEAD が既定ブランチを指していない (set-head --auto の Cannot determine remote HEAD)、<対象> が解決できない、共通の祖先が無い、レビュー対象が空 (変更が無い、<path> が何にも一致しない、コミットが打ち消し合って patch が空)
-# 外さないもの: fetch の refspec、set-head --auto、--path-format=absolute --git-common-dir、add -A の前の read-tree (理由は canon の同ページ)
+# 外さないもの: fetch の refspec と --prune、set-head --auto、--path-format=absolute --git-common-dir、add -A の前の read-tree (理由は canon の同ページ)
 set -euo pipefail
 
 target=
@@ -29,7 +29,7 @@ fi
 paths=("$@")
 export GIT_LITERAL_PATHSPECS=1
 
-git fetch -q origin '+refs/heads/*:refs/remotes/origin/*'
+git fetch -q --prune origin '+refs/heads/*:refs/remotes/origin/*'
 git remote set-head origin --auto
 common=$(git rev-parse --path-format=absolute --git-common-dir)
 base_ref=origin/HEAD
@@ -82,7 +82,7 @@ fi
 
 export GIT_INDEX_FILE=$run/index
 if [ -n "$head" ]; then git read-tree HEAD; else git read-tree --empty; fi
-git add -A --no-warn-embedded-repo -- "${paths[@]+"${paths[@]}"}"
+git add -A --no-warn-embedded-repo
 git diff --cached "$base" -- "${paths[@]+"${paths[@]}"}" > "$run/patch.diff"
 [ -s "$run/patch.diff" ] || { echo "target-diff.sh: レビュー対象が空" >&2; exit 1; }
 {

@@ -12,11 +12,15 @@ status=0
 commit() { # <ファイル名>: そのファイルを作ってコミットする
   echo "$1" > "$1" && git add -- "$1" && git commit -q -m "$1"
 }
-run() { # <実行するディレクトリ> [<対象>] [-- <pathspec>...]: スクリプトを回し、出力を $out に、diff を $diff に置く
+run() { # <実行するディレクトリ> [<対象>] [-- <path>...]: スクリプトを回し、出力を $out に、diff を $diff に置く。止まったら違反
   local dir=$1; shift
-  out=$(cd "$dir" && "${bash:-bash}" "$script" "$@") || return 1
+  out=$(cd "$dir" && "${bash:-bash}" "$script" "$@") || { echo "run $dir $*: 止まった" >&2; status=1; return 1; }
   diff=$(sed -n 's/^diff=//p' <<< "$out")
   repo=$(sed -n 's/^repo=//p' <<< "$out")
+}
+fails() { # <名前> <実行するディレクトリ> [<対象>] [-- <path>...]: スクリプトが止まることを期待する
+  local name=$1 dir=$2; shift 2
+  if (cd "$dir" && "$script" "$@") >/dev/null 2>&1; then echo "$name: 止まらない" >&2; status=1; fi
 }
 expect() { # <名前> <期待するパス (空白区切り)> <期待するコミットの件名 (空白区切り)>: $diff の内容を照合する
   local paths commits
@@ -84,9 +88,9 @@ git init -q -b fresh unborn && git -C unborn remote add origin "$tmp/origin.git"
 run unborn && expect "unborn HEAD" "x.txt" ""
 
 # 空の対象では止まる (一致しない pathspec)。対象を指定して止まったときは worktree を残さない
-if run clone -- no-such-dir 2>/dev/null; then echo "一致しない pathspec: 止まらない" >&2; status=1; fi
+fails "一致しない path" clone -- no-such-dir
 trees=$(git -C clone worktree list | wc -l)
-if run clone topic -- no-such-dir 2>/dev/null; then echo "一致しない pathspec (対象あり): 止まらない" >&2; status=1; fi
+fails "一致しない path (対象あり)" clone topic -- no-such-dir
 [ "$(git -C clone worktree list | wc -l)" = "$trees" ] || { echo "止まったのに worktree が残る" >&2; status=1; }
 
 # macOS 標準の bash 3.2 でも同じ (pathspec 無しの空配列の展開)
@@ -94,14 +98,22 @@ if [ -x /bin/bash ]; then bash=/bin/bash run clone && expect "bash 3.2" "--stat 
 
 # コミットが打ち消し合って patch が空なら止まる
 git -C clone checkout -q -b cancel origin/main && (cd clone && commit z.txt && git rm -q z.txt && git commit -qm "rm z.txt")
-if run clone cancel 2>/dev/null; then echo "打ち消し合うコミット: 止まらない" >&2; status=1; fi
+fails "打ち消し合うコミット" clone cancel
 
 # origin の HEAD が既定ブランチを指していなければ止まる
 git clone -q --bare src badhead.git && git -C badhead.git symbolic-ref HEAD refs/heads/gone && git clone -q -b main badhead.git badhead
-if run badhead 2>/dev/null; then echo "origin の HEAD が無い: 止まらない" >&2; status=1; fi
+fails "origin の HEAD が無い" badhead
+
+# path に指定したファイルがコミットで削除されている
+git -C clone checkout -q -b del origin/main && git -C clone rm -qf a.txt && git -C clone commit -qm "rm a.txt"
+run clone del -- a.txt && expect "path (削除されたファイル)" "a.txt" "rm a.txt"
+
+# origin から消えたブランチは対象に解決しない
+git -C origin.git branch -q -D remote-only
+fails "消えたリモートブランチ" clone remote-only
 
 # origin が無ければ止まる
 git init -q -b main noorigin && (cd noorigin && commit a.txt)
-if run noorigin 2>/dev/null; then echo "origin 無し: 止まらない" >&2; status=1; fi
+fails "origin 無し" noorigin
 
 exit "$status"
