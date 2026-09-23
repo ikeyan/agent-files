@@ -114,6 +114,8 @@ git diff-index -p -M --cached "$base" -- "${paths[@]+"${paths[@]}"}" > "$run/pat
 
 tree=$(git write-tree)
 shopt -s nullglob
-rules=$(git hash-object "$here"/SKILL.md "$here"/perspectives/*.md review-perspectives/*.md | git hash-object --stdin)
+# 検索対象は名前で観点に割り当てるので、内容と一緒に名前も hash する
+rules_files=("$here"/SKILL.md "$here"/perspectives/*.md review-perspectives/*.md)
+rules=$(paste -d ' ' <(git hash-object "${rules_files[@]}") <(printf '%s\n' "${rules_files[@]#"$here"/}") | git hash-object --stdin)
 ok=1
 printf 'work=%s\nrun=%s\nrepo=%s\ndiff=%s\ntree=%s\nrules=%s\n' "$work" "$run" "$repo" "$run/target.diff" "$tree" "$rules"

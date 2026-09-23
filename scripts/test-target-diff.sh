@@ -93,6 +93,8 @@ GIT_EXTERNAL_DIFF=true GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=diff.noprefix GIT_CON
   run . topic && expect "diff の出力を変える git の設定" "t1.txt t2.txt" "t1.txt t2.txt"
 run . -- sub && r1=$rules; mkdir review-perspectives && echo s > review-perspectives/x.md
 if run . -- sub && [ "$rules" = "$r1" ]; then echo "rules: リポ固有の検索対象の追加で変わらない" >&2; status=1; fi
+r1=$rules; mv review-perspectives/x.md review-perspectives/y.md
+if run . -- sub && [ "$rules" = "$r1" ]; then echo "rules: リポ固有の検索対象の名前の変更で変わらない" >&2; status=1; fi
 rm -r review-perspectives
 run . HEAD && expect "revision の HEAD (origin/HEAD でない)" "f1.txt" "f1.txt"
 
