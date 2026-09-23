@@ -52,7 +52,7 @@ description: Use when reviewing a diff before commit or push, when asked to revi
 
    ```sh
    work=$(git rev-parse --path-format=absolute --git-common-dir)/review-perspectives/<ブランチ名> && mkdir -p "$work" || exit 1
-   git fetch origin && git remote set-head origin --auto || exit 1
+   git fetch origin '+refs/heads/*:refs/remotes/origin/*' && git remote set-head origin --auto || exit 1
    base=$(git merge-base origin/HEAD HEAD) || exit 1
    { git log --reverse --format='commit %h%n%n%B' "$base"..HEAD; export GIT_INDEX_FILE=$work/index && git read-tree HEAD && git -c advice.addEmbeddedRepo=false add -A && git diff --cached "$base"; } > "$work/target.diff" || exit 1
    unset GIT_INDEX_FILE
@@ -77,6 +77,7 @@ description: Use when reviewing a diff before commit or push, when asked to revi
      - パス: `git log`・`git add`・`git diff` に `-- <パス>` を付ける。
    - 外さないもの:
      - `--path-format=absolute --git-common-dir`。相対パス `.git/…` に戻さない (`canon: facts/git/linked-worktree-git-file`)。
+     - fetch の refspec `+refs/heads/*:refs/remotes/origin/*`。`--single-branch` の clone は fetch の設定が作業ブランチしか写さず、`origin/<既定ブランチ>` ができないまま `set-head` が `Not a valid ref` で失敗する。
      - `set-head --auto`。fetch は、手元に既にある `origin/HEAD` をリモートの今の既定ブランチへ張り直さない。
    - 失敗したとき:
      - `merge-base` が何も出さずに失敗し、`git rev-parse --is-shallow-repository` が `true` なら、分岐点が取得されていない。`git fetch --unshallow` してからやり直す。
