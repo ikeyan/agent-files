@@ -5,6 +5,7 @@ set -euo pipefail
 script=$(cd "$(dirname "$0")/.." && pwd)/skills/review-perspectives/target-diff.sh
 tmp=$(cd "$(mktemp -d "${TMPDIR:-/tmp}/target-diff.XXXXXX")" && pwd -P)
 trap 'rm -rf "$tmp"' EXIT
+export TMPDIR=$tmp
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
 status=0
@@ -68,7 +69,7 @@ run . -- "sub/[b].txt" :c.txt && expect "path (pathspec の記号を含む名前
 # linked worktree の中から (detached なので名前は短い id)
 git worktree add -q --detach "$tmp/lw" feature
 run "$tmp/lw" && expect "linked worktree" "f1.txt" "f1.txt"
-case $diff in "$tmp/clone/.git/"*) ;; *) echo "linked worktree: 作業ディレクトリが本体の .git の下でない — $diff" >&2; status=1 ;; esac
+case $(sed -n 's/^work=//p' <<< "$out") in "$tmp/clone/.git/"*) ;; *) echo "linked worktree: 作業ディレクトリが本体の .git の下でない — $out" >&2; status=1 ;; esac
 
 # 同じ対象を並行して回しても生成物は別
 run . -- sub && first=$diff && run . -- a.txt

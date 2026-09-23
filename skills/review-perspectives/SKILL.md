@@ -56,7 +56,7 @@ description: Use when reviewing a diff before commit or push, when asked to revi
    <このスキルのディレクトリ>/target-diff.sh [<対象>] [-- <パス>...]
    ```
 
-   出力の `work=` がレビュー対象の作業ディレクトリ (`.git/` の下にあり、diff に入らず、clone と同じ寿命で残る。対象が違えば `exclusions.md` も別になる)、`run=` がこの実行の生成物のディレクトリ (`candidates.md` もここに置く)、`repo=` が手順 2 でレビュアーに渡すリポジトリ、`diff=` が `target.diff`、`tree=` がレビュー対象の内容全体の tree id (手順 3 と 5 で使う)。受け付ける入力と環境の形と、各々の扱いは、スクリプトの先頭に書いてある。
+   出力の `work=` がレビュー対象の作業ディレクトリ (`.git/` の下にあり、diff に入らず、clone と同じ寿命で残る。対象が違えば `exclusions.md` も別になる)、`run=` がこの実行の生成物のディレクトリ (`$TMPDIR` の下。`candidates.md` もここに置く)、`repo=` が手順 2 でレビュアーに渡すリポジトリ、`diff=` が `target.diff`、`tree=` がレビュー対象の内容全体の tree id (手順 3 と 5 で使う)。受け付ける入力と環境の形と、各々の扱いは、スクリプトの先頭に書いてある。
 
    - レビューが終わったら、対象を指定したときは `git worktree remove <repo= のパス>` してから、`rm -r <run= のパス>` で消す。
    - `cannot lock ref` で止まったら、同時に回している別の実行の fetch と衝突したので、やり直す。

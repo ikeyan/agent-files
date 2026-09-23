@@ -7,7 +7,7 @@
 #   <対象> がそれ以外: 手元のブランチ、origin のブランチ、revision の順に解決する。既定ブランチの first-parent の線上にある revision は、その 1 コミットだけが対象
 #                       (fast-forward や rebase でマージ済みのブランチの全コミットは、分岐点が履歴に残らないので PR 番号で指定する)
 #   <path>: log と diff をそのパスに限る。glob も pathspec magic も無いそのままのパス名
-# 出力 (stdout、1 行 1 つ): work=<レビュー対象ごとの作業ディレクトリ> run=<この実行の生成物のディレクトリ> repo=<レビュアーに渡すリポジトリのルート> diff=<target.diff> tree=<レビュー対象の内容全体 (未追跡を含む) の tree id>
+# 出力 (stdout、1 行 1 つ): work=<レビュー対象ごとの作業ディレクトリ> run=<この実行の生成物のディレクトリ ($TMPDIR の下。消えて困るものは置かない)> repo=<レビュアーに渡すリポジトリのルート> diff=<target.diff> tree=<レビュー対象の内容全体 (未追跡を含む) の tree id>
 # 事前条件: origin があり、その HEAD が既定ブランチを指している。PR 番号は gh の認証。
 # 事後条件: 対象を指定したら repo は run の下の linked worktree。レビュー後に git worktree remove <repo> してから rm -r <run> で消す。失敗して終わるときは自分で消す。
 #           同じ対象を並行して回しても run は別で、work の exclusions.md と origin の remote-tracking ref だけを共有する。
@@ -51,7 +51,7 @@ fi
 
 work=$common/review-perspectives/$name
 mkdir -p "$work"
-run=$(mktemp -d "$work/run.XXXXXX")
+run=$(mktemp -d "${TMPDIR:-/tmp}/review-perspectives.XXXXXX")
 ok=
 repo=$(git rev-parse --show-toplevel)
 start=$PWD
