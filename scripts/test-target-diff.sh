@@ -58,8 +58,10 @@ grep -q '^new file mode 120000' "$diff" || { echo "今のチェックアウト: 
 grep -q '^+Subproject commit' "$diff" || { echo "今のチェックアウト: 入れ子のリポジトリが gitlink で出ない" >&2; status=1; }
 git diff --cached --quiet || { echo "今のチェックアウト: 本来の index が変わった" >&2; status=1; }
 run . -- sub && expect "path (ディレクトリ)" "sub/[b].txt sub/u.txt" ""
-t1=$tree && echo v > sub/v.txt && run . -- sub && [ "$tree" != "$t1" ] || { echo "tree: 未追跡ファイルの追加で変わらない" >&2; status=1; }
-t1=$tree && echo w > sub/v.txt && run . -- sub && [ "$tree" != "$t1" ] || { echo "tree: 内容の変更で変わらない" >&2; status=1; }
+t1=$tree; echo v > sub/v.txt
+if run . -- sub && [ "$tree" = "$t1" ]; then echo "tree: 未追跡ファイルの追加で変わらない" >&2; status=1; fi
+t1=$tree; echo w > sub/v.txt
+if run . -- sub && [ "$tree" = "$t1" ]; then echo "tree: 内容の変更で変わらない" >&2; status=1; fi
 rm sub/v.txt
 run . -- "sub/[b].txt" :c.txt && expect "path (pathspec の記号を含む名前)" ":c.txt sub/[b].txt" ""
 
