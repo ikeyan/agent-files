@@ -8,13 +8,13 @@
 #   <pathspec>: log・add・diff をそのパスに限る
 # 出力 (stdout、1 行 1 つ): work=<作業ディレクトリ> repo=<レビュアーに渡すリポジトリのルート> diff=<target.diff>
 # 事前条件: origin がある。PR 番号は gh の認証。
-# 事後条件: 対象を指定したら repo は $work/tree の linked worktree で、レビュー後に git worktree remove "$work/tree" で消す。
+# 事後条件: 対象を指定したら repo は $work の下に作った linked worktree で、レビュー後に git worktree remove <repo> で消す。失敗して終わるときは自分で消す。
 #
 # 受け付ける環境の形 (canon: facts/git/repository-shapes) と扱い:
 #   処理する: linked worktree、--single-branch の clone、shallow clone、unborn HEAD、root commit、
 #             既定ブランチに入った revision と merge commit、既定ブランチ以外へ向く PR、手元だけ・リモートだけのブランチ、
-#             未追跡の項目の全種 (- 始まりの名前、シンボリックリンク、入れ子のリポジトリ)、前の実行が残した worktree
-#   止まる:   origin が無い、共通の祖先が無い、レビュー対象が空 (変更が無い、<pathspec> が何にも一致しない)
+#             未追跡の項目の全種 (- 始まりの名前、シンボリックリンク、入れ子のリポジトリ)
+#   止まる:   origin が無い、<対象> が解決できない、共通の祖先が無い、レビュー対象が空 (変更が無い、<pathspec> が何にも一致しない)
 # 外さないもの: fetch の refspec、set-head --auto、--path-format=absolute --git-common-dir、add -A の前の read-tree (理由は canon の同ページ)
 set -euo pipefail
 
@@ -48,10 +48,11 @@ fi
 work=$common/review-perspectives/$name
 mkdir -p "$work"
 repo=$(git rev-parse --show-toplevel)
+ok=
 if [ -n "$rev" ]; then
-  repo=$work/tree
-  git worktree prune
-  git worktree add -q --detach "$repo" "$rev" || { git worktree remove --force "$repo" && git worktree add -q --detach "$repo" "$rev"; }
+  repo=$(mktemp -d "$work/tree.XXXXXX")
+  git worktree add -q --detach "$repo" "$rev"
+  trap '[ -n "$ok" ] || git worktree remove --force "$repo"' EXIT
   cd "$repo"
 fi
 
@@ -87,4 +88,5 @@ export GIT_INDEX_FILE=$work/index
 } > "$work/target.diff"
 [ -s "$work/target.diff" ] || { echo "target-diff.sh: レビュー対象が空" >&2; exit 1; }
 
+ok=1
 printf 'work=%s\nrepo=%s\ndiff=%s\n' "$work" "$repo" "$work/target.diff"

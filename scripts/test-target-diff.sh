@@ -64,7 +64,7 @@ run . topic && expect "マージ済みの topic" "t1.txt t2.txt" "t1.txt t2.txt"
 run . stacked && expect "topic から積んだブランチ" "s1.txt" "s1.txt"
 run . "$merge" && expect "merge commit" "t1.txt t2.txt" "M t1.txt t2.txt"
 [ "$(git -C "$repo" rev-parse HEAD)" = "$merge" ] || { echo "merge commit: repo が対象を指していない" >&2; status=1; }
-run . "$merge" 2>/dev/null && expect "前の実行が残した worktree" "t1.txt t2.txt" "M t1.txt t2.txt"
+run . "$merge" && expect "同じ対象の 2 回目" "t1.txt t2.txt" "M t1.txt t2.txt"
 run . "$root" && expect "root commit" "a.txt" "a.txt"
 
 # clone の形: --single-branch、shallow
@@ -78,8 +78,11 @@ run shallow && expect "shallow" "s1.txt" "s1.txt"
 git init -q -b fresh unborn && git -C unborn remote add origin "$tmp/origin.git" && echo x > unborn/x.txt
 run unborn && expect "unborn HEAD" "x.txt" ""
 
-# 空の対象では止まる (一致しない pathspec)
+# 空の対象では止まる (一致しない pathspec)。対象を指定して止まったときは worktree を残さない
 if run clone -- no-such-dir 2>/dev/null; then echo "一致しない pathspec: 止まらない" >&2; status=1; fi
+trees=$(git -C clone worktree list | wc -l)
+if run clone topic -- no-such-dir 2>/dev/null; then echo "一致しない pathspec (対象あり): 止まらない" >&2; status=1; fi
+[ "$(git -C clone worktree list | wc -l)" = "$trees" ] || { echo "止まったのに worktree が残る" >&2; status=1; }
 
 # macOS 標準の bash 3.2 でも同じ (pathspec 無しの空配列の展開)
 if [ -x /bin/bash ]; then bash=/bin/bash run clone && expect "bash 3.2" "--stat a.txt f1.txt linkdir nested sub/u.txt" "f1.txt"; fi

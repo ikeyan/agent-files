@@ -57,8 +57,8 @@ description: Use when reviewing a diff before commit or push, when asked to revi
 
    出力の `work=` がレビュー対象の作業ディレクトリ (`.git/` の下にあり、diff に入らず、clone と同じ寿命で残る。対象が違えば `exclusions.md` も別になる)、`repo=` が手順 2 でレビュアーに渡すリポジトリ、`diff=` が `target.diff`。受け付ける入力と環境の形と、各々の扱いは、スクリプトの先頭に書いてある。
 
-   - 対象を指定したときは、レビューが終わったら `git worktree remove "$work/tree"` で消す。
-   - origin が無い、fetch が失敗した、または `共通の祖先が無い` で止まったら、どこからの変更をレビューするかをユーザーに確かめる。
+   - 対象を指定したときは、レビューが終わったら `git worktree remove <repo= のパス>` で消す。
+   - origin が無い、fetch が失敗した、対象が解決できない、または `共通の祖先が無い` で止まったら、どこからの変更をレビューするかをユーザーに確かめる。
 
 2. 表の各行について、そのモデルのエージェントを並列に起動し、次のプロンプトを渡す。リポのルートに `review-perspectives/<観点>.md` があれば、その観点の検索対象として一緒に渡す (書き方は [repo-supplement.md](repo-supplement.md))。観点の検出手順が列挙する対象が diff に無い担当 (文書だけの diff での 資源の解放 等) は起動しない。`<観点ファイル>` はこのスキルの `perspectives/<観点>.md` の絶対パス。
 
