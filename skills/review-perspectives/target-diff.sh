@@ -9,14 +9,14 @@
 # 出力 (stdout、1 行 1 つ): work=<レビュー対象ごとの作業ディレクトリ> run=<この実行の生成物のディレクトリ> repo=<レビュアーに渡すリポジトリのルート> diff=<target.diff>
 # 事前条件: origin があり、その HEAD が既定ブランチを指している。PR 番号は gh の認証。
 # 事後条件: 対象を指定したら repo は run の下の linked worktree。レビュー後に git worktree remove <repo> してから rm -r <run> で消す。失敗して終わるときは自分で消す。
-#           同じ対象を並行して回しても run は別で、work の exclusions.md だけを共有する。
+#           同じ対象を並行して回しても run は別で、work の exclusions.md と origin の remote-tracking ref だけを共有する。
 #
 # 受け付ける環境の形 (canon: facts/git/repository-shapes) と扱い:
 #   処理する: linked worktree、--single-branch の clone、shallow clone、unborn HEAD、root commit、
 #             既定ブランチに入った revision と merge commit、既定ブランチ以外へ向く PR、手元だけ・リモートだけのブランチ、
 #             未追跡の項目の全種 (- 始まりの名前、シンボリックリンク、入れ子のリポジトリ)
 #   対象外:   submodule と入れ子のリポジトリの中身 (gitlink の commit id だけを見る。中の変更はそのリポジトリで回す)
-#   止まる:   origin が無い、origin の HEAD が既定ブランチを指していない (set-head --auto の Cannot determine remote HEAD)、<対象> が解決できない、共通の祖先が無い、レビュー対象が空 (変更が無い、<path> が何にも一致しない、コミットが打ち消し合って patch が空)
+#   止まる:   同時に始めた別の実行と fetch が衝突した (cannot lock ref。やり直せば通る)、origin が無い、origin の HEAD が既定ブランチを指していない (set-head --auto の Cannot determine remote HEAD)、<対象> が解決できない、共通の祖先が無い、レビュー対象が空 (変更が無い、<path> が何にも一致しない、コミットが打ち消し合って patch が空)
 # 外さないもの: fetch の refspec、set-head --auto、--path-format=absolute --git-common-dir、add -A の前の read-tree (理由は canon の同ページ)
 set -euo pipefail
 
