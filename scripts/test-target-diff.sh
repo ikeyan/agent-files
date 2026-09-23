@@ -95,6 +95,11 @@ run . -- sub && mkdir "$tmp/hooks" && printf '#!/bin/sh\necho hook > hook.txt\n'
 git config core.hooksPath "$tmp/hooks"
 run . topic && expect "リポジトリの hook" "t1.txt t2.txt" "t1.txt t2.txt"
 git config --unset core.hooksPath
+printf '#!/bin/sh\necho x > fsmonitor.txt\n' > "$tmp/hooks/fsmonitor" && chmod +x "$tmp/hooks/fsmonitor"
+git config core.fsmonitor "$tmp/hooks/fsmonitor"
+run . topic && expect "core.fsmonitor のコマンド" "t1.txt t2.txt" "t1.txt t2.txt"
+run . -- sub && expect "core.fsmonitor のコマンド (今のチェックアウト)" "sub/[b].txt sub/u.txt" ""
+git config --unset core.fsmonitor
 r1=$rules; mkdir review-perspectives && echo s > review-perspectives/x.md
 if run . -- sub && [ "$rules" = "$r1" ]; then echo "rules: リポ固有の検索対象の追加で変わらない" >&2; status=1; fi
 r1=$rules; mv review-perspectives/x.md review-perspectives/y.md
