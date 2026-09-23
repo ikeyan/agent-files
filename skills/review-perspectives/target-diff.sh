@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # review-perspectives の手順 1: レビュー対象を作業ディレクトリの target.diff に書き出す。
 #
-# 使い方: target-diff.sh [<対象>] [-- <pathspec>...]
+# 使い方: target-diff.sh [<対象>] [-- <path>...]
 #   <対象> 無し: 今のチェックアウト (既定ブランチとの分岐点から先のコミット、未コミットの変更、未追跡のファイル)
 #   <対象> が数字だけ: PR 番号 (gh で head と base ブランチを引く)
 #   <対象> がそれ以外: 手元のブランチ、origin のブランチ、revision の順に解決する
-#   <pathspec>: log・add・diff をそのパスに限る
+#   <path>: log・add・diff をそのパスに限る。glob も pathspec magic も無いそのままのパス名
 # 出力 (stdout、1 行 1 つ): work=<作業ディレクトリ> repo=<レビュアーに渡すリポジトリのルート> diff=<target.diff>
 # 事前条件: origin がある。PR 番号は gh の認証。
 # 事後条件: 対象を指定したら repo は $work の下に作った linked worktree で、レビュー後に git worktree remove <repo> で消す。失敗して終わるときは自分で消す。
@@ -14,17 +14,18 @@
 #   処理する: linked worktree、--single-branch の clone、shallow clone、unborn HEAD、root commit、
 #             既定ブランチに入った revision と merge commit、既定ブランチ以外へ向く PR、手元だけ・リモートだけのブランチ、
 #             未追跡の項目の全種 (- 始まりの名前、シンボリックリンク、入れ子のリポジトリ)
-#   止まる:   origin が無い、<対象> が解決できない、共通の祖先が無い、レビュー対象が空 (変更が無い、<pathspec> が何にも一致しない)
+#   止まる:   origin が無い、<対象> が解決できない、共通の祖先が無い、レビュー対象が空 (変更が無い、<path> が何にも一致しない、コミットが打ち消し合って patch が空)
 # 外さないもの: fetch の refspec、set-head --auto、--path-format=absolute --git-common-dir、add -A の前の read-tree (理由は canon の同ページ)
 set -euo pipefail
 
 target=
 if [ $# -gt 0 ] && [ "$1" != -- ]; then target=$1; shift; fi
 if [ $# -gt 0 ]; then
-  [ "$1" = -- ] || { echo "usage: target-diff.sh [<対象>] [-- <pathspec>...]" >&2; exit 2; }
+  [ "$1" = -- ] || { echo "usage: target-diff.sh [<対象>] [-- <path>...]" >&2; exit 2; }
   shift
 fi
 paths=("$@")
+export GIT_LITERAL_PATHSPECS=1
 
 git fetch -q origin '+refs/heads/*:refs/remotes/origin/*'
 git remote set-head origin --auto
@@ -76,17 +77,14 @@ else
 fi
 
 export GIT_INDEX_FILE=$work/index
+if [ -n "$head" ]; then git read-tree HEAD; else git read-tree --empty; fi
+git add -A --no-warn-embedded-repo -- "${paths[@]+"${paths[@]}"}"
+git diff --cached "$base" -- "${paths[@]+"${paths[@]}"}" > "$work/patch.diff"
+[ -s "$work/patch.diff" ] || { echo "target-diff.sh: レビュー対象が空" >&2; exit 1; }
 {
-  if [ -n "$head" ]; then
-    git log --reverse --format='commit %h%n%n%B' "$base..HEAD" -- "${paths[@]+"${paths[@]}"}"
-    git read-tree HEAD
-  else
-    git read-tree --empty
-  fi
-  git add -A --no-warn-embedded-repo -- "${paths[@]+"${paths[@]}"}"
-  git diff --cached "$base" -- "${paths[@]+"${paths[@]}"}"
+  if [ -n "$head" ]; then git log --reverse --format='commit %h%n%n%B' "$base..HEAD" -- "${paths[@]+"${paths[@]}"}"; fi
+  cat "$work/patch.diff"
 } > "$work/target.diff"
-[ -s "$work/target.diff" ] || { echo "target-diff.sh: レビュー対象が空" >&2; exit 1; }
 
 ok=1
 printf 'work=%s\nrepo=%s\ndiff=%s\n' "$work" "$repo" "$work/target.diff"

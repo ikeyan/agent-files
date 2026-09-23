@@ -44,13 +44,14 @@ git checkout -q -b local-only && commit l1.txt && git checkout -q main
 git checkout -q -b feature && commit f1.txt
 echo changed > a.txt
 echo x > ./--stat
-mkdir sub && echo u > sub/u.txt && ln -s sub linkdir
+mkdir sub && echo u > sub/u.txt && ln -s sub linkdir && echo b > "sub/[b].txt" && echo c > ":c.txt"
 git init -q nested && git -C nested commit -q --allow-empty -m n
-run . && expect "今のチェックアウト" "--stat a.txt f1.txt linkdir nested sub/u.txt" "f1.txt"
+run . && expect "今のチェックアウト" "--stat :c.txt a.txt f1.txt linkdir nested sub/[b].txt sub/u.txt" "f1.txt"
 grep -q '^new file mode 120000' "$diff" || { echo "今のチェックアウト: リンクが 120000 で出ない" >&2; status=1; }
 grep -q '^+Subproject commit' "$diff" || { echo "今のチェックアウト: 入れ子のリポジトリが gitlink で出ない" >&2; status=1; }
 git diff --cached --quiet || { echo "今のチェックアウト: 本来の index が変わった" >&2; status=1; }
-run . -- sub && expect "pathspec" "sub/u.txt" ""
+run . -- sub && expect "path (ディレクトリ)" "sub/[b].txt sub/u.txt" ""
+run . -- "sub/[b].txt" :c.txt && expect "path (pathspec の記号を含む名前)" ":c.txt sub/[b].txt" ""
 
 # linked worktree の中から (detached なので名前は短い id)
 git worktree add -q --detach "$tmp/lw" feature
@@ -85,7 +86,11 @@ if run clone topic -- no-such-dir 2>/dev/null; then echo "一致しない pathsp
 [ "$(git -C clone worktree list | wc -l)" = "$trees" ] || { echo "止まったのに worktree が残る" >&2; status=1; }
 
 # macOS 標準の bash 3.2 でも同じ (pathspec 無しの空配列の展開)
-if [ -x /bin/bash ]; then bash=/bin/bash run clone && expect "bash 3.2" "--stat a.txt f1.txt linkdir nested sub/u.txt" "f1.txt"; fi
+if [ -x /bin/bash ]; then bash=/bin/bash run clone && expect "bash 3.2" "--stat :c.txt a.txt f1.txt linkdir nested sub/[b].txt sub/u.txt" "f1.txt"; fi
+
+# コミットが打ち消し合って patch が空なら止まる
+git -C clone checkout -q -b cancel origin/main && (cd clone && commit z.txt && git rm -q z.txt && git commit -qm "rm z.txt")
+if run clone cancel 2>/dev/null; then echo "打ち消し合うコミット: 止まらない" >&2; status=1; fi
 
 # origin が無ければ止まる
 git init -q -b main noorigin && (cd noorigin && commit a.txt)
