@@ -58,6 +58,10 @@ git worktree add -q --detach "$tmp/lw" feature
 run "$tmp/lw" && expect "linked worktree" "f1.txt" "f1.txt"
 case $diff in "$tmp/clone/.git/"*) ;; *) echo "linked worktree: 作業ディレクトリが本体の .git の下でない — $diff" >&2; status=1 ;; esac
 
+# 同じ対象を並行して回しても生成物は別
+run . -- sub && first=$diff && run . -- a.txt
+if [ "$first" = "$diff" ] || ! grep -q 'sub/u.txt' "$first" || grep -q 'a.txt' "$first"; then echo "並行実行: 生成物を共有している" >&2; status=1; fi
+
 # 対象の指定: 手元だけのブランチ、リモートだけのブランチ、マージ済みの topic、topic から積んだブランチ、merge commit、root commit
 run . local-only && expect "手元だけのブランチ" "l1.txt" "l1.txt"
 run . remote-only && expect "リモートだけのブランチ" "r1.txt" "r1.txt"
@@ -91,6 +95,10 @@ if [ -x /bin/bash ]; then bash=/bin/bash run clone && expect "bash 3.2" "--stat 
 # コミットが打ち消し合って patch が空なら止まる
 git -C clone checkout -q -b cancel origin/main && (cd clone && commit z.txt && git rm -q z.txt && git commit -qm "rm z.txt")
 if run clone cancel 2>/dev/null; then echo "打ち消し合うコミット: 止まらない" >&2; status=1; fi
+
+# origin の HEAD が既定ブランチを指していなければ止まる
+git clone -q --bare src badhead.git && git -C badhead.git symbolic-ref HEAD refs/heads/gone && git clone -q -b main badhead.git badhead
+if run badhead 2>/dev/null; then echo "origin の HEAD が無い: 止まらない" >&2; status=1; fi
 
 # origin が無ければ止まる
 git init -q -b main noorigin && (cd noorigin && commit a.txt)

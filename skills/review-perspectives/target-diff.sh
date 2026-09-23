@@ -6,15 +6,16 @@
 #   <対象> が数字だけ: PR 番号 (gh で head と base ブランチを引く)
 #   <対象> がそれ以外: 手元のブランチ、origin のブランチ、revision の順に解決する
 #   <path>: log・add・diff をそのパスに限る。glob も pathspec magic も無いそのままのパス名
-# 出力 (stdout、1 行 1 つ): work=<作業ディレクトリ> repo=<レビュアーに渡すリポジトリのルート> diff=<target.diff>
-# 事前条件: origin がある。PR 番号は gh の認証。
-# 事後条件: 対象を指定したら repo は $work の下に作った linked worktree で、レビュー後に git worktree remove <repo> で消す。失敗して終わるときは自分で消す。
+# 出力 (stdout、1 行 1 つ): work=<レビュー対象ごとの作業ディレクトリ> run=<この実行の生成物のディレクトリ> repo=<レビュアーに渡すリポジトリのルート> diff=<target.diff>
+# 事前条件: origin があり、その HEAD が既定ブランチを指している。PR 番号は gh の認証。
+# 事後条件: 対象を指定したら repo は run の下の linked worktree。レビュー後に git worktree remove <repo> してから rm -r <run> で消す。失敗して終わるときは自分で消す。
+#           同じ対象を並行して回しても run は別で、work の exclusions.md だけを共有する。
 #
 # 受け付ける環境の形 (canon: facts/git/repository-shapes) と扱い:
 #   処理する: linked worktree、--single-branch の clone、shallow clone、unborn HEAD、root commit、
 #             既定ブランチに入った revision と merge commit、既定ブランチ以外へ向く PR、手元だけ・リモートだけのブランチ、
 #             未追跡の項目の全種 (- 始まりの名前、シンボリックリンク、入れ子のリポジトリ)
-#   止まる:   origin が無い、<対象> が解決できない、共通の祖先が無い、レビュー対象が空 (変更が無い、<path> が何にも一致しない、コミットが打ち消し合って patch が空)
+#   止まる:   origin が無い、origin の HEAD が既定ブランチを指していない (set-head --auto の Cannot determine remote HEAD)、<対象> が解決できない、共通の祖先が無い、レビュー対象が空 (変更が無い、<path> が何にも一致しない、コミットが打ち消し合って patch が空)
 # 外さないもの: fetch の refspec、set-head --auto、--path-format=absolute --git-common-dir、add -A の前の read-tree (理由は canon の同ページ)
 set -euo pipefail
 
@@ -48,12 +49,14 @@ fi
 
 work=$common/review-perspectives/$name
 mkdir -p "$work"
-repo=$(git rev-parse --show-toplevel)
+run=$(mktemp -d "$work/run.XXXXXX")
 ok=
+repo=$(git rev-parse --show-toplevel)
+start=$PWD
+trap '[ -n "$ok" ] || { cd "$start" && rm -rf "$run" && git worktree prune; }' EXIT
 if [ -n "$rev" ]; then
-  repo=$(mktemp -d "$work/tree.XXXXXX")
+  repo=$run/tree
   git worktree add -q --detach "$repo" "$rev"
-  trap '[ -n "$ok" ] || git worktree remove --force "$repo"' EXIT
   cd "$repo"
 fi
 
@@ -76,15 +79,15 @@ else
   fi
 fi
 
-export GIT_INDEX_FILE=$work/index
+export GIT_INDEX_FILE=$run/index
 if [ -n "$head" ]; then git read-tree HEAD; else git read-tree --empty; fi
 git add -A --no-warn-embedded-repo -- "${paths[@]+"${paths[@]}"}"
-git diff --cached "$base" -- "${paths[@]+"${paths[@]}"}" > "$work/patch.diff"
-[ -s "$work/patch.diff" ] || { echo "target-diff.sh: レビュー対象が空" >&2; exit 1; }
+git diff --cached "$base" -- "${paths[@]+"${paths[@]}"}" > "$run/patch.diff"
+[ -s "$run/patch.diff" ] || { echo "target-diff.sh: レビュー対象が空" >&2; exit 1; }
 {
   if [ -n "$head" ]; then git log --reverse --format='commit %h%n%n%B' "$base..HEAD" -- "${paths[@]+"${paths[@]}"}"; fi
-  cat "$work/patch.diff"
-} > "$work/target.diff"
+  cat "$run/patch.diff"
+} > "$run/target.diff"
 
 ok=1
-printf 'work=%s\nrepo=%s\ndiff=%s\n' "$work" "$repo" "$work/target.diff"
+printf 'work=%s\nrun=%s\nrepo=%s\ndiff=%s\n' "$work" "$run" "$repo" "$run/target.diff"
