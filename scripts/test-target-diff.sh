@@ -125,6 +125,8 @@ run clone/sub subch -- s.txt && expect "サブディレクトリからの path (
 run clone/sub -- u.txt && expect "サブディレクトリからの path (対象なし)" "sub/u.txt" ""
 run clone/sub subch -- "$tmp/clone/sub/s.txt" && expect "絶対パスの path (対象あり)" "sub/s.txt" "sub/s.txt"
 run clone/sub -- "$tmp/clone/sub/u.txt" && expect "絶対パスの path (対象なし)" "sub/u.txt" ""
+run clone/sub subch -- "$tmp/clone" && expect "絶対パスの path (リポのルート)" "sub/s.txt" "sub/s.txt"
+run clone/sub subch -- "$tmp/clone/" && expect "絶対パスの path (リポのルート、末尾 /)" "sub/s.txt" "sub/s.txt"
 fails "リポジトリの外の path" clone -- "$tmp/src/a.txt"
 
 # path に指定したファイルがコミットで削除されている

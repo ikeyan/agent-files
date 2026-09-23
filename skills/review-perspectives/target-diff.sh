@@ -57,6 +57,7 @@ repo=$(git rev-parse --show-toplevel)
 prefix=$(git rev-parse --show-prefix)
 for i in "${!paths[@]}"; do
   case ${paths[i]} in
+    "$repo"|"$repo"/) paths[i]=. ;;
     "$repo"/*) paths[i]=${paths[i]#"$repo"/} ;;
     /*) echo "target-diff.sh: <path> がリポジトリの外: ${paths[i]}" >&2; exit 1 ;;
     *) paths[i]=$prefix${paths[i]} ;;
