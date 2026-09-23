@@ -91,7 +91,11 @@ run . "$root" && expect "root commit" "a.txt" "a.txt"
 run . origin/ff && expect "fast-forward でマージ済みのブランチ" "ff2.txt" "ff2.txt"
 GIT_EXTERNAL_DIFF=true GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=diff.noprefix GIT_CONFIG_VALUE_0=true GIT_CONFIG_KEY_1=color.diff GIT_CONFIG_VALUE_1=always \
   run . topic && expect "diff の出力を変える git の設定" "t1.txt t2.txt" "t1.txt t2.txt"
-run . -- sub && r1=$rules; mkdir review-perspectives && echo s > review-perspectives/x.md
+run . -- sub && mkdir "$tmp/hooks" && printf '#!/bin/sh\necho hook > hook.txt\n' > "$tmp/hooks/post-checkout" && chmod +x "$tmp/hooks/post-checkout"
+git config core.hooksPath "$tmp/hooks"
+run . topic && expect "リポジトリの hook" "t1.txt t2.txt" "t1.txt t2.txt"
+git config --unset core.hooksPath
+r1=$rules; mkdir review-perspectives && echo s > review-perspectives/x.md
 if run . -- sub && [ "$rules" = "$r1" ]; then echo "rules: リポ固有の検索対象の追加で変わらない" >&2; status=1; fi
 r1=$rules; mv review-perspectives/x.md review-perspectives/y.md
 if run . -- sub && [ "$rules" = "$r1" ]; then echo "rules: リポ固有の検索対象の名前の変更で変わらない" >&2; status=1; fi
