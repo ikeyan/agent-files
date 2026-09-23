@@ -172,13 +172,19 @@ run clone/sub subch -- "$tmp/clone//" && expect "絶対パスの path (リポの
 before=$(find "$tmp" -maxdepth 1 -name 'review-perspectives.*' | wc -l)
 fails "リポジトリの外の path" clone -- "$tmp/src/a.txt"
 [ "$(find "$tmp" -maxdepth 1 -name 'review-perspectives.*' | wc -l)" = "$before" ] || { echo "リポジトリの外の path: run が残る" >&2; status=1; }
-fails "ルートより上を通る .." clone -- "$tmp/clone/../clone/a.txt"
+run clone/sub subch -- "$tmp/clone/../clone/sub/s.txt" && expect "ルートより上を通る .." "sub/s.txt" "sub/s.txt"
 ln -s clone link
 run link/sub subch -- "$tmp/link/sub/s.txt" && expect "シンボリックリンク経由の絶対パス" "sub/s.txt" "sub/s.txt"
 run link/sub subch -- "$tmp/link" && expect "シンボリックリンク経由のルート" "sub/s.txt" "sub/s.txt"
 ln -s clone/sub linksub
 run linksub subch -- "$tmp/linksub/s.txt" && expect "サブディレクトリへのシンボリックリンク経由の絶対パス" "sub/s.txt" "sub/s.txt"
 run linksub subch -- "$tmp/linksub" && expect "サブディレクトリへのシンボリックリンク自身" "sub/s.txt" "sub/s.txt"
+mkdir links && ln -s "$tmp/clone/sub" links/sub && echo o > clone/outside.txt
+fails "物理パスの prefix と同じ名前のリンクから、リポジトリの外の絶対パス" links/sub -- "$tmp/links/outside.txt"
+rm clone/outside.txt
+run clone -- linkdir && expect "リポジトリの中のディレクトリへのリンク" "linkdir" ""
+ln -s "$tmp/clone/a.txt" filelink
+fails "リポジトリの外に置いた、中のファイルへのリンク" clone -- "$tmp/filelink"
 
 # revision の式に .. が入っても作業ディレクトリは .git/ の下
 git -C clone commit -q --allow-empty -m "aa/bb/cc/escape"
