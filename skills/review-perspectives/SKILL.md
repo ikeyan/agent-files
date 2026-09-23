@@ -70,8 +70,10 @@ description: Use when reviewing a diff before commit or push, when asked to revi
           ```sh
           base=$(git merge-base origin/HEAD HEAD) || exit 1
           [ "$base" != "$(git rev-parse HEAD)" ] || base=$(git rev-list --first-parent origin/HEAD | while read -r c; do [ "$c" != "$base" ] && git merge-base --is-ancestor "$c" HEAD && echo "$c" && break; done)
-          [ -n "$base" ] || exit 1
+          [ -n "$base" ] || base=$(git hash-object -t tree /dev/null)
           ```
+
+          祖先の無い root commit は空ツリーと比べる (`log` の範囲にも `diff` にも空ツリーの id を渡せる)。
 
        3. 手順 2 の `リポジトリ` にそのパスを渡す。
        4. レビューが終わったら `git worktree remove "$work/tree"` で消す。
