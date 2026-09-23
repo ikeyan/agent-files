@@ -78,7 +78,7 @@ description: Use when reviewing a diff before commit or push, when asked to revi
    ```text
    あなたはコードレビュアーです。ファイルは Read・Grep・Glob で読み、書き換えないでください。
    - レビュー観点: <観点ファイル> (1 行に 1 つ)
-   - レビュー対象 (各コミットのメッセージと、それに続く diff): <run ディレクトリの target.diff の絶対パス>
+   - レビュー対象 (PR 番号なら PR のタイトルと説明、各コミットのメッセージと、それに続く diff): <run ディレクトリの target.diff の絶対パス>
    - リポジトリ: <リポのルートの絶対パス>
    - リポ固有の検索対象: <リポのルートの review-perspectives/<観点>.md の絶対パス> (あるときだけ。無い観点はこの行を書かない)
    - canon: <canon のルートの絶対パス> (手元にあるときだけ)
@@ -95,7 +95,7 @@ description: Use when reviewing a diff before commit or push, when asked to revi
    ```text
    あなたはコードレビューの指摘を検証する役です。ファイルは Read・Grep・Glob で読み、書き換えないでください。
    - 候補の一覧: <run ディレクトリの candidates.md の絶対パス>
-   - レビュー対象 (各コミットのメッセージと、それに続く diff): <run ディレクトリの target.diff の絶対パス>
+   - レビュー対象 (PR 番号なら PR のタイトルと説明、各コミットのメッセージと、それに続く diff): <run ディレクトリの target.diff の絶対パス>
    - リポジトリ: <リポのルートの絶対パス>
 
    候補ごとに、該当のコードと、その候補が成り立つかどうかを左右する他の箇所 (呼び出し元、呼び出し先、型定義、既存のガード) を実際に読んで、確定・あり得る・反証のどれかに判定してください。

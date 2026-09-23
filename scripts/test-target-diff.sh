@@ -106,8 +106,15 @@ run . HEAD && expect "revision の HEAD (origin/HEAD でない)" "f1.txt" "f1.tx
 git checkout -q -b prhead origin/main && commit p1.txt
 git checkout -q -b prbase origin/main && commit b1.txt && git push -q origin prbase
 git checkout -q prhead && git merge -q -m M2 prbase && commit p2.txt && git push -q origin prhead:refs/pull/1/head
-mkdir "$tmp/bin" && printf '#!/bin/sh\nprintf "prhead\\t%%s\\n" "%s"\n' "$(git rev-parse prbase)" > "$tmp/bin/gh" && chmod +x "$tmp/bin/gh"
+mkdir "$tmp/bin" && cat > "$tmp/bin/gh" <<EOF && chmod +x "$tmp/bin/gh"
+#!/bin/sh
+case "\$*" in
+  *body*) printf 'pull request: T\n\nPR-BODY\n' ;;
+  *) printf 'prhead\t%s\t%s\n' $(git rev-parse prhead) $(git rev-parse prbase) ;;
+esac
+EOF
 PATH=$tmp/bin:$PATH run . 1 && expect "base を取り込んだ PR" "p1.txt p2.txt" "M2 p1.txt p2.txt"
+grep -q '^PR-BODY$' "$diff" || { echo "PR 番号: PR の説明が target.diff に無い" >&2; status=1; }
 git checkout -q prbase && git merge -q --no-ff -m M3 prhead && git push -q origin prbase
 PATH=$tmp/bin:$PATH run . 1 && expect "base を取り込んでからマージした PR (baseRefOid はマージの前の base)" "p1.txt p2.txt" "M2 p1.txt p2.txt"
 git checkout -q feature
