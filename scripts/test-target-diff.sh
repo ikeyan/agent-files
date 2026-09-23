@@ -119,6 +119,11 @@ fails "打ち消し合うコミット" clone cancel
 git clone -q --bare src badhead.git && git -C badhead.git symbolic-ref HEAD refs/heads/gone && git clone -q -b main badhead.git badhead
 fails "origin の HEAD が無い" badhead
 
+# サブディレクトリから相対パスを指定する (対象の有無で基点が変わらない)
+git -C clone checkout -q -b subch origin/main && echo s > clone/sub/s.txt && git -C clone add sub/s.txt && git -C clone commit -qm "sub/s.txt"
+run clone/sub subch -- s.txt && expect "サブディレクトリからの path (対象あり)" "sub/s.txt" "sub/s.txt"
+run clone/sub -- u.txt && expect "サブディレクトリからの path (対象なし)" "sub/u.txt" ""
+
 # path に指定したファイルがコミットで削除されている
 git -C clone checkout -q -b del origin/main && git -C clone rm -qf a.txt && git -C clone commit -qm "rm a.txt"
 run clone del -- a.txt && expect "path (削除されたファイル)" "a.txt" "rm a.txt"
