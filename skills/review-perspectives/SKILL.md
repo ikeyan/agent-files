@@ -66,10 +66,12 @@ description: Use when reviewing a diff before commit or push, when asked to revi
        3. 手順 2 の `リポジトリ` にそのパスを渡す。
        4. レビューが終わったら `git worktree remove` で消す。
      - パス: `git log` と `git diff` に `-- <パス>` を付け、未追跡のファイルはそのパスの下だけを列挙する。
-   - `$work` を `--git-common-dir` から決めるのは、linked worktree の中では `.git` がファイルで、相対パス `.git/…` に書けないため。
-   - `set-head --auto` を外さない: fetch は、手元に既にある `origin/HEAD` をリモートの今の既定ブランチへ張り直さない。
-   - `merge-base` が何も出さずに失敗し、`git rev-parse --is-shallow-repository` が `true` なら、分岐点が取得されていない。`git fetch --unshallow` してからやり直す。
-   - `origin` が無い、fetch か `set-head` が失敗した、または上の手当てで base が決まらなければ、どこからの変更をレビューするかをユーザーに確かめる。
+   - 外さないもの:
+     - `--path-format=absolute --git-common-dir`。相対パス `.git/…` に戻さない (`canon: facts/git/linked-worktree-git-file`)。
+     - `set-head --auto`。fetch は、手元に既にある `origin/HEAD` をリモートの今の既定ブランチへ張り直さない。
+   - 失敗したとき:
+     - `merge-base` が何も出さずに失敗し、`git rev-parse --is-shallow-repository` が `true` なら、分岐点が取得されていない。`git fetch --unshallow` してからやり直す。
+     - `origin` が無い、fetch か `set-head` が失敗した、または上の手当てで base が決まらなければ、どこからの変更をレビューするかをユーザーに確かめる。
 
 2. 表の各行について、そのモデルのエージェントを並列に起動し、次のプロンプトを渡す。リポのルートに `review-perspectives/<観点>.md` があれば、その観点の検索対象として一緒に渡す (書き方は [repo-supplement.md](repo-supplement.md))。観点の検出手順が列挙する対象が diff に無い担当 (文書だけの diff での 資源の解放 等) は起動しない。`<観点ファイル>` はこのスキルの `perspectives/<観点>.md` の絶対パス。
 
