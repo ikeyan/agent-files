@@ -12,7 +12,7 @@
 # 出力 (watch、1 行 1 件): open・new・changed に続けてイベント文。説明の変更は "description changed" の行に unified diff が続く。
 #   auth で始まる行を出して終わったら、トークンが無いか無効 (401)。error で始まる行なら、PR 番号・リポジトリ・権限・問い合わせの誤り (401 以外の 4xx と、レート制限でない GraphQL の errors)。
 # 失敗: 一時的な API の失敗 (ネットワーク・5xx・レート制限の 403・429) は、watch では出さずに間隔を倍にして (上限 900 秒) 再試行し、reply-resolve では止まる。
-#   reply-resolve は、止まった後にそのままやり直してよい (スレッドの最後のコメントが同じ本文なら返信を重ねない)。
+#   reply-resolve は、止まった後にそのままやり直してよい (スレッドの最後のコメントが自分の同じ本文なら返信を重ねない)。
 # 事前条件: curl と jq。トークンは GH_TOKEN か gh auth token。
 # GraphQL の $cursor と jq の式は、単一引用符で展開させずに渡す
 # shellcheck disable=SC2016
@@ -79,9 +79,11 @@ gql() { # <PR の接続のフィールド (after: $cursor を取る)> <接続の
 if [ "$cmd" = reply-resolve ]; then
   [ $# -eq 5 ] || { echo "usage: pr.sh reply-resolve <owner>/<repo> <n> <comment-id> <body>" >&2; exit 2; }
   id=$4 text=$5
-  # 返信の後の resolve が失敗してやり直しても返信を重ねないように、スレッドの最後のコメントが同じ本文なら返信しない
-  found=$(gql 'reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor} nodes{id comments(first:1){nodes{databaseId}} last: comments(last:1){nodes{body}}}}' \
-    "select(.comments.nodes[0].databaseId == $id) | \"\\(.id) \\(.last.nodes[0].body == $(jq -n --arg t "$text" '$t'))\"") || fail $?
+  # 返信の後の resolve が失敗してやり直しても返信を重ねないように、スレッドの最後のコメントが自分の同じ本文なら返信しない
+  me=$(req POST https://api.github.com/graphql '{"query":"{viewer{login}}"}' | jq -r .data.viewer.login) || fail $?
+  [ -n "$me" ] && [ "$me" != null ] || { echo "error トークンの持ち主 (GraphQL の viewer) が分からないので、返信の重複を判定できない"; exit 3; }
+  found=$(gql 'reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor} nodes{id comments(first:1){nodes{databaseId}} last: comments(last:1){nodes{body author{login}}}}}' \
+    "select(.comments.nodes[0].databaseId == $id) | .last.nodes[0] as \$l | \"\\(.id) \\(\$l.body == $(jq -n --arg t "$text" '$t') and \$l.author.login == $(jq -n --arg m "$me" '$m'))\"") || fail $?
   [ -n "$found" ] || { echo "pr.sh: レビューコメント $id を先頭に持つスレッドが無い" >&2; exit 1; }
   thread=${found% *}
   if [ "${found#* }" != true ]; then
