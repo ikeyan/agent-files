@@ -10,8 +10,9 @@
 #   pr.sh reply-resolve <owner>/<repo> <PR 番号> <スレッド先頭のレビューコメントの id> <本文>
 #     スレッドに返信し、そのスレッドを resolve する。
 # 出力 (watch、1 行 1 件): open・new・changed に続けてイベント文。説明の変更は "description changed" の行に unified diff が続く。
-#   auth で始まる行を出して終わったら、トークンが無いか無効 (401)。
-# 失敗: 401 以外の API の失敗 (ネットワーク・5xx・レート制限) は、watch では出さずに間隔を倍にして (上限 900 秒) 再試行し、reply-resolve では止まる。
+#   auth で始まる行を出して終わったら、トークンが無いか無効 (401)。error で始まる行なら、PR 番号・リポジトリ・権限の誤り (401 以外の 4xx)。
+# 失敗: 一時的な API の失敗 (ネットワーク・5xx・レート制限の 403・429) は、watch では出さずに間隔を倍にして (上限 900 秒) 再試行し、reply-resolve では止まる。
+#   reply-resolve は、止まった後にそのままやり直してよい (スレッドの最後のコメントが同じ本文なら返信を重ねない)。
 # 事前条件: curl と jq。トークンは GH_TOKEN か gh auth token。
 # GraphQL の $cursor と jq の式は、単一引用符で展開させずに渡す
 # shellcheck disable=SC2016
@@ -22,15 +23,31 @@ cmd=$1 repo=$2 pr=$3
 token=${GH_TOKEN:-$(gh auth token)}
 [ -n "$token" ] || { echo "auth GitHub のトークンが無い。GH_TOKEN を設定するか gh auth login する"; exit 1; }
 
-req() { # <メソッド> <URL> [<JSON の本文>]: 応答の本文を出す。401 なら 2、他の失敗は 1 を返す
-  local res code data=()
+req() { # <メソッド> <URL> [<JSON の本文>]: 応答の本文を出す。失敗は、一時的 (ネットワーク・5xx・レート制限) なら 1、401 なら 2、それ以外の 4xx なら error の行を出して 3 を返す
+  local res tail code remaining retry body data=()
   [ $# -lt 3 ] || data=(--data "$3")
-  res=$(printf 'Authorization: Bearer %s\n' "$token" | curl -sS --max-time 30 -X "$1" -H @- -H "Accept: application/vnd.github+json" "${data[@]}" -w '\n%{http_code}' "$2") || return 1
-  code=${res##*$'\n'}
-  case $code in 2??) printf '%s\n' "${res%$'\n'*}" ;; 401) return 2 ;; *) return 1 ;; esac
+  res=$(printf 'Authorization: Bearer %s\n' "$token" | curl -sS --max-time 30 -X "$1" -H @- -H "Accept: application/vnd.github+json" "${data[@]}" \
+    -w '\n%{http_code}\t%header{x-ratelimit-remaining}\t%header{retry-after}' "$2") || return 1
+  tail=${res##*$'\n'} body=${res%$'\n'*}
+  IFS=$'\t' read -r code remaining retry <<<"$tail"
+  case $code in
+    2??) printf '%s\n' "$body"; return 0 ;;
+    401) return 2 ;;
+    429) return 1 ;;
+    403)
+      # レート制限の 403 は、primary なら x-ratelimit-remaining が 0、secondary なら retry-after があるか remaining が 0、無ければ本文が secondary rate limit を示す (canon: facts/github/rest-rate-limit-responses)
+      if [ -n "$retry" ] || [ "$remaining" = 0 ] || [[ $body == *"rate limit"* ]]; then return 1; fi ;;
+    4??) ;;
+    *) return 1 ;;
+  esac
+  echo "error HTTP $code $1 $2: $body" >&2
+  return 3
 }
-fail() { # <終了コード>: 401 (2) なら auth の行を出し、そのコードで終わる
-  [ "$1" != 2 ] || echo "auth GitHub のトークンが無効 (401)。gh auth login してから起動し直す"
+fail() { # <終了コード>: 401 (2) なら auth の行、恒久的な失敗 (3) なら error の行を出し、そのコードで終わる
+  case $1 in
+    2) echo "auth GitHub のトークンが無効 (401)。gh auth login してから起動し直す" ;;
+    3) echo "error 引数か権限が誤っている (直前の行が GitHub の応答)" ;;
+  esac
   exit "$1"
 }
 rest() { # <API パス (クエリ可)> <jq フィルタ>: 全ページを取り、各ページに jq を当てる
@@ -59,9 +76,14 @@ gql() { # <PR の接続のフィールド (after: $cursor を取る)> <接続の
 if [ "$cmd" = reply-resolve ]; then
   [ $# -eq 5 ] || { echo "usage: pr.sh reply-resolve <owner>/<repo> <n> <comment-id> <body>" >&2; exit 2; }
   id=$4 text=$5
-  req POST "https://api.github.com/repos/$repo/pulls/$pr/comments/$id/replies" "$(jq -n --arg b "$text" '{body: $b}')" > /dev/null || fail $?
-  thread=$(gql 'reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor} nodes{id comments(first:1){nodes{databaseId}}}}' "select(.comments.nodes[0].databaseId == $id) | .id") || fail $?
-  [ -n "$thread" ] || { echo "pr.sh: レビューコメント $id を先頭に持つスレッドが無い" >&2; exit 1; }
+  # 返信の後の resolve が失敗してやり直しても返信を重ねないように、スレッドの最後のコメントが同じ本文なら返信しない
+  found=$(gql 'reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor} nodes{id comments(first:1){nodes{databaseId}} last: comments(last:1){nodes{body}}}}' \
+    "select(.comments.nodes[0].databaseId == $id) | \"\\(.id) \\(.last.nodes[0].body == $(jq -n --arg t "$text" '$t'))\"") || fail $?
+  [ -n "$found" ] || { echo "pr.sh: レビューコメント $id を先頭に持つスレッドが無い" >&2; exit 1; }
+  thread=${found% *}
+  if [ "${found#* }" != true ]; then
+    req POST "https://api.github.com/repos/$repo/pulls/$pr/comments/$id/replies" "$(jq -n --arg b "$text" '{body: $b}')" > /dev/null || fail $?
+  fi
   res=$(req POST https://api.github.com/graphql "$(jq -n --arg t "$thread" '{query: "mutation($t:ID!){resolveReviewThread(input:{threadId:$t}){thread{isResolved}}}", variables: {t: $t}}')") || fail $?
   jq -e '.data.resolveReviewThread.thread.isResolved' <<<"$res" > /dev/null || { echo "pr.sh: resolve できない: $res" >&2; exit 1; }
   exit 0
@@ -115,8 +137,8 @@ while :; do
     case $events in *"changed pr closed"*) ;; *) closed=$(closed_line "$cur") && events=${events:+$events$'\n'}$closed ;; esac
     events=${events%$'\n'}
   fi
-  if [ "$rc" = 2 ]; then
-    fail 2
+  if [ "$rc" = 2 ] || [ "$rc" = 3 ]; then
+    fail "$rc"
   elif [ "$rc" != 0 ]; then
     delay=$((delay * 2 > 900 ? 900 : delay * 2))
   else
