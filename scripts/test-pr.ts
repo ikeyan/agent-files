@@ -379,7 +379,15 @@ const worldArb = fc.record({
   body: bodyArb,
   comments: fc.array(commentArb, { maxLength: 4 }),
   threads: fc.array(fc.record({ resolved: fc.boolean(), logins: fc.array(loginArb, { minLength: 1, maxLength: 3 }) }), { maxLength: 3 }),
-  reviews: fc.array(fc.record({ login: fc.constantFrom("alice", "bob", BOT), state: reviewStateArb, body: fc.boolean() }), { maxLength: 5 }),
+  // review の編集が changed として検査に入るように、出す対象になる review (本文のある COMMENTED と CHANGES_REQUESTED) を多くする
+  reviews: fc.array(
+    fc.record({
+      login: fc.constantFrom("alice", "bob", BOT),
+      state: fc.oneof({ weight: 3, arbitrary: fc.constantFrom<ReviewState>("COMMENTED", "CHANGES_REQUESTED") }, { weight: 2, arbitrary: reviewStateArb }),
+      body: fc.oneof({ weight: 4, arbitrary: fc.constant(true) }, { weight: 1, arbitrary: fc.constant(false) }),
+    }),
+    { maxLength: 5 },
+  ),
   checks: fc.array(fc.record({ name: fc.constantFrom("build", "test", "lint (ubuntu)"), conclusion: conclusionArb, head: fc.boolean() }), { maxLength: 4 }),
   statuses: fc.array(
     fc.record({ context: fc.constantFrom("ci/a", "ci/b"), state: fc.constantFrom("pending", "success", "failure", "error"), head: fc.boolean() }),
@@ -831,8 +839,12 @@ const p1 = fc.asyncProperty(worldArb, failuresArb, permanentArb, async (spec, fa
   });
 });
 
-const p2 = fc.asyncProperty(worldArb, fc.array(opArb, { minLength: 1, maxLength: 3 }), fc.nat(), failuresArb, async (spec, ops, split, failures) => {
+// 既定の件数でも review の編集 (changed review) が検査に入るように、多くは Δ の最後で出す対象の review を編集する
+const touchArb = fc.option(fc.nat(200), { nil: null, freq: 4 });
+
+const p2 = fc.asyncProperty(worldArb, fc.array(opArb, { minLength: 1, maxLength: 3 }), touchArb, fc.nat(), failuresArb, async (spec, generated, touch, split, failures) => {
   const w0 = build({ ...spec, closed: false });
+  const ops: Op[] = touch === null ? generated : [...generated, { op: "editReview", i: touch, shown: true, text: "edited" }];
   // Δ を 2 つに分け、後半を次の周期 (前半で差が出たなら窓の後の取り直し) の始まりで入れる
   const cut = split % (ops.length + 1);
   const mid = structuredClone(w0);
