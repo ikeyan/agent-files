@@ -4,7 +4,7 @@
 # 使い方:
 #   pr.sh watch <owner>/<repo> <PR 番号> <状態のディレクトリ> [<間隔の秒数 (1〜900 の整数、既定 60)>]
 #     対応が要るものを見つけたら出して終わる (Bash ツールの run_in_background で回す)。同じ <状態のディレクトリ> で二重に起動しない (ロックしないので状態の読み書きが競合する)。
-#     初回 (状態が無い): 以後の周期で出す対象 (コメント・本文のある COMMENTED の review・レビュアーごとに最後に提出した COMMENTED 以外の review が CHANGES_REQUESTED のもの・unresolved のレビューコメント・head の CI の失敗・閉じた PR・Completed の Codex の summary) が既にあれば、open で出して終わる。無ければ基準にして待つ。
+#     初回 (状態が無い): 以後の周期で出す対象 (コメント・本文のある COMMENTED の review・レビュアーごとに最後に提出した COMMENTED 以外の review が CHANGES_REQUESTED のもの・unresolved のレビューコメント・head の CI の失敗 (再実行や同じ context の後の status で置き換えられたものを含む)・閉じた PR・Completed の Codex の summary) が既にあれば、open で出して終わる。無ければ基準にして待つ。
 #     以後: 前回との差 (コメント・review の追加と編集、タイトル、説明、CI の失敗、PR の close) を見つけたら、間隔と 10 秒の短いほうだけ待って取り直し、まとめて出して終わる。
 #     出さないもの: resolve 済みのスレッドのレビューコメント、本文の無い COMMENTED の review (返信で作られる)、Codex の summary コメントの、今の head の Completed 以外への編集、Codex のレビューの利用上限のコメント (回復すると最新の head を自分でレビューする。canon: facts/codex-github/usage-limit-auto-resume)。
 #     自分 (トークンの持ち主) の通常のコメントは出す (エージェントの返信とユーザー自身の指示を見分けられない)。
@@ -65,7 +65,7 @@ rest() { # <API パス (クエリ可)> <jq フィルタ>: 全ページを取り�
   while :; do
     body=$(req GET "$api/$1${sep}per_page=100&page=$page") || return
     jq -r "$2" <<<"$body" || return 1
-    [ "$(jq 'if type == "array" then length else (.check_runs // .statuses | length) end' <<<"$body")" -eq 100 ] || return 0
+    [ "$(jq 'if type == "array" then length else (.check_runs | length) end' <<<"$body")" -eq 100 ] || return 0
     page=$((page + 1))
   done
 }
@@ -138,7 +138,7 @@ poll() { # 現状を「キー<TAB>版<TAB>イベント文」の行で出し、�
       !($2 in at) || $4 > at[$2] { at[$2] = $4; last[$2] = $5 OFS $6 OFS $7; state[$2] = $1 }
       END { for (a in last) if (state[a] == "CHANGES_REQUESTED") print last[a] }' || return
   rest "repos/$repo/commits/$sha/check-runs?filter=all" '.check_runs[] | select(.conclusion | IN("failure", "timed_out", "cancelled", "action_required", "startup_failure")) | "cr:\(.id)\t\(.conclusion)\tci-failure \(.name) \(.conclusion) \(.html_url)"' || return
-  rest "repos/$repo/commits/$sha/status" '.statuses[] | select(.state == "failure" or .state == "error") | "st:\(.id)\t\(.state)\tci-failure \(.context) \(.state) \(.target_url)"' || return
+  rest "repos/$repo/commits/$sha/statuses" '.[] | select(.state == "failure" or .state == "error") | "st:\(.id)\t\(.state)\tci-failure \(.context) \(.state) \(.target_url)"' || return
 }
 diff_events() { # <現状>: 状態ファイルとの差をイベントの行で出す
   printf '%s\n' "$1" | awk -F'\t' 'NR == FNR { seen[$1] = $2; next } $3 == "" { next } !($1 in seen) { print "new " $3; next } seen[$1] != $2 { print "changed " $3 }' "$state" -
