@@ -81,7 +81,7 @@ if [ "$cmd" = reply-resolve ]; then
   id=$4 text=$5
   # 返信の後の resolve が失敗してやり直しても返信を重ねないように、スレッドの最後のコメントが自分の同じ本文なら返信しない
   me=$(req POST https://api.github.com/graphql '{"query":"{viewer{login}}"}' | jq -r .data.viewer.login) || fail $?
-  [ -n "$me" ] && [ "$me" != null ] || { echo "error トークンの持ち主 (GraphQL の viewer) が分からないので、返信の重複を判定できない"; exit 3; }
+  if [ -z "$me" ] || [ "$me" = null ]; then echo "error トークンの持ち主 (GraphQL の viewer) が分からないので、返信の重複を判定できない"; exit 3; fi
   found=$(gql 'reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor} nodes{id comments(first:1){nodes{databaseId}} last: comments(last:1){nodes{body author{login}}}}}' \
     "select(.comments.nodes[0].databaseId == $id) | .last.nodes[0] as \$l | \"\\(.id) \\(\$l.body == $(jq -n --arg t "$text" '$t') and \$l.author.login == $(jq -n --arg m "$me" '$m'))\"") || fail $?
   [ -n "$found" ] || { echo "pr.sh: レビューコメント $id を先頭に持つスレッドが無い" >&2; exit 1; }
