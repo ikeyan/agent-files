@@ -5,11 +5,12 @@
 #   pr.sh watch <owner>/<repo> <PR 番号> <状態のディレクトリ> [<間隔の秒数 (1〜900 の整数、既定 60)>]
 #     対応が要るものを見つけたら出して終わる (Bash ツールの run_in_background で回す)。同じ <状態のディレクトリ> で二重に起動しない (ロックしないので状態の読み書きが競合する)。
 #     初回 (状態が無い): 以後の周期で出す対象 (コメント・本文のある COMMENTED の review・レビュアーごとに最後に提出した COMMENTED 以外の review が CHANGES_REQUESTED のもの・unresolved のレビューコメント・head の CI の失敗・閉じた PR・Completed の Codex の summary) が既にあれば、open で出して終わる。無ければ基準にして待つ。
-#     以後: 前回との差 (コメント・review の追加と編集、タイトル、説明、CI の失敗、PR の close) を見つけたら、10 秒待って取り直し、まとめて出して終わる。
+#     以後: 前回との差 (コメント・review の追加と編集、タイトル、説明、CI の失敗、PR の close) を見つけたら、間隔と 10 秒の短いほうだけ待って取り直し、まとめて出して終わる。
 #     出さないもの: resolve 済みのスレッドのレビューコメント、本文の無い COMMENTED の review (返信で作られる)、Codex の summary コメントの、今の head の Completed 以外への編集、Codex のレビューの利用上限のコメント (回復すると最新の head を自分でレビューする。canon: facts/codex-github/usage-limit-auto-resume)。
 #     自分 (トークンの持ち主) の通常のコメントは出す (エージェントの返信とユーザー自身の指示を見分けられない)。
 #   pr.sh reply-resolve <owner>/<repo> <PR 番号> <スレッド先頭のレビューコメントの id (整数)> <本文>
 #     スレッドに返信し、そのスレッドを resolve する。
+#   環境変数 GITHUB_API_URL: API の基点 (既定 https://api.github.com)。
 # 出力 (watch、1 行 1 件): open・new・changed に続けてイベント文。説明の変更は "description changed" の行に unified diff が続く。
 #   auth で始まる行を出して終わったら、トークンが無いか無効 (401)。error で始まる行なら、PR 番号・リポジトリ・権限・問い合わせの誤り (3xx、401 以外の 4xx、レート制限でない GraphQL の errors)。3xx はリポジトリの改名・移動で、新しい名前で起動し直す。
 # 失敗: 一時的な API の失敗 (ネットワーク・5xx・レート制限の 403・429) は、watch では出さずに間隔を倍にして (上限 900 秒) 再試行し、reply-resolve では止まる。
@@ -23,6 +24,7 @@ set -uo pipefail
 cmd=$1 repo=$2 pr=$3
 # 無いと一時的な失敗と区別できずに再試行し続けるので、先に確かめる
 if ! command -v curl > /dev/null || ! command -v jq > /dev/null; then echo "pr.sh: curl と jq が要る" >&2; exit 2; fi
+api=${GITHUB_API_URL:-https://api.github.com}
 token=${GH_TOKEN:-$(gh auth token)}
 [ -n "$token" ] || { echo "auth GitHub のトークンが無い。GH_TOKEN を設定するか gh auth login する"; exit 1; }
 
@@ -61,7 +63,7 @@ rest() { # <API パス (クエリ可)> <jq フィルタ>: 全ページを取り�
   local page=1 body sep='?'
   case $1 in *'?'*) sep='&' ;; esac
   while :; do
-    body=$(req GET "https://api.github.com/$1${sep}per_page=100&page=$page") || return
+    body=$(req GET "$api/$1${sep}per_page=100&page=$page") || return
     jq -r "$2" <<<"$body" || return 1
     [ "$(jq 'if type == "array" then length else (.check_runs // .statuses | length) end' <<<"$body")" -eq 100 ] || return 0
     page=$((page + 1))
@@ -71,7 +73,7 @@ gql() { # <PR の接続のフィールド (after: $cursor を取る)> <接続の
   local cursor=null body conn
   local q="query(\$owner:String!,\$name:String!,\$pr:Int!,\$cursor:String){repository(owner:\$owner,name:\$name){pullRequest(number:\$pr){$1}}}"
   while :; do
-    body=$(req POST https://api.github.com/graphql "$(jq -n --arg q "$q" --arg o "${repo%/*}" --arg n "${repo#*/}" --argjson p "$pr" --argjson c "$cursor" '{query: $q, variables: {owner: $o, name: $n, pr: $p, cursor: $c}}')") || return
+    body=$(req POST "$api/graphql" "$(jq -n --arg q "$q" --arg o "${repo%/*}" --arg n "${repo#*/}" --argjson p "$pr" --argjson c "$cursor" '{query: $q, variables: {owner: $o, name: $n, pr: $p, cursor: $c}}')") || return
     conn=$(jq '.data.repository.pullRequest | to_entries[0].value' <<<"$body") || return 1
     jq -r ".nodes[] | $2" <<<"$conn" || return 1
     [ "$(jq -r .pageInfo.hasNextPage <<<"$conn")" = true ] || return 0
@@ -88,14 +90,14 @@ if [ "$cmd" = reply-resolve ]; then
     "select(.comments.nodes[0].databaseId == $id) | .id") || fail $?
   [ -n "$thread" ] || { echo "pr.sh: レビューコメント $id を先頭に持つスレッドが無い" >&2; exit 1; }
   # 返信の後の resolve が失敗してやり直しても返信を重ねないように、スレッドに自分の同じ本文の返信があれば返信しない (間に他の返信があっても見つける)
-  me=$(req POST https://api.github.com/graphql '{"query":"{viewer{login}}"}' | jq -r .data.viewer.login) || fail $?
+  me=$(req POST "$api/graphql" '{"query":"{viewer{login}}"}' | jq -r .data.viewer.login) || fail $?
   if [ -z "$me" ] || [ "$me" = null ]; then echo "error トークンの持ち主 (GraphQL の viewer) が分からないので、返信の重複を判定できない"; exit 3; fi
   posted=$(rest "repos/$repo/pulls/$pr/comments" \
     ".[] | select(.in_reply_to_id == $id and .user.login == $(jq -n --arg m "$me" '$m') and .body == $(jq -n --arg t "$text" '$t')) | .id") || fail $?
   if [ -z "$posted" ]; then
-    req POST "https://api.github.com/repos/$repo/pulls/$pr/comments/$id/replies" "$(jq -n --arg b "$text" '{body: $b}')" > /dev/null || fail $?
+    req POST "$api/repos/$repo/pulls/$pr/comments/$id/replies" "$(jq -n --arg b "$text" '{body: $b}')" > /dev/null || fail $?
   fi
-  res=$(req POST https://api.github.com/graphql "$(jq -n --arg t "$thread" '{query: "mutation($t:ID!){resolveReviewThread(input:{threadId:$t}){thread{isResolved}}}", variables: {t: $t}}')") || fail $?
+  res=$(req POST "$api/graphql" "$(jq -n --arg t "$thread" '{query: "mutation($t:ID!){resolveReviewThread(input:{threadId:$t}){thread{isResolved}}}", variables: {t: $t}}')") || fail $?
   jq -e '.data.resolveReviewThread.thread.isResolved' <<<"$res" > /dev/null || { echo "pr.sh: resolve できない: $res" >&2; exit 1; }
   exit 0
 fi
@@ -108,7 +110,7 @@ state=$dir/state
 mkdir -p "$dir" || exit
 poll() { # 現状を「キー<TAB>版<TAB>イベント文」の行で出し、説明を $dir/body.new に置く。イベント文が空の行は版だけを追う
   local pr_json sha roots
-  pr_json=$(req GET "https://api.github.com/repos/$repo/pulls/$pr") || return
+  pr_json=$(req GET "$api/repos/$repo/pulls/$pr") || return
   jq -r .body <<<"$pr_json" > "$dir/body.new" || return 1
   jq -r '"pr\t\(.state)\tpr \(.state) merged=\(.merged) \(.html_url)", "title\t\(.title | gsub("\t"; " "))\ttitle \(.title | gsub("\t"; " "))"' <<<"$pr_json" || return 1
   sha=$(jq -r .head.sha <<<"$pr_json") || return 1
@@ -155,7 +157,7 @@ while :; do
     events=$(diff_events "$cur")
     if [ -n "$events" ]; then
       # レビューコメントと Codex の summary の編集は続けて来るので、窓を置いてまとめる
-      sleep 10
+      sleep $((interval < 10 ? interval : 10))
       # 取り直しが失敗したら、この周期は確定しない (body.new だけが次の版に進んでいる)
       if next=$(poll); then cur=$next events=$(diff_events "$cur"); else rc=$?; fi
     fi
