@@ -4,7 +4,7 @@
 # 使い方:
 #   pr.sh watch <owner>/<repo> <PR 番号> <状態のディレクトリ> [<間隔の秒数 (1〜900 の整数、既定 60)>]
 #     対応が要るものを見つけたら出して終わる (Bash ツールの run_in_background で回す)。同じ <状態のディレクトリ> で二重に起動しない (ロックしないので状態の読み書きが競合する)。
-#     初回 (状態が無い): 以後の周期で出す対象 (コメント・COMMENTED 以外の review と本文のある COMMENTED の review・unresolved のレビューコメント・head の CI の失敗・閉じた PR・Completed の Codex の summary) が既にあれば、open で出して終わる。無ければ基準にして待つ。
+#     初回 (状態が無い): 以後の周期で出す対象 (コメント・本文のある COMMENTED の review・レビュアーごとに最後に提出した COMMENTED 以外の review が CHANGES_REQUESTED のもの・unresolved のレビューコメント・head の CI の失敗・閉じた PR・Completed の Codex の summary) が既にあれば、open で出して終わる。無ければ基準にして待つ。
 #     以後: 前回との差 (コメント・review の追加と編集、タイトル、説明、CI の失敗、PR の close) を見つけたら、10 秒待って取り直し、まとめて出して終わる。
 #     出さないもの: resolve 済みのスレッドのレビューコメント、本文の無い COMMENTED の review (返信で作られる)、Codex の summary コメントの、今の head の Completed 以外への編集。
 #   pr.sh reply-resolve <owner>/<repo> <PR 番号> <スレッド先頭のレビューコメントの id (整数)> <本文>
@@ -123,8 +123,15 @@ poll() { # 現状を「キー<TAB>版<TAB>イベント文」の行で出し、�
   roots=$(gql 'reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor} nodes{isResolved comments(first:1){nodes{databaseId}}}}' \
     'select(.isResolved | not) | .comments.nodes[0].databaseId') || return
   rest "repos/$repo/pulls/$pr/comments" "[${roots//$'\n'/,}] as \$roots | .[] | select((.in_reply_to_id // .id) as \$r | \$roots | any(. == \$r)) | \"rc:\\(.id)\\t\\(.updated_at)\\treview-comment \\(.user.login) \\(.html_url)\"" || return
-  gql 'reviews(first:100,after:$cursor){pageInfo{hasNextPage endCursor} nodes{databaseId state body updatedAt url author{login}}}' \
-    'select(.state != "COMMENTED" or .body != "") | "rv:\(.databaseId)\t\(.state) \(.updatedAt)\treview \(.state) \(.author.login) \(.url)"' || return
+  # 本文のある COMMENTED の review と、レビュアーごとに最後に提出した (submittedAt が最大の) COMMENTED 以外の review が CHANGES_REQUESTED ならそれを出す。
+  # APPROVED と上書きされた review は出さない。PENDING は提出前の下書きなので、最後の判定に入れない
+  gql 'reviews(first:100,after:$cursor){pageInfo{hasNextPage endCursor} nodes{databaseId state body submittedAt updatedAt url author{login}}}' \
+    '"\(.state)\t\(.author.login)\t\(.body != "")\t\(.submittedAt)\trv:\(.databaseId)\t\(.state) \(.updatedAt)\treview \(.state) \(.author.login) \(.url)"' |
+    awk -F'\t' -v OFS='\t' '
+      $1 == "COMMENTED" { if ($3 == "true") print $5, $6, $7; next }
+      $1 == "PENDING" { next }
+      !($2 in at) || $4 > at[$2] { at[$2] = $4; last[$2] = $5 OFS $6 OFS $7; state[$2] = $1 }
+      END { for (a in last) if (state[a] == "CHANGES_REQUESTED") print last[a] }' || return
   rest "repos/$repo/commits/$sha/check-runs?filter=all" '.check_runs[] | select(.conclusion | IN("failure", "timed_out", "cancelled", "action_required", "startup_failure")) | "cr:\(.id)\t\(.conclusion)\tci-failure \(.name) \(.conclusion) \(.html_url)"' || return
   rest "repos/$repo/commits/$sha/status" '.statuses[] | select(.state == "failure" or .state == "error") | "st:\(.id)\t\(.state)\tci-failure \(.context) \(.state) \(.target_url)"' || return
 }
