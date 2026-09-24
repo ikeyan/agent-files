@@ -2,15 +2,15 @@
 # gh.md の「PR の watch」と「返信と resolve」を GitHub の REST・GraphQL で行う。gh は sandbox 内で TLS に失敗するので、curl で呼ぶ。
 #
 # 使い方:
-#   pr.sh watch <owner>/<repo> <PR 番号> <状態のディレクトリ> [<間隔の秒数>]
-#     対応が要るものを見つけたら出して終わる (Bash ツールの run_in_background で回す)。
+#   pr.sh watch <owner>/<repo> <PR 番号> <状態のディレクトリ> [<間隔の秒数 (1〜900 の整数、既定 60)>]
+#     対応が要るものを見つけたら出して終わる (Bash ツールの run_in_background で回す)。同じ <状態のディレクトリ> で二重に起動しない (ロックしないので状態の読み書きが競合する)。
 #     初回 (状態が無い): 以後の周期で出す対象 (コメント・COMMENTED 以外の review と本文のある COMMENTED の review・unresolved のレビューコメント・head の CI の失敗・閉じた PR・Completed の Codex の summary) が既にあれば、open で出して終わる。無ければ基準にして待つ。
 #     以後: 前回との差 (コメント・review の追加と編集、タイトル、説明、CI の失敗、PR の close) を見つけたら、10 秒待って取り直し、まとめて出して終わる。
 #     出さないもの: resolve 済みのスレッドのレビューコメント、本文の無い COMMENTED の review (返信で作られる)、Codex の summary コメントの、今の head の Completed 以外への編集。
-#   pr.sh reply-resolve <owner>/<repo> <PR 番号> <スレッド先頭のレビューコメントの id> <本文>
+#   pr.sh reply-resolve <owner>/<repo> <PR 番号> <スレッド先頭のレビューコメントの id (整数)> <本文>
 #     スレッドに返信し、そのスレッドを resolve する。
 # 出力 (watch、1 行 1 件): open・new・changed に続けてイベント文。説明の変更は "description changed" の行に unified diff が続く。
-#   auth で始まる行を出して終わったら、トークンが無いか無効 (401)。error で始まる行なら、PR 番号・リポジトリ・権限・問い合わせの誤り (401 以外の 4xx と、レート制限でない GraphQL の errors)。
+#   auth で始まる行を出して終わったら、トークンが無いか無効 (401)。error で始まる行なら、PR 番号・リポジトリ・権限・問い合わせの誤り (3xx、401 以外の 4xx、レート制限でない GraphQL の errors)。3xx はリポジトリの改名・移動で、新しい名前で起動し直す。
 # 失敗: 一時的な API の失敗 (ネットワーク・5xx・レート制限の 403・429) は、watch では出さずに間隔を倍にして (上限 900 秒) 再試行し、reply-resolve では止まる。
 #   reply-resolve は、止まった後にそのままやり直してよい (スレッドの最後のコメントが自分の同じ本文なら返信を重ねない)。
 # 事前条件: curl と jq。トークンは GH_TOKEN か gh auth token。
@@ -20,10 +20,12 @@ set -uo pipefail
 
 [ $# -ge 4 ] || { echo "usage: pr.sh watch <owner>/<repo> <n> <dir> [<interval>] | reply-resolve <owner>/<repo> <n> <comment-id> <body>" >&2; exit 2; }
 cmd=$1 repo=$2 pr=$3
+# 無いと一時的な失敗と区別できずに再試行し続けるので、先に確かめる
+if ! command -v curl > /dev/null || ! command -v jq > /dev/null; then echo "pr.sh: curl と jq が要る" >&2; exit 2; fi
 token=${GH_TOKEN:-$(gh auth token)}
 [ -n "$token" ] || { echo "auth GitHub のトークンが無い。GH_TOKEN を設定するか gh auth login する"; exit 1; }
 
-req() { # <メソッド> <URL> [<JSON の本文>]: 応答の本文を出す。失敗は、一時的 (ネットワーク・5xx・レート制限。GraphQL の 200 の errors がレート制限を示すものを含む) なら 1、401 なら 2、それ以外の 4xx とレート制限でない GraphQL の errors なら error の行を出して 3 を返す
+req() { # <メソッド> <URL> [<JSON の本文>]: 応答の本文を出す。失敗は、一時的 (ネットワーク・5xx・レート制限。GraphQL の 200 の errors がレート制限を示すものを含む) なら 1、401 なら 2、3xx (リダイレクト。リポジトリの改名・移動) とそれ以外の 4xx とレート制限でない GraphQL の errors なら error の行を出して 3 を返す
   local res tail code remaining retry limited body data=()
   [ $# -lt 3 ] || data=(--data "$3")
   res=$(printf 'Authorization: Bearer %s\n' "$token" | curl -sS --max-time 30 -X "$1" -H @- -H "Accept: application/vnd.github+json" "${data[@]}" \
@@ -41,7 +43,7 @@ req() { # <メソッド> <URL> [<JSON の本文>]: 応答の本文を出す。�
     401) return 2 ;;
     429) return 1 ;;
     403) [ -z "$limited" ] || return 1 ;;
-    4??) ;;
+    3?? | 4??) ;;
     *) return 1 ;;
   esac
   echo "error HTTP $code $1 $2: $body" >&2
@@ -79,6 +81,8 @@ gql() { # <PR の接続のフィールド (after: $cursor を取る)> <接続の
 if [ "$cmd" = reply-resolve ]; then
   [ $# -eq 5 ] || { echo "usage: pr.sh reply-resolve <owner>/<repo> <n> <comment-id> <body>" >&2; exit 2; }
   id=$4 text=$5
+  # jq のフィルタに埋め込むので、整数に限る
+  [[ $id =~ ^[0-9]+$ ]] || { echo "pr.sh: コメントの id は整数: $id" >&2; exit 2; }
   # 返信の後の resolve が失敗してやり直しても返信を重ねないように、スレッドの最後のコメントが自分の同じ本文なら返信しない
   me=$(req POST https://api.github.com/graphql '{"query":"{viewer{login}}"}' | jq -r .data.viewer.login) || fail $?
   if [ -z "$me" ] || [ "$me" = null ]; then echo "error トークンの持ち主 (GraphQL の viewer) が分からないので、返信の重複を判定できない"; exit 3; fi
@@ -96,6 +100,8 @@ fi
 [ "$cmd" = watch ] || { echo "pr.sh: 知らないサブコマンド: $cmd" >&2; exit 2; }
 
 dir=$4 interval=${5:-60}
+# バックオフで倍にする (上限 900) ので、整数の算術があふれない 1〜900 に限る
+if ! [[ $interval =~ ^[1-9][0-9]{0,2}$ ]] || [ "$interval" -gt 900 ]; then echo "pr.sh: 間隔は 1〜900 の整数の秒数: $interval" >&2; exit 2; fi
 state=$dir/state
 mkdir -p "$dir" || exit
 poll() { # 現状を「キー<TAB>版<TAB>イベント文」の行で出し、説明を $dir/body.new に置く。イベント文が空の行は版だけを追う
