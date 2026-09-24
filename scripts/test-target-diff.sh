@@ -113,10 +113,7 @@ git checkout -q -b prbase origin/main && commit b1.txt && git push -q origin prb
 git checkout -q prhead && git merge -q -m M2 prbase && commit p2.txt && git push -q origin prhead:refs/pull/1/head
 mkdir "$tmp/bin" && cat > "$tmp/bin/gh" <<EOF && chmod +x "$tmp/bin/gh"
 #!/bin/sh
-case "\$*" in
-  *body*) printf 'pull request: T\n\nPR-BODY\n' ;;
-  *) printf 'prhead\t%s\t%s\n' $(git rev-parse prhead) $(git rev-parse prbase) ;;
-esac
+printf 'prhead\t%s\t%s\npull request: T\n\nPR-BODY\n' $(git rev-parse prhead) $(git rev-parse prbase)
 EOF
 PATH=$tmp/bin:$PATH run . 1 && expect "base を取り込んだ PR" "p1.txt p2.txt" "M2 p1.txt p2.txt"
 grep -q '^PR-BODY$' "$diff" || { echo "PR 番号: PR の説明が target.diff に無い" >&2; status=1; }

@@ -64,7 +64,10 @@ if [ -z "$target" ]; then
   name=$(git symbolic-ref --short -q HEAD) || name=$(git rev-parse --short HEAD)
 elif [[ $target =~ ^[0-9]+$ ]]; then
   origin_url=$(git remote get-url origin)
-  IFS=$'\t' read -r name rev base_oid < <(gh pr view "$target" -R "$origin_url" --json headRefName,headRefOid,baseRefOid --jq '[.headRefName, .headRefOid, .baseRefOid] | @tsv')
+  # タイトルと説明も同じ問い合わせで取る (別に取ると、間の push で head と食い違う)
+  info=$(gh pr view "$target" -R "$origin_url" --json headRefName,headRefOid,baseRefOid,title,body --jq '([.headRefName, .headRefOid, .baseRefOid] | @tsv), "pull request: \(.title)\n\n\(.body)"')
+  IFS=$'\t' read -r name rev base_oid <<<"${info%%$'\n'*}"
+  pr_header=${info#*$'\n'}
   git fetch -q --no-write-fetch-head origin "refs/pull/$target/head"
   pr_base=$(git merge-base "$base_oid" "$rev") || { echo "target-diff.sh: PR の base の commit $base_oid と head の merge-base が取れない" >&2; exit 1; }
 # origin/HEAD は既定ブランチを指す symref なので、HEAD を origin のブランチとして引かない (ブランチ名に HEAD は使えない)
@@ -111,7 +114,7 @@ git add -A --no-warn-embedded-repo
 git diff-index -p -M --cached "$base" -- "${paths[@]+"${paths[@]}"}" > "$run/patch.diff"
 [ -s "$run/patch.diff" ] || { echo "target-diff.sh: レビュー対象が空" >&2; exit 1; }
 {
-  if [ -n "$pr_base" ]; then gh pr view "$target" -R "$origin_url" --json title,body --jq '"pull request: \(.title)\n\n\(.body)\n"'; fi
+  if [ -n "$pr_base" ]; then printf '%s\n\n' "$pr_header"; fi
   if [ -n "$head" ]; then git log --no-show-signature --reverse --format='commit %h%n%n%B' "$base..HEAD" -- "${paths[@]+"${paths[@]}"}"; fi
   cat "$run/patch.diff"
 } > "$run/target.diff"

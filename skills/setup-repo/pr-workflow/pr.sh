@@ -151,9 +151,11 @@ while :; do
     delay=$((delay * 2 > 900 ? 900 : delay * 2))
   else
     delay=$interval
+    # 出せたときだけ記録する (記録の前に止まれば、次の起動で同じものをもう一度出す)
+    if [ -n "$events" ]; then printf '%s\n' "$events" || exit 1; fi
     printf '%s\n' "$cur" > "$state"
     mv "$dir/body.new" "$dir/body"
-    [ -z "$events" ] || { printf '%s\n' "$events"; exit 0; }
+    [ -z "$events" ] || exit 0
   fi
   sleep "$delay"
 done
