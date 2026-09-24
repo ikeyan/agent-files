@@ -4,7 +4,7 @@
 # 使い方:
 #   pr.sh watch <owner>/<repo> <PR 番号> <状態のディレクトリ> [<間隔の秒数>]
 #     対応が要るものを見つけたら出して終わる (Bash ツールの run_in_background で回す)。
-#     初回 (状態が無い): 未対応 (unresolved のレビューコメント・head の CI の失敗・閉じた PR) があれば出して終わる。無ければ基準にして待つ。
+#     初回 (状態が無い): 以後の周期で出す対象 (コメント・COMMENTED 以外の review と本文のある COMMENTED の review・unresolved のレビューコメント・head の CI の失敗・閉じた PR・Completed の Codex の summary) が既にあれば、open で出して終わる。無ければ基準にして待つ。
 #     以後: 前回との差 (コメント・review の追加と編集、タイトル、説明、CI の失敗、PR の close) を見つけたら、10 秒待って取り直し、まとめて出して終わる。
 #     出さないもの: resolve 済みのスレッドのレビューコメント、本文の無い COMMENTED の review (返信で作られる)、Codex の summary コメントの Completed 以外への編集。
 #   pr.sh reply-resolve <owner>/<repo> <PR 番号> <スレッド先頭のレビューコメントの id> <本文>
@@ -128,7 +128,8 @@ delay=$interval
 while :; do
   cur=$(poll) && rc=0 || rc=$?
   if [ "$rc" = 0 ] && [ ! -f "$state" ]; then
-    events=$(printf '%s\n' "$cur" | awk -F'\t' '$1 ~ /^(rc|cr|st):/ { print "open " $3 }'; closed_line "$cur")
+    # 以後の周期で出す対象は、起動の前からあるものも出す (基準に黙って入れると二度と出ない)。タイトルと説明は変化だけが対象
+    events=$(printf '%s\n' "$cur" | awk -F'\t' '$3 != "" && $1 != "pr" && $1 != "title" { print "open " $3 }'; closed_line "$cur")
   elif [ "$rc" = 0 ]; then
     events=$(diff_events "$cur")
     if [ -n "$events" ]; then
