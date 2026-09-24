@@ -166,32 +166,17 @@ fails "打ち消し合うコミット" clone cancel
 git clone -q --bare src badhead.git && git -C badhead.git symbolic-ref HEAD refs/heads/gone && git clone -q -b main badhead.git badhead
 fails "origin の HEAD が無い" badhead
 
-# サブディレクトリから相対パスを指定する (対象の有無で基点が変わらない)
+# path はリポジトリのルートからの相対で、cwd と対象の有無によらない。絶対パスと、ルートの外に出る .. と空文字列は止まる
 git -C clone checkout -q -b subch origin/main && echo s > clone/sub/s.txt && git -C clone add sub/s.txt && git -C clone commit -qm "sub/s.txt"
-run clone/sub subch -- s.txt && expect "サブディレクトリからの path (対象あり)" "sub/s.txt" "sub/s.txt"
-run clone/sub -- u.txt && expect "サブディレクトリからの path (対象なし)" "sub/u.txt" ""
-run clone/sub subch -- "$tmp/clone/sub/s.txt" && expect "絶対パスの path (対象あり)" "sub/s.txt" "sub/s.txt"
-run clone/sub -- "$tmp/clone/sub/u.txt" && expect "絶対パスの path (対象なし)" "sub/u.txt" ""
-run clone/sub subch -- "$tmp/clone" && expect "絶対パスの path (リポのルート)" "sub/s.txt" "sub/s.txt"
-run clone/sub subch -- "$tmp/clone/" && expect "絶対パスの path (リポのルート、末尾 /)" "sub/s.txt" "sub/s.txt"
-run clone/sub subch -- "/$tmp/clone//sub/s.txt" && expect "絶対パスの path (重なった区切り)" "sub/s.txt" "sub/s.txt"
-run clone/sub subch -- "$tmp/clone//" && expect "絶対パスの path (リポのルート、重なった区切り)" "sub/s.txt" "sub/s.txt"
+run clone/sub subch -- sub/s.txt && expect "サブディレクトリからの path (対象あり)" "sub/s.txt" "sub/s.txt"
+run clone/sub -- sub/u.txt && expect "サブディレクトリからの path (対象なし)" "sub/u.txt" ""
+run clone subch -- sub/../sub/s.txt && expect "ルートの中に戻る .." "sub/s.txt" "sub/s.txt"
 before=$(find "$tmp" -maxdepth 1 -name 'review-perspectives.*' | wc -l)
-fails "リポジトリの外の path" clone -- "$tmp/src/a.txt"
-[ "$(find "$tmp" -maxdepth 1 -name 'review-perspectives.*' | wc -l)" = "$before" ] || { echo "リポジトリの外の path: run が残る" >&2; status=1; }
-run clone/sub subch -- "$tmp/clone/../clone/sub/s.txt" && expect "ルートより上を通る .." "sub/s.txt" "sub/s.txt"
-ln -s clone link
-run link/sub subch -- "$tmp/link/sub/s.txt" && expect "シンボリックリンク経由の絶対パス" "sub/s.txt" "sub/s.txt"
-run link/sub subch -- "$tmp/link" && expect "シンボリックリンク経由のルート" "sub/s.txt" "sub/s.txt"
-ln -s clone/sub linksub
-run linksub subch -- "$tmp/linksub/s.txt" && expect "サブディレクトリへのシンボリックリンク経由の絶対パス" "sub/s.txt" "sub/s.txt"
-run linksub subch -- "$tmp/linksub" && expect "サブディレクトリへのシンボリックリンク自身" "sub/s.txt" "sub/s.txt"
-mkdir links && ln -s "$tmp/clone/sub" links/sub && echo o > clone/outside.txt
-fails "物理パスの prefix と同じ名前のリンクから、リポジトリの外の絶対パス" links/sub -- "$tmp/links/outside.txt"
-rm clone/outside.txt
+fails "絶対パスの path" clone -- "$tmp/clone/a.txt"
+fails "ルートの外に出る .." clone -- ../src/a.txt
+fails "空文字列の path" clone -- ""
+[ "$(find "$tmp" -maxdepth 1 -name 'review-perspectives.*' | wc -l)" = "$before" ] || { echo "止まる path: run が残る" >&2; status=1; }
 run clone -- linkdir && expect "リポジトリの中のディレクトリへのリンク" "linkdir" ""
-ln -s "$tmp/clone/a.txt" filelink
-fails "リポジトリの外に置いた、中のファイルへのリンク" clone -- "$tmp/filelink"
 
 # revision の式に .. が入っても作業ディレクトリは .git/ の下
 git -C clone commit -q --allow-empty -m "aa/bb/cc/escape"
