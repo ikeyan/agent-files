@@ -29,7 +29,7 @@ if (!Number.isInteger(numRuns) || numRuns < 1) {
   Deno.exit(2);
 }
 const seedEnv = Deno.env.get("FC_SEED");
-if (seedEnv !== undefined && !Number.isInteger(Number(seedEnv))) {
+if (seedEnv !== undefined && !/^-?\d+$/.test(seedEnv)) {
   console.error(`test-target-diff.ts: FC_SEED は整数: ${seedEnv}`);
   Deno.exit(2);
 }

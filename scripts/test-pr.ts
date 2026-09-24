@@ -35,7 +35,7 @@ if (!Number.isInteger(numRuns) || numRuns < 1) {
   Deno.exit(2);
 }
 const seedEnv = Deno.env.get("FC_SEED");
-if (seedEnv !== undefined && !Number.isInteger(Number(seedEnv))) {
+if (seedEnv !== undefined && !/^-?\d+$/.test(seedEnv)) {
   console.error(`test-pr.ts: FC_SEED は整数: ${seedEnv}`);
   Deno.exit(2);
 }
@@ -233,8 +233,9 @@ function expectDelta(w0: World, w1: World): string[] {
   const r0 = revisions(w0), r1 = revisions(w1);
   const lines: string[] = [];
   for (const [k, t] of targets(w1)) {
-    if (!r0.has(k)) lines.push(`new ${t}`);
-    else if (r0.get(k) !== r1.get(k)) lines.push(`changed ${t}`);
+    const before = r0.get(k);
+    if (before === undefined) lines.push(`new ${t}`);
+    else if (before !== r1.get(k)) lines.push(`changed ${t}`);
   }
   if (w0.pr.title !== w1.pr.title) lines.push(`changed title ${w1.pr.title}`);
   if (w1.pr.state === "closed") lines.push(closedLine(w1));
@@ -962,10 +963,31 @@ const p3 = fc.asyncProperty(
   },
 );
 
+// ---- 固定の検査 ----
+
+/** GITHUB_API_URL が https?://<host> の形でなければ、恒久的な失敗として exit 2 で止まることを確かめる。生成器は GITHUB_API_URL を変えないので、ここで固定して確かめる */
+async function checkInvalidApiUrl() {
+  const cmd = new Deno.Command("bash", {
+    args: [script, "reply-resolve", REPO, String(PR), "1", "x"],
+    env: { GH_TOKEN: "test", GITHUB_API_URL: "not-a-url" },
+    stdout: "piped",
+    stderr: "piped",
+  });
+  const { code, stdout, stderr } = await cmd.output();
+  const want = "pr.sh: GITHUB_API_URL は https://<host> か http://<host>[:port] (末尾の / 無し): not-a-url";
+  const err = new TextDecoder().decode(stderr);
+  if (code !== 2 || !err.includes(want)) {
+    throw new Error(
+      `GITHUB_API_URL の検査: exit 2 と "${want}" のはず (exit ${code})\nstdout:\n${new TextDecoder().decode(stdout)}\nstderr:\n${err}`,
+    );
+  }
+}
+
 // ---- 入口 ----
 
 const tmpRoot = await Deno.makeTempDir({ prefix: "pr-pbt." });
 try {
+  await checkInvalidApiUrl();
   // 1 件に数秒かかるので、縮小せずに最初の反例で止める (FC_SEED と表示される path で再現する)
   const params = { numRuns, ...(seedEnv ? { seed: Number(seedEnv) } : {}), endOnFailure: true, verbose: fc.VerbosityLevel.Verbose };
   await fc.assert(p1, params);

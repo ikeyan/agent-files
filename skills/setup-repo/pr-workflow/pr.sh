@@ -4,13 +4,20 @@
 # 使い方:
 #   pr.sh watch <owner>/<repo> <PR 番号> <状態のディレクトリ> [<間隔の秒数 (1〜900 の整数、既定 60)>]
 #     対応が要るものを見つけたら出して終わる (Bash ツールの run_in_background で回す)。同じ <状態のディレクトリ> で二重に起動しない (ロックしないので状態の読み書きが競合する)。
-#     初回 (状態が無い): 以後の周期で出す対象 (コメント・本文のある COMMENTED の review・レビュアーごとに最後に提出した COMMENTED 以外の review が CHANGES_REQUESTED のもの・unresolved のレビューコメント・head の CI の失敗 (再実行や同じ context の後の status で置き換えられたものを含む)・閉じた PR・Completed の Codex の summary) が既にあれば、open で出して終わる。無ければ基準にして待つ。
+#     初回 (状態が無い): 以後の周期で出す対象が既にあれば、open で出して終わる。無ければ基準にして待つ。出す対象:
+#       - コメント
+#       - 本文のある COMMENTED の review
+#       - レビュアーごとに最後に提出した COMMENTED 以外の review が CHANGES_REQUESTED のもの
+#       - unresolved のレビューコメント
+#       - head の CI の失敗 (再実行や同じ context の後の status で置き換えられたものを含む)
+#       - 閉じた PR
+#       - Completed の Codex の summary
 #     以後: 前回との差 (コメント・review の追加と編集、タイトル、説明、CI の失敗、PR の close) を見つけたら、間隔と 10 秒の短いほうだけ待って取り直し、まとめて出して終わる。
 #     出さないもの: resolve 済みのスレッドのレビューコメント、本文の無い COMMENTED の review (返信で作られる)、Codex の summary コメントの、今の head の Completed 以外への編集、Codex のレビューの利用上限のコメント (回復すると最新の head を自分でレビューする。canon: facts/codex-github/usage-limit-auto-resume)。
 #     自分 (トークンの持ち主) の通常のコメントは出す (エージェントの返信とユーザー自身の指示を見分けられない)。
 #   pr.sh reply-resolve <owner>/<repo> <PR 番号> <スレッド先頭のレビューコメントの id (整数)> <本文>
 #     スレッドに返信し、そのスレッドを resolve する。
-#   環境変数 GITHUB_API_URL: API の基点 (既定 https://api.github.com)。REST と GraphQL (<基点>/graphql) が同じ基点の下にある api.github.com の配置だけを扱い、GHES (REST は /api/v3、GraphQL は /api/graphql) は対象外。
+#   環境変数 GITHUB_API_URL: API の基点 (既定 https://api.github.com)。`https://<host>` か `http://<host>[:port]` (末尾の / 無し) の形に限り、それ以外は exit 2 で止まる。REST と GraphQL (<基点>/graphql) が同じ基点の下にある api.github.com の配置だけを扱い、GHES (REST は /api/v3、GraphQL は /api/graphql) は対象外。
 # 出力 (watch、1 行 1 件): open・new・changed に続けてイベント文。説明の変更は "description changed" の行に unified diff が続く。
 #   auth で始まる行を出して終わったら、トークンが無いか無効 (401)。error で始まる行なら、PR 番号・リポジトリ・権限・問い合わせの誤り (3xx、401 以外の 4xx、レート制限でない GraphQL の errors)。3xx はリポジトリの改名・移動で、新しい名前で起動し直す。
 # 失敗: 一時的な API の失敗 (ネットワーク・5xx・レート制限の 403・429) は、watch では出さずに間隔を倍にして (上限 900 秒) 再試行し、reply-resolve では止まる。
@@ -25,6 +32,7 @@ cmd=$1 repo=$2 pr=$3
 # 無いと一時的な失敗と区別できずに再試行し続けるので、先に確かめる
 if ! command -v curl > /dev/null || ! command -v jq > /dev/null; then echo "pr.sh: curl と jq が要る" >&2; exit 2; fi
 api=${GITHUB_API_URL:-https://api.github.com}
+[[ $api =~ ^https?://[^/]+$ ]] || { echo "pr.sh: GITHUB_API_URL は https://<host> か http://<host>[:port] (末尾の / 無し): $api" >&2; exit 2; }
 token=${GH_TOKEN:-$(gh auth token)}
 [ -n "$token" ] || { echo "auth GitHub のトークンが無い。GH_TOKEN を設定するか gh auth login する"; exit 1; }
 

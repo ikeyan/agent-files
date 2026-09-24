@@ -5,7 +5,9 @@
 #   <対象> 無し: 今のチェックアウト (既定ブランチとの分岐点から先のコミット、未コミットの変更、未追跡のファイル)
 #   <対象> が数字だけ: PR 番号 (gh で head ブランチと base の commit を引く。分岐点は base の commit と head の merge-base。GitHub は base の commit をマージの時点で止めるので、マージ済みでも全コミットが対象で、head に取り込んだ base のコミットは対象外)
 #   <対象> がそれ以外: 手元のブランチ、origin のブランチ、revision の順に解決する。既定ブランチの first-parent の線上にある revision は、その 1 コミットだけが対象 (fast-forward や rebase でマージ済みのブランチの分岐点は履歴に残らない。全コミットは PR 番号で指定する)
-#   <path>: log と diff をそのパスに限る。リポジトリのルートからの相対パスで (cwd によらない)、glob も pathspec magic も無いそのままのパス名。絶対パスは止まる (対象を指定すると別の worktree に切り替えるので、チェックアウトの絶対パスは対象によって通ったり外になったりする)。`..` でルートの外に出るものと空文字列は git が止める
+#   <path>: log と diff をそのパスに限る。リポジトリのルートからの相対パスで (cwd によらない)、glob も pathspec magic も無いそのままのパス名。
+#     - 絶対パスは止まる (対象を指定すると別の worktree に切り替えるので、チェックアウトの絶対パスは対象によって通ったり外になったりする)
+#     - `..` でルートの外に出るものと空文字列は git が止める
 # 出力 (stdout、1 行 1 つ): work=<レビュー対象ごとの作業ディレクトリ> run=<この実行の生成物のディレクトリ ($TMPDIR の下。消えて困るものは置かない)> repo=<レビュアーに渡すリポジトリのルート> diff=<target.diff (PR 番号なら PR のタイトルと説明、各コミットのメッセージ、patch の順)> tree=<レビュー対象の内容全体 (未追跡を含む) の tree id> rules=<レビューの規則 (SKILL.md・観点・リポ固有の検索対象) の hash>
 # 事前条件: origin があり、その HEAD が既定ブランチを指している。
 # 事後条件: 対象を指定したら repo は run の下の linked worktree。レビュー後に git worktree remove <repo> してから rm -r <run> で消す。失敗して終わるときは自分で消す。同じ対象を並行して回しても run は別で、work の exclusions.md と origin の remote-tracking ref だけを共有する。
