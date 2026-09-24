@@ -1,10 +1,7 @@
 /**
  * test-target-diff.ts — skills/review-perspectives/target-diff.sh の model based test。verify.sh から呼ぶ。
  *
- * 履歴の操作列と環境の形を生成し、履歴のモデルから「対象のコミット集合」と「対象のファイル集合」を計算して、
- * スクリプトが書き出した target.diff と照合する。生成する次元は canon の `facts/git/repository-shapes` の目録の行で、
- * 目録の行を足したらここの生成器にも次元を足す。scripts/test-target-diff.sh は、生成に向かない形 (unborn HEAD、
- * 打ち消し合うコミット、origin の HEAD 無し、消した path) を例で固定する。
+ * 履歴の操作列と環境の形を生成し、履歴のモデルから「対象のコミット集合」と「対象のファイル集合」を計算して、スクリプトが書き出した target.diff と照合する。生成する次元は canon の `facts/git/repository-shapes` の目録の行で、目録の行を足したらここの生成器にも次元を足す。scripts/test-target-diff.sh は、生成に向かない形 (unborn HEAD、打ち消し合うコミット、origin の HEAD 無し、消した path) を例で固定する。
  *
  * モデル (スクリプトの先頭の仕様を集合で書いたもの):
  * - 各コミットは 1 つのファイルを足す (merge commit は足さない)。commit c の内容 = c の祖先 (c を含む) のファイル。

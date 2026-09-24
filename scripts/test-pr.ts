@@ -1,27 +1,24 @@
 /**
  * test-pr.ts — skills/setup-repo/pr-workflow/pr.sh の model based test。verify.sh から呼ぶ。
  *
- * PR の状態と操作列を生成し、pr.sh が呼ぶ経路だけを持つ fake の GitHub (127.0.0.1 の空きポート) に載せて pr.sh を回し、
- * モデルから計算した出力と照合する。fake の返り方は canon の facts/github/rest-rate-limit-responses、
- * facts/github/pr-comments-retrieval-and-resolved-state、facts/github/check-runs-filter-latest-hides-reruns と、
- * 合成した commit status (commits/{sha}/status) が context ごとに最新の 1 件だけを返すことに合わせる。
+ * PR の状態と操作列を生成し、pr.sh が呼ぶ経路だけを持つ fake の GitHub (127.0.0.1 の空きポート) に載せて pr.sh を回し、モデルから計算した出力と照合する。fake の返り方は canon の facts/github/rest-rate-limit-responses、facts/github/pr-comments-retrieval-and-resolved-state、facts/github/check-runs-filter-latest-hides-reruns に合わせる。
  *
  * モデル (pr.sh の先頭の仕様を集合で書いたもの):
+ * - 状態 S は PENDING の review (提出前の下書き) を持たないものとする。提出されたら、その時に S に足す。
  * - 出す対象 T(S):
  *   - comment <login> <url>: 通常コメント。Codex (chatgpt-codex-connector[bot]) の利用上限のコメントと、Codex の summary で今の head の Completed でないものを除く。人間が書いた summary の形の本文は通常コメント。
  *   - codex-review completed <c> <url>: Codex の summary が Completed で、Commit の <c> が head の接頭辞。
  *   - review-comment <login> <url>: unresolved のスレッドの全コメント (返信を含む)。
  *   - review COMMENTED <login> <url>: 本文のある COMMENTED の review。
- *   - review CHANGES_REQUESTED <login> <url>: レビュアーごとに submittedAt が最大の、COMMENTED・PENDING 以外の review が CHANGES_REQUESTED のもの。
+ *   - review CHANGES_REQUESTED <login> <url>: レビュアーごとに submittedAt が最大の、COMMENTED 以外の review が CHANGES_REQUESTED のもの。
  *   - ci-failure <name> <conclusion> <url>: head の check run (再実行で置き換えられたものを含む) の conclusion が失敗のもの。
  *   - ci-failure <context> <state> <target_url>: head の commit status (同じ context の後の status で置き換えられたものを含む) が failure・error のもの。
  *   - pr closed merged=<bool> <url>: 閉じた PR。
  * - 初回 (状態のディレクトリが空): T(S) の各要素を open で (閉じた PR は changed で) 出して exit 0。T(S) が空なら、何も出さずに状態を作って待つ。
- * - 以後: 状態 S0 から操作列 Δ で S1 になったら、T(S1) の要素のうち Δ で足したものを new、Δ で編集したものを changed、
- *   タイトルの変更を changed title <t>、説明の変更を description changed と unified diff で出して exit 0。どれも無ければ出さずに待つ。
- *   Δ は 2 つに分けて続く 2 周期の始まりで入れ、前半だけでは何も出ないなら、前半の後の状態を S0 とする。
- * - reply-resolve: スレッド先頭の id なら、そのスレッドが resolved で、トークンの持ち主の同じ本文の返信がちょうど 1 件になり、
- *   ほかは変わらない (一時的な失敗で exit 1 になったら、そのままやり直す)。スレッド先頭でない id なら exit 1 で何も変えない。
+ * - 以後: 状態 S0 から操作列 Δ で S1 になったら、T(S1) の要素のうち Δ で足したものを new、Δ で編集したものを changed、タイトルの変更を changed title <t>、説明の変更を description changed と unified diff で出して exit 0。どれも無ければ出さずに待つ。
+ *   - Δ は 2 つに分けて続く 2 周期の始まりで入れ、前半だけでは何も出ないなら、前半の後の状態を S0 とする。
+ *   - 生成しない遷移 (GitHub の挙動を確かめていないか、仕様が new と changed のどちらとも決めていないもの): review の dismiss、スレッドの unresolve、resolve 済みのスレッドへの返信、本文の無い review の編集、PR の reopen。
+ * - reply-resolve: スレッド先頭の id なら、そのスレッドが resolved で、トークンの持ち主の同じ本文の返信がちょうど 1 件になり、ほかは変わらない (一時的な失敗で exit 1 になったら、そのままやり直す)。スレッド先頭でない id なら exit 1 で何も変えない。
  * - 恒久的な失敗: 401 なら auth の行で exit 2。404・301・権限の 403・レート制限でない GraphQL の errors なら error の行で exit 3。
  * - 一時的な失敗 (5xx・429・レート制限・接続の切断) を 2 件まで挟んでも、上の結果は変わらない。
  *
@@ -152,6 +149,8 @@ function addReply(w: World, t: Thread, login: string, body: string) {
 }
 
 function addReview(w: World, login: string, state: ReviewState, body: boolean) {
+  // PENDING の review は 1 人に 1 つまで
+  if (state === "PENDING" && w.reviews.some((r) => r.state === "PENDING")) return;
   const n = tick(w);
   w.reviews.push({
     id: idOf(n),
@@ -206,7 +205,7 @@ function revisions(w: World): Map<string, string> {
   return new Map([
     ...w.issue.map((c) => [`ic:${c.id}`, c.updated_at] as const),
     ...w.rc.map((c) => [`rc:${c.id}`, c.updated_at] as const),
-    ...w.reviews.map((r) => [`rv:${r.id}`, `${r.state} ${r.updatedAt}`] as const),
+    ...w.reviews.filter((r) => r.state !== "PENDING").map((r) => [`rv:${r.id}`, `${r.state} ${r.updatedAt}`] as const),
     ...w.checks.map((c) => [`cr:${c.id}`, ""] as const),
     ...w.statuses.map((s) => [`st:${s.id}`, ""] as const),
   ]);
@@ -238,8 +237,11 @@ type Op =
   | { op: "comment"; c: CommentSpec }
   | { op: "edit"; i: number; complete: boolean; text: string }
   | { op: "review"; login: string; state: ReviewState; body: boolean }
+  | { op: "editReview"; i: number; shown: boolean; text: string }
+  | { op: "submit"; state: ReviewState }
   | { op: "thread"; login: string }
   | { op: "reply"; i: number; login: string; text: string }
+  | { op: "editReviewComment"; i: number; shown: boolean; text: string }
   | { op: "resolve"; i: number }
   | { op: "push"; summary: "stale" | "running" | "completed" }
   | { op: "ci"; check: boolean; name: string; conclusion: string }
@@ -270,6 +272,23 @@ function apply(w: World, o: Op) {
     case "review":
       addReview(w, o.login, o.state, o.body);
       break;
+    case "editReview": {
+      const editable = w.reviews.filter((r) => r.state !== "PENDING" && r.body !== "");
+      const shown = editable.filter((r) => targets(w).has(`rv:${r.id}`));
+      const from = o.shown && shown.length > 0 ? shown : editable;
+      if (from.length === 0) break;
+      const r = from[o.i % from.length];
+      r.body = `${r.body}\n${o.text}`;
+      r.updatedAt = timeOf(tick(w));
+      break;
+    }
+    case "submit": {
+      const r = w.reviews.find((r) => r.state === "PENDING");
+      if (!r) break;
+      const n = tick(w);
+      [r.state, r.submittedAt, r.updatedAt] = [o.state, timeOf(n), timeOf(n)];
+      break;
+    }
     case "thread":
       addThread(w, o.login, false);
       break;
@@ -278,6 +297,15 @@ function apply(w: World, o: Op) {
       if (unresolved.length === 0) addThread(w, o.login, false);
       else addReply(w, unresolved[o.i % unresolved.length], o.login, o.text);
       break;
+    case "editReviewComment": {
+      const shown = w.rc.filter((c) => targets(w).has(`rc:${c.id}`));
+      const from = o.shown && shown.length > 0 ? shown : w.rc;
+      if (from.length === 0) break;
+      const c = from[o.i % from.length];
+      c.body = `${c.body}\n${o.text}`;
+      c.updated_at = timeOf(tick(w));
+      break;
+    }
     case "resolve":
       if (unresolved.length > 0) unresolved[o.i % unresolved.length].resolved = true;
       break;
@@ -402,18 +430,22 @@ function build(s: WorldSpec): World {
   return w;
 }
 
+/** shown の編集は出す対象のものから選ぶ (出さないものの編集ばかりだと changed の行が検査に入らない) */
 const opArb: fc.Arbitrary<Op> = fc.oneof(
-  fc.record({ op: fc.constant("comment" as const), c: commentArb }),
-  fc.record({ op: fc.constant("edit" as const), i: fc.nat(200), complete: fc.boolean(), text: textArb }),
-  fc.record({ op: fc.constant("review" as const), login: loginArb, state: reviewStateArb.filter((s) => s !== "DISMISSED"), body: fc.boolean() }),
-  fc.record({ op: fc.constant("thread" as const), login: loginArb }),
-  fc.record({ op: fc.constant("reply" as const), i: fc.nat(200), login: loginArb, text: textArb }),
-  fc.record({ op: fc.constant("resolve" as const), i: fc.nat(200) }),
-  fc.record({ op: fc.constant("push" as const), summary: fc.constantFrom("stale" as const, "running" as const, "completed" as const) }),
-  fc.record({ op: fc.constant("ci" as const), check: fc.boolean(), name: fc.constantFrom("build", "ci/a"), conclusion: fc.constantFrom(...FAILING) }),
-  fc.record({ op: fc.constant("title" as const), title: titleArb }),
-  fc.record({ op: fc.constant("body" as const), body: bodyArb }),
-  fc.record({ op: fc.constant("close" as const), merged: fc.boolean() }),
+  { weight: 2, arbitrary: fc.record({ op: fc.constant("comment" as const), c: commentArb }) },
+  { weight: 2, arbitrary: fc.record({ op: fc.constant("edit" as const), i: fc.nat(200), complete: fc.boolean(), text: textArb }) },
+  { weight: 1, arbitrary: fc.record({ op: fc.constant("review" as const), login: loginArb, state: reviewStateArb.filter((s) => s !== "DISMISSED"), body: fc.boolean() }) },
+  { weight: 2, arbitrary: fc.record({ op: fc.constant("editReview" as const), i: fc.nat(200), shown: fc.boolean(), text: textArb }) },
+  { weight: 1, arbitrary: fc.record({ op: fc.constant("submit" as const), state: fc.constantFrom<ReviewState>("COMMENTED", "APPROVED", "CHANGES_REQUESTED") }) },
+  { weight: 1, arbitrary: fc.record({ op: fc.constant("thread" as const), login: loginArb }) },
+  { weight: 1, arbitrary: fc.record({ op: fc.constant("reply" as const), i: fc.nat(200), login: loginArb, text: textArb }) },
+  { weight: 2, arbitrary: fc.record({ op: fc.constant("editReviewComment" as const), i: fc.nat(200), shown: fc.boolean(), text: textArb }) },
+  { weight: 1, arbitrary: fc.record({ op: fc.constant("resolve" as const), i: fc.nat(200) }) },
+  { weight: 1, arbitrary: fc.record({ op: fc.constant("push" as const), summary: fc.constantFrom("stale" as const, "running" as const, "completed" as const) }) },
+  { weight: 1, arbitrary: fc.record({ op: fc.constant("ci" as const), check: fc.boolean(), name: fc.constantFrom("build", "ci/a"), conclusion: fc.constantFrom(...FAILING) }) },
+  { weight: 1, arbitrary: fc.record({ op: fc.constant("title" as const), title: titleArb }) },
+  { weight: 1, arbitrary: fc.record({ op: fc.constant("body" as const), body: bodyArb }) },
+  { weight: 1, arbitrary: fc.record({ op: fc.constant("close" as const), merged: fc.boolean() }) },
 );
 
 type Transient = { kind: "500" | "429" | "403" | "drop"; applied: boolean };
@@ -477,7 +509,7 @@ class Fake {
   pending: World[] = []; // 周期の始まりに 1 つずつ入れる状態
   private appliedAt = -1; // 最後に入れたときの ends の数
   starts = 0; // 周期の始まり (PR の取得) の数
-  ends: number[] = []; // 周期の終わり (CI の status の最後のページ) ごとの、その時点の starts
+  ends: number[] = []; // 周期の終わり (commit status の最後のページ) ごとの、その時点の starts
   log: string[] = [];
   procs: Proc[] = [];
   private server: Deno.HttpServer<Deno.NetAddr>;
@@ -568,19 +600,10 @@ class Fake {
       const p = page(runs, q);
       return json(200, { total_count: runs.length, check_runs: p.map((c) => ({ id: c.id, name: c.name, status: c.conclusion === null ? "in_progress" : "completed", conclusion: c.conclusion, html_url: urls.check(c.id) })) });
     }
-    if (method === "GET" && (m = rest.match(/^commits\/([0-9a-f]{40})\/(status|statuses)$/))) {
-      const all = w.statuses.filter((s) => s.sha === m![1]).reverse();
-      const show = (s: Status) => ({ id: s.id, context: s.context, state: s.state, target_url: urls.status(s.id), description: null });
-      if (m[2] === "statuses") {
-        const p = page(all, q);
-        if (p.length < Math.min(Number(q.get("per_page") ?? 30), 100)) lastPage();
-        return json(200, p.map(show));
-      }
-      // 合成した status は context ごとに最新の 1 件だけを持つ
-      const latest = all.filter((s, i) => all.findIndex((t) => t.context === s.context) === i);
-      const p = page(latest, q);
+    if (method === "GET" && (m = rest.match(/^commits\/([0-9a-f]{40})\/statuses$/))) {
+      const p = page(w.statuses.filter((s) => s.sha === m![1]).reverse(), q);
       if (p.length < Math.min(Number(q.get("per_page") ?? 30), 100)) lastPage();
-      return json(200, { state: "pending", sha: m[1], total_count: latest.length, statuses: p.map(show) });
+      return json(200, p.map((s) => ({ id: s.id, context: s.context, state: s.state, target_url: urls.status(s.id), description: null })));
     }
     return notFound;
   }
