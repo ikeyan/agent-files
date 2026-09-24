@@ -10,7 +10,7 @@
 #   pr.sh reply-resolve <owner>/<repo> <PR 番号> <スレッド先頭のレビューコメントの id> <本文>
 #     スレッドに返信し、そのスレッドを resolve する。
 # 出力 (watch、1 行 1 件): open・new・changed に続けてイベント文。説明の変更は "description changed" の行に unified diff が続く。
-#   auth で始まる行を出して終わったら、トークンが無いか無効 (401)。error で始まる行なら、PR 番号・リポジトリ・権限の誤り (401 以外の 4xx)。
+#   auth で始まる行を出して終わったら、トークンが無いか無効 (401)。error で始まる行なら、PR 番号・リポジトリ・権限・問い合わせの誤り (401 以外の 4xx と、レート制限でない GraphQL の errors)。
 # 失敗: 一時的な API の失敗 (ネットワーク・5xx・レート制限の 403・429) は、watch では出さずに間隔を倍にして (上限 900 秒) 再試行し、reply-resolve では止まる。
 #   reply-resolve は、止まった後にそのままやり直してよい (スレッドの最後のコメントが同じ本文なら返信を重ねない)。
 # 事前条件: curl と jq。トークンは GH_TOKEN か gh auth token。
@@ -23,20 +23,24 @@ cmd=$1 repo=$2 pr=$3
 token=${GH_TOKEN:-$(gh auth token)}
 [ -n "$token" ] || { echo "auth GitHub のトークンが無い。GH_TOKEN を設定するか gh auth login する"; exit 1; }
 
-req() { # <メソッド> <URL> [<JSON の本文>]: 応答の本文を出す。失敗は、一時的 (ネットワーク・5xx・レート制限) なら 1、401 なら 2、それ以外の 4xx なら error の行を出して 3 を返す
-  local res tail code remaining retry body data=()
+req() { # <メソッド> <URL> [<JSON の本文>]: 応答の本文を出す。失敗は、一時的 (ネットワーク・5xx・レート制限。GraphQL の 200 の errors がレート制限を示すものを含む) なら 1、401 なら 2、それ以外の 4xx とレート制限でない GraphQL の errors なら error の行を出して 3 を返す
+  local res tail code remaining retry limited body data=()
   [ $# -lt 3 ] || data=(--data "$3")
   res=$(printf 'Authorization: Bearer %s\n' "$token" | curl -sS --max-time 30 -X "$1" -H @- -H "Accept: application/vnd.github+json" "${data[@]}" \
     -w '\n%{http_code}\t%header{x-ratelimit-remaining}\t%header{retry-after}' "$2") || return 1
   tail=${res##*$'\n'} body=${res%$'\n'*}
   IFS=$'\t' read -r code remaining retry <<<"$tail"
+  # レート制限は、primary なら x-ratelimit-remaining が 0、secondary なら retry-after があるか remaining が 0、無ければ本文が示す (canon: facts/github/rest-rate-limit-responses)
+  limited=
+  if [ -n "$retry" ] || [ "$remaining" = 0 ] || [[ $body == *"rate limit"* ]]; then limited=1; fi
   case $code in
-    2??) printf '%s\n' "$body"; return 0 ;;
+    2??)
+      # GraphQL は失敗も 200 で返し、本文の errors に入れる
+      if [[ $2 != */graphql ]] || jq -e '.errors == null' <<<"$body" > /dev/null; then printf '%s\n' "$body"; return 0; fi
+      [ -z "$limited" ] || return 1 ;;
     401) return 2 ;;
     429) return 1 ;;
-    403)
-      # レート制限の 403 は、primary なら x-ratelimit-remaining が 0、secondary なら retry-after があるか remaining が 0、無ければ本文が secondary rate limit を示す (canon: facts/github/rest-rate-limit-responses)
-      if [ -n "$retry" ] || [ "$remaining" = 0 ] || [[ $body == *"rate limit"* ]]; then return 1; fi ;;
+    403) [ -z "$limited" ] || return 1 ;;
     4??) ;;
     *) return 1 ;;
   esac
@@ -65,7 +69,6 @@ gql() { # <PR の接続のフィールド (after: $cursor を取る)> <接続の
   local q="query(\$owner:String!,\$name:String!,\$pr:Int!,\$cursor:String){repository(owner:\$owner,name:\$name){pullRequest(number:\$pr){$1}}}"
   while :; do
     body=$(req POST https://api.github.com/graphql "$(jq -n --arg q "$q" --arg o "${repo%/*}" --arg n "${repo#*/}" --argjson p "$pr" --argjson c "$cursor" '{query: $q, variables: {owner: $o, name: $n, pr: $p, cursor: $c}}')") || return
-    jq -e '.errors == null' <<<"$body" > /dev/null || return 1
     conn=$(jq '.data.repository.pullRequest | to_entries[0].value' <<<"$body") || return 1
     jq -r ".nodes[] | $2" <<<"$conn" || return 1
     [ "$(jq -r .pageInfo.hasNextPage <<<"$conn")" = true ] || return 0
