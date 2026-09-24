@@ -114,7 +114,7 @@ poll() { # 現状を「キー<TAB>版<TAB>イベント文」の行で出し、�
   sha=$(jq -r .head.sha <<<"$pr_json") || return 1
   # push の直後は前の commit の Completed が残るので、Commit が今の head のときだけ Completed として出す
   rest "repos/$repo/issues/$pr/comments" "\"$sha\" as \$head | "'.[] |
-    if (.body | startswith("<!-- codex-pull-request-review-summary -->")) then
+    if .user.login == "chatgpt-codex-connector[bot]" and (.body | startswith("<!-- codex-pull-request-review-summary -->")) then
       (first(.body | capture("`(?<c>[0-9a-f]{7,40})`").c) // "") as $c |
       if (.body | test("\\*\\*Completed\\*\\*")) and $c != "" and ($head | startswith($c)) then
         "ic:\(.id)\tcompleted \($c)\tcodex-review completed \($c) \(.html_url)"
