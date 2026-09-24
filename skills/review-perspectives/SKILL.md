@@ -68,7 +68,7 @@ description: Use when reviewing a diff before commit or push, when asked to revi
    後始末と、止まったときの行動:
 
    - レビューが終わったら、対象を指定したときは `git worktree remove <repo= のパス>` してから、`rm -r <run= のパス>` で消す。
-   - `cannot lock ref` で止まったら、同時に回している別の実行の fetch と衝突したので、やり直す。
+   - `cannot lock ref` か `.lock': File exists` で止まったら、同時に回している別の実行の fetch と衝突したので、やり直す。
    - origin が無い、fetch か `set-head` が失敗した、対象が解決できない、または `共通の祖先が無い` で止まったら、どこからの変更をレビューするかをユーザーに確かめる。
    - `<path> がリポジトリの外` で止まったら、どのパスをレビューするかをユーザーに確かめる。
    - `does not have a commit checked out` で止まったら、その入れ子のリポジトリに commit を作るか、外に動かすかをユーザーに確かめる。

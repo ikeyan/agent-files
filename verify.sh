@@ -17,6 +17,8 @@ check_files() { # <コマンド…> -- <パターン>: git が知っているフ
 check_files shellcheck -- '*.sh'
 check_files deno check -- '*.ts'
 scripts/test-target-diff.sh
+# 書き込みは $TMPDIR の下だけだが、シンボリックリンクを作るので Deno はパスを絞った許可を受け付けない
+deno run --allow-run=git,bash --allow-env --allow-read --allow-write scripts/test-target-diff.ts
 
 # .claude/skills と skills/ の対応 (構造は README)。symlink の作成は deno だと無制限の
 # --allow-write/--allow-read が要るので shell 側で扱う。Claude Code のサンドボックス内では
