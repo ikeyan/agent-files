@@ -4,7 +4,7 @@
 
 - 作業が論理単位に達したら確認を取らず自律的にコミットする。指示待ちしない。
 - コミット前にレビューする。判定対象は diff でなく結果のファイル — 変更箇所をファイル全体 (先頭コメント含む) の文脈で、その変更を見ていない初見読者として読み、本 AGENTS.md の指針に沿わなければ修正してからコミットする。
-- レビュー指摘の修正も初回実装と同じ規律を通す (外部依存の契約確認・検証)。レビュー起点のコードは未検証のまま積み上がりやすい。機構の作り直しを要する指摘が出たら修正の連鎖を止め、契約確認 → 実測 → 再設計に戻る。
+- レビュー指摘の修正も初回実装と同じ規律を通す (外部依存の契約確認・検証)。レビュー起点のコードは未検証のまま積み上がりやすい。同じ箇所への 2 回目の指摘 (review-perspectives の `findings.md` で数える) は定義域を閉じてから直し、3 回目か機構の作り直しを要する指摘が出たら修正の連鎖を止め、契約確認 → 実測 → 再設計に戻る。
 - push の前に review-perspectives スキルでレビュー→修正を反復し、終了条件を満たしてから push する。終了条件は「実害シナリオつき correctness 指摘の消滅」。cleanup 指摘のゼロは目指さない (高強度のレビューはゼロに収束しない)。却下した指摘は理由を明文化し、次のレビューへ除外条件として引き継ぐ。
 
 ## 設計
@@ -20,7 +20,8 @@
 - 単一検証コマンドは `./verify.sh`。CI も同じものを回す。含むもの:
   - shellcheck
   - `deno check`
-  - review-perspectives の `target-diff.sh` の fixture
+  - review-perspectives の `target-diff.sh` の fixture と、model based test (`scripts/test-target-diff.ts`。fast-check)
+  - pr-workflow の `pr.sh` の、fake GitHub を相手にした model based test (`scripts/test-pr.ts`。fast-check)
   - JSON の構文と schema
   - Markdown のリポ内リンク
   - `.claude/skills` と `skills/` の対応
