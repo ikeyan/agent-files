@@ -22,13 +22,23 @@
  * - 恒久的な失敗: 401 なら auth の行で exit 2。404・301・権限の 403・レート制限でない GraphQL の errors なら error の行で exit 3。
  * - 一時的な失敗 (5xx・429・レート制限・接続の切断) を 2 件まで挟んでも、上の結果は変わらない。
  *
- * 環境: PR_RUNS (性質ごとの試行数、既定 8)、FC_SEED (再現する seed)。
+ * 環境: PR_RUNS (性質ごとの試行数、既定 8。1 以上の整数。それ以外は止まる)、FC_SEED (再現する seed。指定するなら整数。それ以外は止まる)。
  */
 import fc from "fast-check";
 
 const script = new URL("../skills/setup-repo/pr-workflow/pr.sh", import.meta.url).pathname;
-const numRuns = Number(Deno.env.get("PR_RUNS") ?? 8);
+
+const runsRaw = Deno.env.get("PR_RUNS");
+const numRuns = runsRaw === undefined ? 8 : Number(runsRaw);
+if (!Number.isInteger(numRuns) || numRuns < 1) {
+  console.error(`test-pr.ts: PR_RUNS は 1 以上の整数: ${runsRaw ?? ""}`);
+  Deno.exit(2);
+}
 const seedEnv = Deno.env.get("FC_SEED");
+if (seedEnv !== undefined && !Number.isInteger(Number(seedEnv))) {
+  console.error(`test-pr.ts: FC_SEED は整数: ${seedEnv}`);
+  Deno.exit(2);
+}
 
 const REPO = "o/r";
 const PR = 1;
@@ -459,7 +469,6 @@ const opArb: fc.Arbitrary<Op> = fc.oneof(
 type Transient = { kind: "500" | "429" | "403" | "drop"; applied: boolean };
 type Permanent = "401" | "404" | "301" | "403" | "graphql";
 const failuresArb = fc.record({
-  // 先頭から数えて何件目の要求から失敗させるか
   skip: fc.oneof({ weight: 3, arbitrary: fc.constant(0) }, { weight: 2, arbitrary: fc.nat(30) }),
   list: fc.array(fc.record({ kind: fc.constantFrom("500" as const, "429" as const, "403" as const, "drop" as const), applied: fc.boolean() }), {
     maxLength: 2,
@@ -489,7 +498,7 @@ function transient(kind: Transient["kind"], graphql: boolean): Response {
     case "500":
       return json(500, { message: "Server Error" });
     case "429":
-      // GraphQL は primary のレート制限を 429 でなく 200 と errors で返す
+      // GraphQL は primary のレート制限を 200 と errors で返す
       if (graphql) return json(200, { errors: [{ type: "RATE_LIMITED", message: "API rate limit exceeded for user ID 1." }] }, { "x-ratelimit-remaining": "0" });
       return json(429, { message: "You have exceeded a secondary rate limit. Please wait a few minutes before you try again.", documentation_url: DOCS }, {
         "retry-after": "1",

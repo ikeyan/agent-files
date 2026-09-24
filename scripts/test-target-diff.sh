@@ -166,16 +166,11 @@ fails "打ち消し合うコミット" clone cancel
 git clone -q --bare src badhead.git && git -C badhead.git symbolic-ref HEAD refs/heads/gone && git clone -q -b main badhead.git badhead
 fails "origin の HEAD が無い" badhead
 
-# path はリポジトリのルートからの相対で、cwd と対象の有無によらない。絶対パスと、ルートの外に出る .. と空文字列は止まる
+# path はリポジトリのルートからの相対で、cwd と対象の有無によらない (絶対パス・ルートの外に出る .. ・空文字列が止まることは test-target-diff.ts の生成器で検査する)
 git -C clone checkout -q -b subch origin/main && echo s > clone/sub/s.txt && git -C clone add sub/s.txt && git -C clone commit -qm "sub/s.txt"
 run clone/sub subch -- sub/s.txt && expect "サブディレクトリからの path (対象あり)" "sub/s.txt" "sub/s.txt"
 run clone/sub -- sub/u.txt && expect "サブディレクトリからの path (対象なし)" "sub/u.txt" ""
 run clone subch -- sub/../sub/s.txt && expect "ルートの中に戻る .." "sub/s.txt" "sub/s.txt"
-before=$(find "$tmp" -maxdepth 1 -name 'review-perspectives.*' | wc -l)
-fails "絶対パスの path" clone -- "$tmp/clone/a.txt"
-fails "ルートの外に出る .." clone -- ../src/a.txt
-fails "空文字列の path" clone -- ""
-[ "$(find "$tmp" -maxdepth 1 -name 'review-perspectives.*' | wc -l)" = "$before" ] || { echo "止まる path: run が残る" >&2; status=1; }
 run clone -- linkdir && expect "リポジトリの中のディレクトリへのリンク" "linkdir" ""
 
 # revision の式に .. が入っても作業ディレクトリは .git/ の下

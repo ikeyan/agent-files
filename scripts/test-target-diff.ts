@@ -1,7 +1,7 @@
 /**
  * test-target-diff.ts — skills/review-perspectives/target-diff.sh の model based test。verify.sh から呼ぶ。
  *
- * 履歴の操作列と環境の形を生成し、履歴のモデルから「対象のコミット集合」と「対象のファイル集合」を計算して、スクリプトが書き出した target.diff と照合する。生成する次元は canon の `facts/git/repository-shapes` の目録の行で、目録の行を足したらここの生成器にも次元を足す。scripts/test-target-diff.sh は、生成に向かない形 (unborn HEAD、打ち消し合うコミット、origin の HEAD 無し、消した path) を例で固定する。
+ * 履歴の操作列と環境の形を生成し、履歴のモデルから「対象のコミット集合」と「対象のファイル集合」を計算して、スクリプトが書き出した target.diff と照合する。生成する次元は canon の `facts/git/repository-shapes` の目録の行で、目録の行を足したらここの生成器にも次元を足す。出力を変える git の設定は diff.external・GIT_EXTERNAL_DIFF・textconv・color.diff・diff.noprefix を生成する。log.showSignature は unsigned commit では検証結果の行が出ず観測できないので生成しない (fixture でも扱わない)。scripts/test-target-diff.sh は、生成に向かない形 (unborn HEAD、打ち消し合うコミット、origin の HEAD 無し、消した path) を例で固定する。
  *
  * モデル (スクリプトの先頭の仕様を集合で書いたもの):
  * - 各コミットは 1 つのファイルを足す (merge commit は足さない)。commit c の内容 = c の祖先 (c を含む) のファイル。
@@ -10,19 +10,29 @@
  *   - ブランチ・revision r が既定ブランチに入っていない: anc(r) \ anc(既定ブランチ)。merge-base が 1 つに決まらない履歴は対象外 (git が任意の 1 つを返す)。
  *   - r が既定ブランチに入っている: 既定ブランチの first-parent の線上で最寄りの、r 自身でない祖先 b について anc(r) \ anc(b)。無ければ anc(r)。
  *   - PR 番号: anc(head) \ anc(base の tip)。
- * - path を付けたら、その path の内容がどの親とも違うコミットだけ (merge commit は、両側がその path のファイルを持ち込むときだけ)。
+ * - path を付けたら、その path の内容がどの親とも違うコミットだけ (merge commit は、両側がその path のファイルを持ち込むときだけ)。絶対パス・ルートの外に出る `..`・空文字列の path は止まる。
  * - 対象のファイル集合: 上のコミットのファイル + (対象無しなら) 作業ツリーの変更と未追跡の項目 (.gitignore で無視されたものを除く)。
  * - ファイル集合が空なら止まる (merge commit だけの範囲を含む)。止まったら run ディレクトリと worktree を残さない。
  * - 同じ入力を同時に 2 つ走らせても、fetch の衝突 (cannot lock ref、shallow.lock の File exists) でやり直せば同じ結果になる。
  * - tree= は作業ツリーの内容 (未追跡を含む) と mode で変わり、rules= は規則の内容と名前で変わる。
  *
- * 環境: TARGET_DIFF_RUNS (試行数、既定 25)、FC_SEED (再現する seed)。
+ * 環境: TARGET_DIFF_RUNS (試行数、既定 25。1 以上の整数。それ以外は止まる)、FC_SEED (再現する seed。指定するなら整数。それ以外は止まる)。
  */
 import fc from "fast-check";
 
 const script = new URL("../skills/review-perspectives/target-diff.sh", import.meta.url).pathname;
-const numRuns = Number(Deno.env.get("TARGET_DIFF_RUNS") ?? 25);
+
+const runsRaw = Deno.env.get("TARGET_DIFF_RUNS");
+const numRuns = runsRaw === undefined ? 25 : Number(runsRaw);
+if (!Number.isInteger(numRuns) || numRuns < 1) {
+  console.error(`test-target-diff.ts: TARGET_DIFF_RUNS は 1 以上の整数: ${runsRaw ?? ""}`);
+  Deno.exit(2);
+}
 const seedEnv = Deno.env.get("FC_SEED");
+if (seedEnv !== undefined && !Number.isInteger(Number(seedEnv))) {
+  console.error(`test-target-diff.ts: FC_SEED は整数: ${seedEnv}`);
+  Deno.exit(2);
+}
 
 // ---- 履歴のモデル ----
 
@@ -301,7 +311,6 @@ async function runCase(c: Case, root: string): Promise<void> {
   const localIds = Array.from({ length: c.localCommits }, (_, i) => `l${i + 1}`);
   const coTip = localIds.at(-1) ?? h.tips.get(co)!;
   const originTips = new Map(h.tips);
-  // 手元だけのコミットはモデルの履歴に足す
   let prev = h.tips.get(co)!;
   for (const id of localIds) {
     h.commits.set(id, { id, parents: [prev], file: `${id}.txt` });
@@ -365,7 +374,9 @@ async function runCase(c: Case, root: string): Promise<void> {
   const tip = rev ?? coTip;
   const set = new Set([...h.ancestors(tip)].filter((x) => base === null || !h.ancestors(base).has(x)));
 
-  const paths = c.paths.map((i) => (i === 0 ? "." : i === 1 ? "d" : i === 2 ? "nope.txt" : allFiles[(i - 3) % allFiles.length]));
+  const paths = c.paths.map((i) => (i === 0 ? "." : i === 1 ? "d" : i === 2 ? "nope.txt" : i === 3 ? `${root}/clone/a.txt` : i === 4 ? "../src/a.txt" : i === 5 ? "" : allFiles[(i - 6) % allFiles.length]));
+  // 絶対パス・ルートの外に出る .. ・空文字列は git 自体が止める (target-diff.sh 8 行目)
+  if (c.paths.some((i) => i === 3 || i === 4 || i === 5)) stop = true;
   const matches = (f: string) => paths.length === 0 || paths.some((p) => p === "." || f === p || f.startsWith(`${p}/`));
   const expected: Expected = { commits: new Set(), files: new Set(), head: rev };
   // path を付けた git log は、その path の内容がどの親とも違う commit だけを出す (merge commit は両側がその path のファイルを持ち込むときだけ)
@@ -438,13 +449,18 @@ async function runCase(c: Case, root: string): Promise<void> {
   }
   const env: Record<string, string> = { TMPDIR: tmp };
   if (c.config) {
+    // .gitattributes だと未追跡として diff に混ざるので、info/attributes (worktree 間で共有) に書く
+    const attrs = await git(wt, "rev-parse", "--path-format=absolute", "--git-path", "info/attributes");
+    await Deno.writeTextFile(attrs, "*.txt diff=x\n");
     Object.assign(env, {
       GIT_EXTERNAL_DIFF: "true",
-      GIT_CONFIG_COUNT: "2",
+      GIT_CONFIG_COUNT: "3",
       GIT_CONFIG_KEY_0: "diff.noprefix",
       GIT_CONFIG_VALUE_0: "true",
       GIT_CONFIG_KEY_1: "color.diff",
       GIT_CONFIG_VALUE_1: "always",
+      GIT_CONFIG_KEY_2: "diff.x.textconv",
+      GIT_CONFIG_VALUE_2: "echo textconv-output #",
     });
   }
   if (prStub) {
