@@ -12,7 +12,7 @@
 # 出力 (watch、1 行 1 件): open・new・changed に続けてイベント文。説明の変更は "description changed" の行に unified diff が続く。
 #   auth で始まる行を出して終わったら、トークンが無いか無効 (401)。error で始まる行なら、PR 番号・リポジトリ・権限・問い合わせの誤り (3xx、401 以外の 4xx、レート制限でない GraphQL の errors)。3xx はリポジトリの改名・移動で、新しい名前で起動し直す。
 # 失敗: 一時的な API の失敗 (ネットワーク・5xx・レート制限の 403・429) は、watch では出さずに間隔を倍にして (上限 900 秒) 再試行し、reply-resolve では止まる。
-#   reply-resolve は、止まった後にそのままやり直してよい (スレッドの最後のコメントが自分の同じ本文なら返信を重ねない)。
+#   reply-resolve は、止まった後にそのままやり直してよい (スレッドに自分の同じ本文の返信があれば返信を重ねない)。同じスレッドに並行に起動しない (返信の有無を見てから返信するまでに割り込まれると、返信が重なる)。
 # 事前条件: curl と jq。トークンは GH_TOKEN か gh auth token。
 # GraphQL の $cursor と jq の式は、単一引用符で展開させずに渡す
 # shellcheck disable=SC2016
@@ -83,14 +83,15 @@ if [ "$cmd" = reply-resolve ]; then
   id=$4 text=$5
   # jq のフィルタに埋め込むので、整数に限る
   [[ $id =~ ^[0-9]+$ ]] || { echo "pr.sh: コメントの id は整数: $id" >&2; exit 2; }
-  # 返信の後の resolve が失敗してやり直しても返信を重ねないように、スレッドの最後のコメントが自分の同じ本文なら返信しない
+  thread=$(gql 'reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor} nodes{id comments(first:1){nodes{databaseId}}}}' \
+    "select(.comments.nodes[0].databaseId == $id) | .id") || fail $?
+  [ -n "$thread" ] || { echo "pr.sh: レビューコメント $id を先頭に持つスレッドが無い" >&2; exit 1; }
+  # 返信の後の resolve が失敗してやり直しても返信を重ねないように、スレッドに自分の同じ本文の返信があれば返信しない (間に他の返信があっても見つける)
   me=$(req POST https://api.github.com/graphql '{"query":"{viewer{login}}"}' | jq -r .data.viewer.login) || fail $?
   if [ -z "$me" ] || [ "$me" = null ]; then echo "error トークンの持ち主 (GraphQL の viewer) が分からないので、返信の重複を判定できない"; exit 3; fi
-  found=$(gql 'reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor} nodes{id comments(first:1){nodes{databaseId}} last: comments(last:1){nodes{body author{login}}}}}' \
-    "select(.comments.nodes[0].databaseId == $id) | .last.nodes[0] as \$l | \"\\(.id) \\(\$l.body == $(jq -n --arg t "$text" '$t') and \$l.author.login == $(jq -n --arg m "$me" '$m'))\"") || fail $?
-  [ -n "$found" ] || { echo "pr.sh: レビューコメント $id を先頭に持つスレッドが無い" >&2; exit 1; }
-  thread=${found% *}
-  if [ "${found#* }" != true ]; then
+  posted=$(rest "repos/$repo/pulls/$pr/comments" \
+    ".[] | select(.in_reply_to_id == $id and .user.login == $(jq -n --arg m "$me" '$m') and .body == $(jq -n --arg t "$text" '$t')) | .id") || fail $?
+  if [ -z "$posted" ]; then
     req POST "https://api.github.com/repos/$repo/pulls/$pr/comments/$id/replies" "$(jq -n --arg b "$text" '{body: $b}')" > /dev/null || fail $?
   fi
   res=$(req POST https://api.github.com/graphql "$(jq -n --arg t "$thread" '{query: "mutation($t:ID!){resolveReviewThread(input:{threadId:$t}){thread{isResolved}}}", variables: {t: $t}}')") || fail $?
