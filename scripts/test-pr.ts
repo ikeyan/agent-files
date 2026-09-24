@@ -453,7 +453,15 @@ const opArb: fc.Arbitrary<Op> = fc.oneof(
   { weight: 2, arbitrary: fc.record({ op: fc.constant("comment" as const), c: commentArb }) },
   { weight: 2, arbitrary: fc.record({ op: fc.constant("edit" as const), i: fc.nat(200), complete: fc.boolean(), text: textArb }) },
   { weight: 1, arbitrary: fc.record({ op: fc.constant("review" as const), login: loginArb, state: reviewStateArb.filter((s) => s !== "DISMISSED"), body: fc.boolean() }) },
-  { weight: 2, arbitrary: fc.record({ op: fc.constant("editReview" as const), i: fc.nat(200), shown: fc.boolean(), text: textArb }) },
+  {
+    weight: 6,
+    arbitrary: fc.record({
+      op: fc.constant("editReview" as const),
+      i: fc.nat(200),
+      shown: fc.oneof({ weight: 3, arbitrary: fc.constant(true) }, { weight: 1, arbitrary: fc.constant(false) }),
+      text: textArb,
+    }),
+  },
   { weight: 1, arbitrary: fc.record({ op: fc.constant("submit" as const), state: fc.constantFrom<ReviewState>("COMMENTED", "APPROVED", "CHANGES_REQUESTED") }) },
   { weight: 1, arbitrary: fc.record({ op: fc.constant("thread" as const), login: loginArb }) },
   { weight: 1, arbitrary: fc.record({ op: fc.constant("reply" as const), i: fc.nat(200), login: loginArb, text: textArb }) },
@@ -848,18 +856,14 @@ const p1 = fc.asyncProperty(worldArb, failuresArb, permanentArb, async (spec, fa
   });
 });
 
-// 既定の件数でも review の編集 (changed review) が検査に入るように、多くは Δ の最後で出す対象の review を編集する
-const touchArb = fc.option(fc.nat(200), { nil: null, freq: 4 });
-
-const p2 = fc.asyncProperty(worldArb, fc.array(opArb, { minLength: 1, maxLength: 3 }), touchArb, fc.nat(), failuresArb, async (spec, generated, touch, split, failures) => {
+const p2 = fc.asyncProperty(worldArb, fc.array(opArb, { minLength: 1, maxLength: 3 }), fc.nat(), failuresArb, async (spec, generated, split, failures) => {
   const w0 = build({ ...spec, closed: false });
-  const ops: Op[] = touch === null ? generated : [...generated, { op: "editReview", i: touch, shown: true, text: "edited" }];
   // Δ を 2 つに分け、後半を次の周期 (前半で差が出たなら窓の後の取り直し) の始まりで入れる
-  const cut = split % (ops.length + 1);
+  const cut = split % (generated.length + 1);
   const mid = structuredClone(w0);
-  for (const o of ops.slice(0, cut)) apply(mid, o);
+  for (const o of generated.slice(0, cut)) apply(mid, o);
   const w1 = structuredClone(mid);
-  for (const o of ops.slice(cut)) apply(w1, o);
+  for (const o of generated.slice(cut)) apply(w1, o);
   const quiet = (a: World, b: World) => expectDelta(a, b).length === 0 && a.pr.body === b.pr.body;
   // 前半で何も出なければ、pr.sh はその周期を基準に記録する
   const base = quiet(w0, mid) ? mid : w0;
