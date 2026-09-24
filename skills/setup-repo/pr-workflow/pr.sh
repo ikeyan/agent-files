@@ -6,7 +6,7 @@
 #     対応が要るものを見つけたら出して終わる (Bash ツールの run_in_background で回す)。
 #     初回 (状態が無い): 以後の周期で出す対象 (コメント・COMMENTED 以外の review と本文のある COMMENTED の review・unresolved のレビューコメント・head の CI の失敗・閉じた PR・Completed の Codex の summary) が既にあれば、open で出して終わる。無ければ基準にして待つ。
 #     以後: 前回との差 (コメント・review の追加と編集、タイトル、説明、CI の失敗、PR の close) を見つけたら、10 秒待って取り直し、まとめて出して終わる。
-#     出さないもの: resolve 済みのスレッドのレビューコメント、本文の無い COMMENTED の review (返信で作られる)、Codex の summary コメントの Completed 以外への編集。
+#     出さないもの: resolve 済みのスレッドのレビューコメント、本文の無い COMMENTED の review (返信で作られる)、Codex の summary コメントの、今の head の Completed 以外への編集。
 #   pr.sh reply-resolve <owner>/<repo> <PR 番号> <スレッド先頭のレビューコメントの id> <本文>
 #     スレッドに返信し、そのスレッドを resolve する。
 # 出力 (watch、1 行 1 件): open・new・changed に続けてイベント文。説明の変更は "description changed" の行に unified diff が続く。
@@ -104,11 +104,13 @@ poll() { # 現状を「キー<TAB>版<TAB>イベント文」の行で出し、�
   jq -r .body <<<"$pr_json" > "$dir/body.new" || return 1
   jq -r '"pr\t\(.state)\tpr \(.state) merged=\(.merged) \(.html_url)", "title\t\(.title | gsub("\t"; " "))\ttitle \(.title | gsub("\t"; " "))"' <<<"$pr_json" || return 1
   sha=$(jq -r .head.sha <<<"$pr_json") || return 1
-  rest "repos/$repo/issues/$pr/comments" '.[] |
+  # push の直後は前の commit の Completed が残るので、Commit が今の head のときだけ Completed として出す
+  rest "repos/$repo/issues/$pr/comments" "\"$sha\" as \$head | "'.[] |
     if (.body | startswith("<!-- codex-pull-request-review-summary -->")) then
-      if (.body | test("\\*\\*Completed\\*\\*")) then
-        (first(.body | capture("`(?<c>[0-9a-f]{7,40})`").c) // "") as $c | "ic:\(.id)\tcompleted \($c)\tcodex-review completed \($c) \(.html_url)"
-      else "ic:\(.id)\trunning\t" end
+      (first(.body | capture("`(?<c>[0-9a-f]{7,40})`").c) // "") as $c |
+      if (.body | test("\\*\\*Completed\\*\\*")) and $c != "" and ($head | startswith($c)) then
+        "ic:\(.id)\tcompleted \($c)\tcodex-review completed \($c) \(.html_url)"
+      else "ic:\(.id)\tother \($c)\t" end
     else "ic:\(.id)\t\(.updated_at)\tcomment \(.user.login) \(.html_url)" end' || return
   # resolve の有無は GraphQL にしか無いので、unresolved のスレッドの先頭のコメントの id だけを取り、コメントは REST で全ページ取る (返信の in_reply_to_id は先頭を指す)
   roots=$(gql 'reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor} nodes{isResolved comments(first:1){nodes{databaseId}}}}' \
