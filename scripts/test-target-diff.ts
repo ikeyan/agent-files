@@ -342,7 +342,7 @@ async function runCase(c: Case, root: string): Promise<void> {
     return h.firstParentChain(mainTip).find((b) => b !== r && h.isAncestor(b, r)) ?? null;
   };
   let targetArg: string | undefined;
-  let prStub: { name: string; head: string; base: string } | undefined;
+  let prStub: { name: string; head: string; base: string; baseRefName: string } | undefined;
   let deletedBranch: string | undefined;
   let localBranch: string | undefined;
   switch (t.kind) {
@@ -376,7 +376,7 @@ async function runCase(c: Case, root: string): Promise<void> {
       rev = originTips.get(head)!;
       const baseTip = originTips.get(prBase)!;
       targetArg = "1";
-      prStub = { name: head, head: rev, base: baseTip };
+      prStub = { name: head, head: rev, base: baseTip, baseRefName: prBase };
       base = mbOf(baseTip, rev);
       break;
     }
@@ -489,7 +489,7 @@ async function runCase(c: Case, root: string): Promise<void> {
     await Deno.mkdir(`${root}/bin`);
     await Deno.writeTextFile(
       `${root}/bin/gh`,
-      `#!/bin/sh\nprintf '${prStub.name}\\t${shas.get(prStub.head)}\\t${shas.get(prStub.base)}\\tfalse\\to\\npull request: T\\n\\nBODY\\n'\n`,
+      `#!/bin/sh\nprintf '${prStub.name}\\t${shas.get(prStub.head)}\\t${shas.get(prStub.base)}\\t${prStub.baseRefName}\\tfalse\\to\\npull request: T\\n\\nBODY\\n'\n`,
       { mode: 0o755 },
     );
     env.PATH = `${root}/bin:${Deno.env.get("PATH")}`;

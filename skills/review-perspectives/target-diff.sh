@@ -2,8 +2,8 @@
 # review-perspectives の手順 1: レビュー対象を作業ディレクトリの target.diff に書き出す。
 #
 # 使い方: target-diff.sh [<対象>] [-- <path>...]
-#   <対象> 無し: 今のチェックアウト (既定ブランチとの分岐点から先のコミット、未コミットの変更、未追跡のファイル)。detached HEAD のときは作業ディレクトリが commit ごとに別になる (反復はブランチか `<対象>` で行う)
-#   <対象> が数字だけ: PR 番号 (gh で head ブランチと base の commit を引く。分岐点は base の commit と head の merge-base。GitHub は base の commit をマージの時点で止めるので、マージ済みでも全コミットが対象で、head に取り込んだ base のコミットは対象外。head が fork にあれば作業ディレクトリの系列は `<head の owner>:<head のブランチ名>`)
+#   <対象> 無し: 今のチェックアウト (既定ブランチとの分岐点から先のコミット、未コミットの変更、未追跡のファイル)。レビューと修正の反復はブランチ名か PR 番号で回す (detached HEAD と revision の指定は commit ごとに別の作業ディレクトリになり、exclusions.md と findings.md は引き継がれない)
+#   <対象> が数字だけ: PR 番号 (gh で head ブランチと base の commit を引く。base の tip は gh の応答の後に fetch する (応答までの間に base が進むことがあり、baseRefOid がまだ手元に無いことがある)。分岐点は base の commit と head の merge-base。GitHub は base の commit をマージの時点で止めるので、マージ済みでも全コミットが対象で、head に取り込んだ base のコミットは対象外。head が fork にあれば作業ディレクトリの系列は `<head の owner>:<head のブランチ名>`)
 #   <対象> がそれ以外: 手元のブランチ、origin のブランチ、revision の順に解決する。既定ブランチの first-parent の線上にある revision は、その 1 コミットだけが対象 (fast-forward や rebase でマージ済みのブランチの分岐点は履歴に残らない。全コミットは PR 番号で指定する)
 #   <path>: log と diff をそのパスに限る。リポジトリのルートからの相対パスで (cwd によらない)、glob も pathspec magic も無いそのままのパス名。
 #     - 絶対パスは止まる (対象を指定すると別の worktree に切り替えるので、チェックアウトの絶対パスは対象によって通ったり外になったりする)
@@ -48,8 +48,8 @@ if [ -z "$target" ]; then
 elif [[ $target =~ ^[0-9]+$ ]]; then
   origin_url=$(git remote get-url origin)
   # タイトルと説明も同じ問い合わせで取る (別に取ると、間の push で head と食い違う)
-  info=$(gh pr view "$target" -R "$origin_url" --json headRefName,headRefOid,baseRefOid,isCrossRepository,headRepositoryOwner,title,body --jq '([.headRefName, .headRefOid, .baseRefOid, (.isCrossRepository|tostring), .headRepositoryOwner.login] | @tsv), "pull request: \(.title)\n\n\(.body)"')
-  IFS=$'\t' read -r name rev base_oid cross owner <<<"${info%%$'\n'*}"
+  info=$(gh pr view "$target" -R "$origin_url" --json headRefName,headRefOid,baseRefOid,baseRefName,isCrossRepository,headRepositoryOwner,title,body --jq '([.headRefName, .headRefOid, .baseRefOid, .baseRefName, (.isCrossRepository|tostring), .headRepositoryOwner.login] | @tsv), "pull request: \(.title)\n\n\(.body)"')
+  IFS=$'\t' read -r name rev base_oid base_ref_name cross owner <<<"${info%%$'\n'*}"
   # fork からの PR は head が別リポジトリなので、同じブランチ名の別の fork の PR と系列を分ける。
   # headRepositoryOwner は fork を削除すると null になり (GraphQL の owner が空)、その場合は系列を付けられない。
   if [ "$cross" = true ]; then
@@ -59,6 +59,8 @@ elif [[ $target =~ ^[0-9]+$ ]]; then
   fi
   pr_header=${info#*$'\n'}
   git fetch -q --no-write-fetch-head origin "refs/pull/$target/head"
+  # 失敗しても (base を force push・削除した) 次の merge-base の失敗で捕まえる
+  git fetch -q --no-write-fetch-head origin "refs/heads/$base_ref_name" || true
   pr_base=$(git merge-base "$base_oid" "$rev") || { echo "target-diff.sh: PR の base の commit $base_oid と head の merge-base が取れない" >&2; exit 1; }
 # origin/HEAD は既定ブランチを指す symref なので、HEAD を origin のブランチとして引かない (ブランチ名に HEAD は使えない)
 elif rev=$(git rev-parse --verify -q "refs/heads/$target") || { [ "$target" != HEAD ] && rev=$(git rev-parse --verify -q "refs/remotes/origin/$target"); }; then

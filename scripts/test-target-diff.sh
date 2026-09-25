@@ -114,7 +114,7 @@ git checkout -q prhead && git merge -q -m M2 prbase && commit p2.txt && git push
 prhead_sha=$(git rev-parse prhead) && prbase_sha=$(git rev-parse prbase)
 mkdir "$tmp/bin" && cat > "$tmp/bin/gh" <<EOF && chmod +x "$tmp/bin/gh"
 #!/bin/sh
-printf 'prhead\t%s\t%s\tfalse\to\npull request: T\n\nPR-BODY\n' $prhead_sha $prbase_sha
+printf 'prhead\t%s\t%s\tprbase\tfalse\to\npull request: T\n\nPR-BODY\n' $prhead_sha $prbase_sha
 EOF
 PATH=$tmp/bin:$PATH run . 1 && expect "base を取り込んだ PR" "p1.txt p2.txt" "M2 p1.txt p2.txt"
 grep -q '^PR-BODY$' "$diff" || { echo "PR 番号: PR の説明が target.diff に無い" >&2; status=1; }
@@ -126,7 +126,7 @@ git checkout -q feature
 # fork からの PR (isCrossRepository) は head の owner を系列に加え、同じ head・base commit・同じブランチ名の同一リポジトリの PR と作業ディレクトリを分ける
 mkdir "$tmp/bin-fork" && cat > "$tmp/bin-fork/gh" <<EOF && chmod +x "$tmp/bin-fork/gh"
 #!/bin/sh
-printf 'prhead\t%s\t%s\ttrue\tfork\npull request: T\n\nPR-BODY\n' $prhead_sha $prbase_sha
+printf 'prhead\t%s\t%s\tprbase\ttrue\tfork\npull request: T\n\nPR-BODY\n' $prhead_sha $prbase_sha
 EOF
 PATH=$tmp/bin-fork:$PATH run . 1 && expect "fork からの PR" "p1.txt p2.txt" "M2 p1.txt p2.txt"
 [ "$(sed -n 's/^work=//p' <<< "$out")" != "$same_repo_work" ] || { echo "fork からの PR: 同じリポジトリの PR と作業ディレクトリを共有している" >&2; status=1; }
@@ -141,9 +141,25 @@ run . fork/prhead
 # fork を削除した PR (isCrossRepository は true のまま、headRepositoryOwner が null で owner の列が空) は止まる
 mkdir "$tmp/bin-gone" && cat > "$tmp/bin-gone/gh" <<EOF && chmod +x "$tmp/bin-gone/gh"
 #!/bin/sh
-printf 'prhead\t%s\t%s\ttrue\t\npull request: T\n\nPR-BODY\n' $prhead_sha $prbase_sha
+printf 'prhead\t%s\t%s\tprbase\ttrue\t\npull request: T\n\nPR-BODY\n' $prhead_sha $prbase_sha
 EOF
 PATH=$tmp/bin-gone:$PATH fails "fork を削除した PR" . 1
+
+# base ブランチが、clone の最初の fetch と gh の応答の間に進む競合。応答の baseRefOid は clone にまだ無いが、
+# 応答の後の明示的な fetch で取れて merge-base が引ける (gh の stub 自身が呼ばれた時点で origin を進め、進めた後の commit を報告する)
+git checkout -q -b prhead3 origin/main && commit p3.txt && git push -q origin prhead3:refs/pull/2/head
+git checkout -q -b prbase3 origin/main && commit b3.txt && git push -q origin prbase3
+prhead3_sha=$(git rev-parse prhead3)
+git clone -q "$tmp/origin.git" "$tmp/advance" && git -C "$tmp/advance" checkout -q prbase3
+echo b3adv.txt > "$tmp/advance/b3adv.txt" && git -C "$tmp/advance" add -- b3adv.txt && git -C "$tmp/advance" commit -q -m b3adv.txt
+prbase3_adv_sha=$(git -C "$tmp/advance" rev-parse HEAD)
+mkdir "$tmp/bin-advance" && cat > "$tmp/bin-advance/gh" <<EOF && chmod +x "$tmp/bin-advance/gh"
+#!/bin/sh
+git -C "$tmp/advance" push -q "$tmp/origin.git" prbase3:refs/heads/prbase3
+printf 'prhead3\t%s\t%s\tprbase3\tfalse\to\npull request: T\n\nPR-BODY\n' $prhead3_sha $prbase3_adv_sha
+EOF
+PATH=$tmp/bin-advance:$PATH run . 2 && expect "base が最初の fetch の後、gh の応答までに進んだ PR" "p3.txt" "p3.txt"
+git checkout -q feature
 
 # clone の形: --single-branch、shallow
 cd "$tmp"

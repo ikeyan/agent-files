@@ -36,4 +36,19 @@ if git -C clone push origin main 2>/dev/null; then
   status=1
 fi
 
+# gh.md の push の手順は、結果によらず rm -f で token を消す。存在しない remote 名は
+# git push が hook (remote に問い合わせた後にしか呼ばれない) より前に失敗するので、その cleanup を検査できる
+if (cd clone; t=$(git rev-parse --git-dir)/push-ok; touch "$t"; git push -u nonexistent-remote main; s=$?; rm -f "$t"; exit "$s") 2>err3.txt; then
+  echo "存在しない remote への push が通った" >&2
+  status=1
+fi
+grep -q "does not appear to be a git repository" err3.txt || { echo "存在しない remote への push のエラーが違う — $(cat err3.txt)" >&2; status=1; }
+[ ! -e "$git_dir/push-ok" ] || { echo "hook より前に失敗した push の後、手順の cleanup で token が消えない" >&2; status=1; }
+
+# cleanup で token が消えたので、続く (無関係な) push は token 無しで止まる
+if git -C clone push origin main 2>/dev/null; then
+  echo "手順の cleanup の後、token 無しで push が通った" >&2
+  status=1
+fi
+
 exit "$status"

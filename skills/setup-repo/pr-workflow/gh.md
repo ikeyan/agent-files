@@ -2,7 +2,7 @@
 
 gh 2.98.0 で `--help` と実行を確認したもの。「未実測」と書いたものだけ確認していない。
 
-- **ブランチの push**: `touch "$(git rev-parse --git-dir)/push-ok" && git push -u <remote> <branch>`。リポの `hooks/pre-push` がこの token を消費するので、push は毎回意図して token を作ったときだけ通る。作り直したブランチの上書きは pr-workflow の「ブランチの更新」。
+- **ブランチの push**: `t=$(git rev-parse --git-dir)/push-ok; touch "$t"; git push -u <remote> <branch>; s=$?; rm -f "$t"; (exit $s)`。リポの `hooks/pre-push` がこの token を消費するので、push は毎回意図して token を作ったときだけ通る。`rm -f` は push が hook より前 (存在しない remote 名・到達不能・認証エラー) で失敗しても token を消す (`pre-push` は remote に問い合わせた後に呼ばれるので、それより前の失敗では消費されない。残ると後の無関係な push が通ってしまう)。作り直したブランチの上書きは pr-workflow の「ブランチの更新」。
 - **PR の作成**: `gh pr create --base <既定ブランチ> --title <title> --body-file <file>`。下書きは `--draft`、作らずに内容を確かめるなら `--dry-run`。
 - **PR の説明の更新**: `gh pr edit <n> --body-file <file>`。draft の切り替えは `gh pr edit` でなく `gh pr ready` (`--undo` で draft へ戻す)。
 - **コメントの読み取り**:
