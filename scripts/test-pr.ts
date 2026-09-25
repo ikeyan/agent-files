@@ -1001,6 +1001,25 @@ async function checkGuardFailure(what: string, args: string[], env: Record<strin
   }
 }
 
+/**
+ * URL のスキームの取り違え (TLS を話さない相手に https で GITHUB_API_URL を向ける) と、CURL_CA_BUNDLE が読めない設定が、ともに curl 自身の
+ * 恒久的な失敗として exit 3 と error の行になることを確かめる。生成器は GITHUB_API_URL や CURL_CA_BUNDLE の形を変えないので、ここで固定して確かめる。
+ */
+async function checkPermanentCurlConfigFailures() {
+  const server = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, () => new Response("not tls"));
+  try {
+    const api = `https://127.0.0.1:${(server.addr as Deno.NetAddr).port}`;
+    await checkPermanentCurlFailure("URL のスキームの取り違え検査", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: api });
+    await checkPermanentCurlFailure(
+      "CURL_CA_BUNDLE が読めない検査",
+      ["reply-resolve", REPO, String(PR), "1", "x"],
+      { GITHUB_API_URL: api, CURL_CA_BUNDLE: `${tmpRoot}/no-such-ca-bundle` },
+    );
+  } finally {
+    await server.shutdown();
+  }
+}
+
 // ---- 入口 ----
 
 const tmpRoot = await Deno.makeTempDir({ prefix: "pr-pbt." });
@@ -1012,6 +1031,7 @@ try {
     ["watch", "o r/x", String(PR), await Deno.makeTempDir({ dir: tmpRoot }), "1"],
     {},
   );
+  await checkPermanentCurlConfigFailures();
   // 1 件に数秒かかるので、縮小せずに最初の反例で止める (FC_SEED と表示される path で再現する)
   const params = { numRuns, ...(seedEnv ? { seed: Number(seedEnv) } : {}), endOnFailure: true, verbose: fc.VerbosityLevel.Verbose };
   await fc.assert(p1, params);
