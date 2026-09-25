@@ -17,10 +17,10 @@
 #     自分 (トークンの持ち主) の通常のコメントは出す (エージェントの返信とユーザー自身の指示を見分けられない)。
 #   pr.sh reply-resolve <owner>/<repo> <PR 番号> <スレッド先頭のレビューコメントの id (整数)> <本文>
 #     スレッドに返信し、そのスレッドを resolve する。
-#   環境変数 GITHUB_API_URL: API の基点 (既定 https://api.github.com)。REST と GraphQL (<基点>/graphql) が同じ基点の下にある api.github.com の配置だけを扱い、GHES (REST は /api/v3、GraphQL は /api/graphql) は対象外。受け付ける形は https://<host> か http://<host>[:port] (末尾の / 無し) で、それ以外は起動時に exit 2 で止まる。
+#   環境変数 GITHUB_API_URL: API の基点 (既定 https://api.github.com)。REST と GraphQL (<基点>/graphql) が同じ基点の下にある api.github.com の配置だけを扱い、GHES (REST は /api/v3、GraphQL は /api/graphql) は対象外。受け付ける形は authority だけ (スキーム・ホスト名か IPv4 リテラル・任意のポート。IPv6 リテラルは対象外、パス・クエリ・フラグメント・空白は不可、末尾の / 無し) で、それ以外は起動時に exit 2 で止まる。
 # 出力 (watch、1 行 1 件): open・new・changed に続けてイベント文。説明の変更は "description changed" の行に unified diff が続く。
 #   auth で始まる行を出して終わったら、トークンが無いか無効 (401)。error で始まる行なら、PR 番号・リポジトリ・権限・問い合わせの誤り (3xx、401 以外の 4xx、レート制限でない GraphQL の errors、curl 自身の URL・プロトコルの誤り)。3xx はリポジトリの改名・移動で、新しい名前で起動し直す。
-# 失敗: 一時的な API の失敗 (ネットワーク・5xx・レート制限の 403・429) は、watch では出さずに間隔を倍にして (上限 900 秒) 再試行し、reply-resolve では止まる。curl 自身の失敗も同様に恒久・一時に分ける: 名前解決・接続・timeout・応答無し・送受信・途中切断 (curl(1) の EXIT CODES の 6・7・18・28・52・55・56) など再試行で直りうるコードだけを一時的とし、それ以外 (URL・プロトコル・TLS の設定・CA など) は恒久 (error の行で 3)。
+# 失敗: 一時的な API の失敗 (ネットワーク・5xx・レート制限の 403・429) は、watch では出さずに間隔を倍にして (上限 900 秒) 再試行し、reply-resolve では止まる。curl 自身の失敗も同様に恒久・一時に分ける: プロキシ・名前解決・接続・timeout・応答無し・送受信・途中切断 (curl(1) の EXIT CODES の 5・6・7・18・28・52・55・56) など再試行で直りうるコードだけを一時的とし、それ以外 (URL・プロトコル・TLS の設定・CA など) は恒久 (error の行で 3)。
 #   reply-resolve は、止まった後にそのままやり直してよい (スレッドに自分の同じ本文の返信があれば返信を重ねない)。同じスレッドに並行に起動しない (返信の有無を見てから返信するまでに割り込まれると、返信が重なる)。
 # 事前条件: curl と jq。トークンは GH_TOKEN か gh auth token。
 # GraphQL の $cursor と jq の式は、単一引用符で展開させずに渡す
@@ -32,8 +32,8 @@ cmd=$1 repo=$2 pr=$3
 # 無いと一時的な失敗と区別できずに再試行し続けるので、先に確かめる
 if ! command -v curl > /dev/null || ! command -v jq > /dev/null; then echo "pr.sh: curl と jq が要る" >&2; exit 2; fi
 api=${GITHUB_API_URL:-https://api.github.com}
-# スキームを省いた値は curl がホスト名として解釈して resolve の失敗 (一時的) になるので、形はここで閉じる
-[[ $api =~ ^https?://[^/]+$ ]] || { echo "pr.sh: GITHUB_API_URL は https://<host> か http://<host>[:port] (末尾の / 無し): $api" >&2; exit 2; }
+# [^/]+ は authority だけでなくクエリ・フラグメント・空白も通し、/graphql を続けると意図しないパスを叩く。authority (ホスト名か IPv4 リテラル・任意のポート。IPv6 リテラルは対象外) を列挙して閉じる。スキームを省いた値は curl がホスト名として解釈して resolve の失敗 (一時的) になるので、それもここで弾く
+[[ $api =~ ^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?$ ]] || { echo "pr.sh: GITHUB_API_URL は https://<host> か http://<host>[:port] (authority のみ、末尾の / 無し、IPv6 は対象外): $api" >&2; exit 2; }
 token=${GH_TOKEN:-$(gh auth token)}
 [ -n "$token" ] || { echo "auth GitHub のトークンが無い。GH_TOKEN を設定するか gh auth login する"; exit 1; }
 
@@ -44,9 +44,9 @@ req() { # <メソッド> <URL> [<JSON の本文>]: 応答の本文を出す。�
     -w '\n%{http_code}\t%header{x-ratelimit-remaining}\t%header{retry-after}' "$2")
   cc=$?
   if [ "$cc" != 0 ]; then
-    # curl(1) の EXIT CODES: 設定の誤り (URL・プロトコル・TLS・CA など) は種類が多く網羅できないので、直りうるコードだけを一時的として列挙し、残りは恒久とする。6 (resolve)・7 (connect)・18 (途中で切れる)・28 (timeout)・52 (応答無し)・55 (送信)・56 (受信) はネットワークの状態次第で直りうる。35 (TLS handshake) は URL のスキームの取り違えでも出るので恒久に含める (test-pr.ts の checkPermanentCurlConfigFailures で固定)。curl の stderr (-sS) はここでは捕らえず、素通しでこのスクリプトの stderr に出ているので、error の行には code と URL だけ出す
+    # curl(1) の EXIT CODES: 設定の誤り (URL・プロトコル・TLS・CA など) は種類が多く網羅できないので、直りうるコードだけを一時的として列挙し、残りは恒久とする。5 (プロキシの resolve)・6 (resolve)・7 (connect)・18 (途中で切れる)・28 (timeout)・52 (応答無し)・55 (送信)・56 (受信) はネットワークの状態次第で直りうる。35 (TLS handshake) は URL のスキームの取り違えでも出るので恒久に含める (test-pr.ts の checkPermanentCurlConfigFailures で固定)。curl の stderr (-sS) はここでは捕らえず、素通しでこのスクリプトの stderr に出ているので、error の行には code と URL だけ出す
     case $cc in
-      6 | 7 | 18 | 28 | 52 | 55 | 56) return 1 ;;
+      5 | 6 | 7 | 18 | 28 | 52 | 55 | 56) return 1 ;;
       *) echo "error curl $cc: $2" >&2; return 3 ;;
     esac
   fi

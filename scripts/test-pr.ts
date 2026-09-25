@@ -1026,6 +1026,12 @@ const tmpRoot = await Deno.makeTempDir({ prefix: "pr-pbt." });
 try {
   await checkGuardFailure("GITHUB_API_URL の検査 (スペースが入る)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "not a url" });
   await checkGuardFailure("GITHUB_API_URL の検査 (スキーム省略)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "not-a-url" });
+  await checkGuardFailure("GITHUB_API_URL の検査 (クエリが付く)", ["reply-resolve", REPO, String(PR), "1", "x"], {
+    GITHUB_API_URL: "http://127.0.0.1:8080?x",
+  });
+  await checkGuardFailure("GITHUB_API_URL の検査 (フラグメントが付く)", ["reply-resolve", REPO, String(PR), "1", "x"], {
+    GITHUB_API_URL: "http://127.0.0.1:8080#f",
+  });
   await checkPermanentCurlFailure(
     "owner/repo にスペースが入る検査",
     ["watch", "o r/x", String(PR), await Deno.makeTempDir({ dir: tmpRoot }), "1"],
