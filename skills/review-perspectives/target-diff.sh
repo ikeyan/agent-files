@@ -2,7 +2,7 @@
 # review-perspectives の手順 1: レビュー対象を作業ディレクトリの target.diff に書き出す。
 #
 # 使い方: target-diff.sh [<対象>] [-- <path>...]
-#   <対象> 無し: 今のチェックアウト (既定ブランチとの分岐点から先のコミット、未コミットの変更、未追跡のファイル)
+#   <対象> 無し: 今のチェックアウト (既定ブランチとの分岐点から先のコミット、未コミットの変更、未追跡のファイル)。detached HEAD のときは作業ディレクトリが commit ごとに別になる (反復はブランチか `<対象>` で行う)
 #   <対象> が数字だけ: PR 番号 (gh で head ブランチと base の commit を引く。分岐点は base の commit と head の merge-base。GitHub は base の commit をマージの時点で止めるので、マージ済みでも全コミットが対象で、head に取り込んだ base のコミットは対象外)
 #   <対象> がそれ以外: 手元のブランチ、origin のブランチ、revision の順に解決する。既定ブランチの first-parent の線上にある revision は、その 1 コミットだけが対象 (fast-forward や rebase でマージ済みのブランチの分岐点は履歴に残らない。全コミットは PR 番号で指定する)
 #   <path>: log と diff をそのパスに限る。リポジトリのルートからの相対パスで (cwd によらない)、glob も pathspec magic も無いそのままのパス名。
