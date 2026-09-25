@@ -9,17 +9,20 @@ cd "$(dirname "$0")"
 
 readonly_mode=${VERIFY_READONLY:-}
 status=0
-# hooks/pre-push は core.hooksPath で有効になる。clone の設定は作業ツリーに入らないのでここで揃える。後の検査が落ちても揃っているように、検査より先に行う。
+# 後の検査が落ちても hooks/pre-push が有効であるよう、検査より先に行う。local に書いても worktree・command スコープの値が勝つので、書いた後の実効値で確かめる。
 hooks_path=$(git config --get core.hooksPath || true)
 if [ "$hooks_path" != hooks ]; then
   if [ -n "$readonly_mode" ]; then
     echo "core.hooksPath (${hooks_path:-未設定}) != hooks。 Execute: git config core.hooksPath hooks" >&2
     status=1
-  elif git config core.hooksPath hooks; then
-    echo "core.hooksPath: ${hooks_path:-未設定} から hooks にした"
-  else
+  elif ! git config core.hooksPath hooks; then
     echo "core.hooksPath を hooks にできない。 Execute: git config core.hooksPath hooks" >&2
     status=1
+  elif [ "$(git config --get core.hooksPath)" != hooks ]; then
+    echo "core.hooksPath: local を hooks にしたが、別の設定元の値が勝つ ($(git config --show-origin --show-scope --get core.hooksPath | tr '\t' ' '))。 Execute: git config --file <その file> --unset core.hooksPath (command なら GIT_CONFIG_* か -c を外す)" >&2
+    status=1
+  else
+    echo "core.hooksPath: ${hooks_path:-未設定} から hooks にした"
   fi
 fi
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# hooks/pre-push を、token (<git-dir>/push-ok) の有無で push を通す・止めることと、verify.sh が検査に落ちる clone でも core.hooksPath を hooks にすることを検査する。verify.sh から呼ぶ。
+# hooks/pre-push を、token (<git-dir>/push-ok) の有無で push を通す・止めることと、verify.sh が検査に落ちる clone でも core.hooksPath を hooks にし、hooks にできなければ落ちることを検査する。verify.sh から呼ぶ。
 # ネットワークは使わない (bare リポジトリを file システム上に作って push する)。
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -64,5 +64,17 @@ if (cd repo && env -u VERIFY_READONLY ./verify.sh) > /dev/null 2>&1; then
   status=1
 fi
 [ "$(git -C repo config --get core.hooksPath)" = hooks ] || { echo "検査に落ちた verify.sh が core.hooksPath を hooks にしていない" >&2; status=1; }
+
+# worktree スコープの値が local に勝つ clone では、verify.sh は落ちて設定元を示し、worktree の設定は書き換えない
+git clone -q "$here" repo2
+cp "$here/verify.sh" repo/bad.sh repo2/
+git -C repo2 config extensions.worktreeConfig true
+git -C repo2 config --worktree core.hooksPath /dev/null
+if (cd repo2 && env -u VERIFY_READONLY ./verify.sh) > /dev/null 2> err4.txt; then
+  echo "worktree スコープの core.hooksPath が勝つのに verify.sh が通った" >&2
+  status=1
+fi
+grep -q "別の設定元の値が勝つ (worktree " err4.txt || { echo "worktree スコープが勝つことを verify.sh が示さない — $(cat err4.txt)" >&2; status=1; }
+[ "$(git -C repo2 config --worktree --get core.hooksPath)" = /dev/null ] || { echo "verify.sh が worktree スコープの core.hooksPath を書き換えた" >&2; status=1; }
 
 exit "$status"
