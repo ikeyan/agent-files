@@ -1,6 +1,6 @@
 ---
 name: organizing-agent-docs
-description: Use when recording durable knowledge or feedback for future sessions, editing AGENTS.md / REVIEW.md / a skill / the canon ledger (verified facts about external dependencies, incidents), or when AGENTS.md is growing long.
+description: Use when recording durable knowledge or feedback for future sessions, editing AGENTS.md / a review perspective / a skill / the canon ledger (verified facts about external dependencies, incidents), or when AGENTS.md is growing long.
 ---
 
 # ガイダンスの置き場所

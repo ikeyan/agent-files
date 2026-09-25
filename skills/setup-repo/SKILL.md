@@ -48,23 +48,13 @@ description: Use when creating a new repository, bringing an existing repository
 
 ## 3. 検証
 
-- REVIEW.md を ikeyan/agent-files からコピーする。
 - フォーマッター・リンター・静的解析器を入れる (oxfmt, oxlint, typescript 等、言語や目的に応じて)。
 - テストの仕組みを用意する (外部依存の挙動も内部ロジックも)。property testing・table driven test を活用する。
-- 単一検証コマンドを用意する (AGENTS.md 設計指針)。上記すべてと REVIEW.md の同期チェックを 1 つの入口に集約する。
-  - 同期チェックは frontmatter の `source:` (raw URL) を取得して diff する:
-
-    ```sh
-    (f=$(mktemp -p "${TMPDIR:-/tmp}"); trap 'rm -f "$f"' EXIT; curl -fsSL --connect-timeout 10 --max-time 60 --retry 2 --retry-connrefused "$(sed -n '/^source: /{s///p;q;}' REVIEW.md)" -o "$f" && { diff -u "$f" REVIEW.md || { [ -n "$WARN" ] && echo 'REVIEW.md: 上流と違う'; }; })
-    ```
-
-  - PR の CI では `WARN=1` を渡して drift を警告に留め、別リポとの同期 drift という PR と無関係なエラーで CI を落とさない。取得失敗と `source:` 欠落は `WARN` によらず落とす。
-  - スニペットの各要素は省くと壊れる。根拠 (canon の shell facts):
-    - `( )`: `canon: facts/shell/trap-exit-replaces-callers-handler`
-    - `mktemp -p`: `canon: facts/shell/mktemp-tmpdir-handling-bsd-vs-gnu`
-    - `{ }`: `canon: facts/shell/and-or-list-left-associative`
-    - `q;`: `canon: facts/shell/bsd-sed-block-q-requires-semicolon`
-  - `curl` のフラグは検証入口の待ち時間を有界にし、一過性の失敗で落ちないようにする。
+- 単一検証コマンドを用意する (AGENTS.md 設計指針)。上記すべてを 1 つの入口に集約する。
+- レビューは review-perspectives skill で行う。観点は plugin で配られる。
+  - テストフレームワーク・ランタイム・リポ自身の終了ハンドラや資源の型の名前を、ルートの `review-perspectives/<観点>.md` に書く (review-perspectives の [repo-supplement.md](../review-perspectives/repo-supplement.md))。
+  - managed Code Review (Claude GitHub App) を使うリポでは、効かせたい観点をルートの `REVIEW.md` に書く。managed Code Review はルートの `REVIEW.md` しか読まない (`canon: facts/claude-code/review-md-consumers`)。
+  - 使わないリポには `REVIEW.md` とその同期チェックを置かず、既存のリポにあれば消す。
 
 ## 4. 検証済み事実台帳
 

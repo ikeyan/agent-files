@@ -5,7 +5,7 @@
 - 作業が論理単位に達したら確認を取らず自律的にコミットする。指示待ちしない。
 - コミット前にレビューする。判定対象は diff でなく結果のファイル — 変更箇所をファイル全体 (先頭コメント含む) の文脈で、その変更を見ていない初見読者として読み、本 AGENTS.md の指針に沿わなければ修正してからコミットする。
 - レビュー指摘の修正も初回実装と同じ規律を通す (外部依存の契約確認・検証)。レビュー起点のコードは未検証のまま積み上がりやすい。機構の作り直しを要する指摘が出たら修正の連鎖を止め、契約確認 → 実測 → 再設計に戻る。
-- レビュー→修正を反復するときの終了条件は「実害シナリオつき correctness 指摘の消滅」。cleanup 指摘のゼロは目指さない (高強度のレビューはゼロに収束しない)。却下した指摘は理由を明文化し、次のレビューへ除外条件として引き継ぐ。
+- push の前に review-perspectives スキルでレビュー→修正を反復し、終了条件を満たしてから push する。終了条件は「実害シナリオつき correctness 指摘の消滅」。cleanup 指摘のゼロは目指さない (高強度のレビューはゼロに収束しない)。却下した指摘は理由を明文化し、次のレビューへ除外条件として引き継ぐ。
 
 ## 設計
 
@@ -17,7 +17,13 @@
 
 ## このリポの検証
 
-- 単一検証コマンドは `./verify.sh` (shellcheck・`deno check`・JSON の構文と schema・Markdown のリポ内リンク・`.claude/skills` と `skills/` の対応)。CI も同じものを回す。
+- 単一検証コマンドは `./verify.sh`。CI も同じものを回す。含むもの:
+  - shellcheck
+  - `deno check`
+  - review-perspectives の `target-diff.sh` の fixture
+  - JSON の構文と schema
+  - Markdown のリポ内リンク
+  - `.claude/skills` と `skills/` の対応
 - `./verify.sh` は `.claude/skills` の symlink のずれをその場で直す。CI は `VERIFY_READONLY=1` で直さず落とす。
 - 必要なもの: `shellcheck`、`deno`、`www.schemastore.org` への到達。
 
@@ -27,4 +33,8 @@
 
 ## 文書 (Markdown) の書き方
 
-REVIEW.md の「自然言語の書き方」に従う。
+review-perspectives の次の観点に従う。
+
+- [ハードラップしない](skills/review-perspectives/perspectives/ハードラップしない.md)
+- [論理構造を散文に埋め込まない](skills/review-perspectives/perspectives/論理構造を散文に埋め込まない.md)
+- [読者を想定して書く](skills/review-perspectives/perspectives/読者を想定して書く.md)
