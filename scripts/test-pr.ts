@@ -1032,6 +1032,13 @@ try {
   await checkGuardFailure("GITHUB_API_URL の検査 (フラグメントが付く)", ["reply-resolve", REPO, String(PR), "1", "x"], {
     GITHUB_API_URL: "http://127.0.0.1:8080#f",
   });
+  await checkGuardFailure("GITHUB_API_URL の検査 (ポート 0)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "http://127.0.0.1:0" });
+  await checkGuardFailure("GITHUB_API_URL の検査 (ポート 00000)", ["reply-resolve", REPO, String(PR), "1", "x"], {
+    GITHUB_API_URL: "http://127.0.0.1:00000",
+  });
+  await checkGuardFailure("GITHUB_API_URL の検査 (ポート 65536、範囲外)", ["reply-resolve", REPO, String(PR), "1", "x"], {
+    GITHUB_API_URL: "http://127.0.0.1:65536",
+  });
   await checkPermanentCurlFailure(
     "owner/repo にスペースが入る検査",
     ["watch", "o r/x", String(PR), await Deno.makeTempDir({ dir: tmpRoot }), "1"],
