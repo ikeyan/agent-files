@@ -17,7 +17,7 @@
 #     自分 (トークンの持ち主) の通常のコメントは出す (エージェントの返信とユーザー自身の指示を見分けられない)。
 #   pr.sh reply-resolve <owner>/<repo> <PR 番号> <スレッド先頭のレビューコメントの id (整数)> <本文>
 #     スレッドに返信し、そのスレッドを resolve する。
-#   環境変数 GITHUB_API_URL: API の基点 (既定 https://api.github.com)。REST と GraphQL (<基点>/graphql) が同じ基点の下にある api.github.com の配置だけを扱い、GHES (REST は /api/v3、GraphQL は /api/graphql) は対象外。受け付ける形は authority だけ (スキーム・ホスト名か IPv4 リテラルの形・ポートは 1〜65535。ホスト名は RFC 1123 のラベル (英数字で始まり英数字で終わる、間にハイフン可) をドットでつないだもので全体は 253 文字以内 (RFC 1035)。IPv6 リテラルは対象外、パス・クエリ・フラグメント・空白は不可、末尾の / 無し) で、それ以外は起動時に exit 2 で止まる。この構文を満たしながら範囲外の IPv4 (300.1.1.1 など) や存在しないホストは resolve の失敗になり、これは一時的な失敗として扱う (後述)。
+#   環境変数 GITHUB_API_URL: API の基点 (既定 https://api.github.com)。REST と GraphQL (<基点>/graphql) が同じ基点の下にある api.github.com の配置だけを扱い、GHES (REST は /api/v3、GraphQL は /api/graphql) は対象外。受け付ける形は次の 2 つだけで、それ以外 (他ホスト宛ての http:// を含む) は起動時に exit 2 で止まる: https://<host>[:port] (host はホスト名か IPv4 リテラルの形。ホスト名は RFC 1123 のラベル (英数字で始まり英数字で終わる、間にハイフン可) をドットでつないだもので全体は 253 文字以内 (RFC 1035)、IPv6 リテラルは対象外)、と http://127.0.0.1[:port] (トークンを Authorization ヘッダに載せて平文で送るため、http は loopback 宛てだけ許す)。ポートはどちらも 1〜65535、authority のみでパス・クエリ・フラグメント・空白は不可、末尾の / 無し。この構文を満たしながら範囲外の IPv4 (300.1.1.1 など) や存在しないホストは resolve の失敗になり、これは一時的な失敗として扱う (後述)。
 # 出力 (watch、1 行 1 件): open・new・changed に続けてイベント文。説明の変更は "description changed" の行に unified diff が続く。
 #   auth で始まる行を出して終わったら、トークンが無いか無効 (401)。error で始まる行なら、PR 番号・リポジトリ・権限・問い合わせの誤り (3xx、401 以外の 4xx、レート制限でない GraphQL の errors、curl 自身の URL・プロトコルの誤り)。3xx はリポジトリの改名・移動で、新しい名前で起動し直す。
 # 失敗: 一時的な API の失敗 (ネットワーク・5xx・レート制限の 403・429) は、watch では出さずに間隔を倍にして (上限 900 秒) 再試行し、reply-resolve では止まる。curl 自身の失敗も同じ規則 (相手や経路の状態で結果が変わりうる転送の失敗は一時的、ローカルの設定・引数・TLS の信頼・機能の欠如は再試行しても変わらないので恒久) で分ける: 一時的は curl(1) の EXIT CODES の 5・6・7・16・18・28・52・55・56・89・92・95・96 (名前解決・接続・送受信・途中切断・timeout・HTTP/2・HTTP/3・QUIC の枠組みの失敗。内訳は req() の case の直前を見る)、それ以外 (URL・プロトコル・TLS の設定・CA など) は恒久 (error の行で 3)。
@@ -32,12 +32,18 @@ cmd=$1 repo=$2 pr=$3
 # 無いと一時的な失敗と区別できずに再試行し続けるので、先に確かめる
 if ! command -v curl > /dev/null || ! command -v jq > /dev/null; then echo "pr.sh: curl と jq が要る" >&2; exit 2; fi
 api=${GITHUB_API_URL:-https://api.github.com}
-guard_msg="pr.sh: GITHUB_API_URL は https://<host> か http://<host>[:port] (authority のみ、ポートは 1〜65535、末尾の / 無し、IPv6 は対象外): $api"
+guard_msg="pr.sh: GITHUB_API_URL は https://<host>[:port] か http://127.0.0.1[:port] (authority のみ、ポートは 1〜65535、末尾の / 無し、IPv6 は対象外。トークンを Authorization ヘッダに載せるため平文の http は loopback 宛てだけ): $api"
 # ホスト名は RFC 1123 のラベルをドットでつないだもの、全体で 253 文字以内 (RFC 1035)、ポートは 1〜65535、IPv6 は対象外
 label='[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?'
-[[ $api =~ ^https?://$label(\.$label)*(:[0-9]{1,5})?$ ]] || { echo "$guard_msg" >&2; exit 2; }
-host=${api#*://} host=${host%%:*}
-[ "${#host}" -le 253 ] || { echo "$guard_msg" >&2; exit 2; }
+[[ $api =~ ^(https?):// ]] || { echo "$guard_msg" >&2; exit 2; }
+if [ "${BASH_REMATCH[1]}" = http ]; then
+  # トークンを Authorization ヘッダに載せて平文で送るため、http は loopback (テスト用の fake) 宛てだけ許す (Codex 指摘: PR #18 review comment r4103373730)
+  [[ $api =~ ^http://127\.0\.0\.1(:[0-9]{1,5})?$ ]] || { echo "$guard_msg" >&2; exit 2; }
+else
+  [[ $api =~ ^https://$label(\.$label)*(:[0-9]{1,5})?$ ]] || { echo "$guard_msg" >&2; exit 2; }
+  host=${api#*://} host=${host%%:*}
+  [ "${#host}" -le 253 ] || { echo "$guard_msg" >&2; exit 2; }
+fi
 if [[ $api =~ :([0-9]+)$ ]]; then port=${BASH_REMATCH[1]}; else port=; fi
 [ -z "$port" ] || { [ "$((10#$port))" -ge 1 ] && [ "$((10#$port))" -le 65535 ]; } || { echo "$guard_msg" >&2; exit 2; }
 token=${GH_TOKEN:-$(gh auth token)}

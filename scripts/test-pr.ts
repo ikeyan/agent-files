@@ -1052,15 +1052,23 @@ try {
   await checkGuardFailure("GITHUB_API_URL の検査 (ポート 65536、範囲外)", ["reply-resolve", REPO, String(PR), "1", "x"], {
     GITHUB_API_URL: "http://127.0.0.1:65536",
   });
-  // ホストの文字クラスだけでは http://- や http://a..b も通り、curl の resolve 失敗 (一時的、exit 6) になって watch が再試行し続ける (Codex 指摘: PR #18 review comment r4101741414)。RFC 1123 のラベルで閉じて弾く
-  await checkGuardFailure("GITHUB_API_URL の検査 (ホストがハイフンだけ)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "http://-" });
-  await checkGuardFailure("GITHUB_API_URL の検査 (ホストがドットだけ)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "http://." });
-  await checkGuardFailure("GITHUB_API_URL の検査 (ラベルの間が空)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "http://a..b" });
-  await checkGuardFailure("GITHUB_API_URL の検査 (ラベルがハイフンで終わる)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "http://a-.b" });
+  // トークンは Authorization ヘッダで送るので、http は loopback 宛てだけ許す。他ホスト宛ての http はそれ以外の構文の妥当性に関わらず弾く (Codex 指摘: PR #18 review comment r4103373730)
+  await checkGuardFailure("GITHUB_API_URL の検査 (http で他ホスト)", ["reply-resolve", REPO, String(PR), "1", "x"], {
+    GITHUB_API_URL: "http://api.example.com",
+  });
+  await checkGuardFailure("GITHUB_API_URL の検査 (http で localhost)", ["reply-resolve", REPO, String(PR), "1", "x"], {
+    GITHUB_API_URL: "http://localhost:8080",
+  });
+  // 以下はホスト名のラベル・長さの検査そのものを確かめるので、上の loopback 限定に阻まれない https で張る
+  // ホストの文字クラスだけでは https://- や https://a..b も通り、curl の resolve 失敗 (一時的、exit 6) になって watch が再試行し続ける (Codex 指摘: PR #18 review comment r4101741414)。RFC 1123 のラベルで閉じて弾く
+  await checkGuardFailure("GITHUB_API_URL の検査 (ホストがハイフンだけ)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "https://-" });
+  await checkGuardFailure("GITHUB_API_URL の検査 (ホストがドットだけ)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "https://." });
+  await checkGuardFailure("GITHUB_API_URL の検査 (ラベルの間が空)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "https://a..b" });
+  await checkGuardFailure("GITHUB_API_URL の検査 (ラベルがハイフンで終わる)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "https://a-.b" });
   // ラベルの長さ (63) だけを見る guard は、ホスト全体が RFC 1035 の上限 (253) を超えても通してしまい、resolve の失敗 (一時的、exit 6) になって watch が再試行し続ける (Codex 指摘: PR #18 review comment r4101817376)
   const host255 = Array(128).fill("a").join(".");
   await checkGuardFailure(`GITHUB_API_URL の検査 (ホスト ${host255.length} 文字、範囲外)`, ["reply-resolve", REPO, String(PR), "1", "x"], {
-    GITHUB_API_URL: `http://${host255}`,
+    GITHUB_API_URL: `https://${host255}`,
   });
   await checkPermanentCurlFailure(
     "owner/repo にスペースが入る検査",
