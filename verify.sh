@@ -17,6 +17,7 @@ check_files() { # <コマンド…> -- <パターン…>: git が知っている
 check_files shellcheck -- '*.sh' hooks/pre-push
 check_files deno check -- '*.ts'
 scripts/test-target-diff.sh
+scripts/test-pre-push.sh
 # 書き込みは $TMPDIR の下だけだが、シンボリックリンクを作るので Deno はパスを絞った許可を受け付けない
 deno run --allow-run=git,bash --allow-env --allow-read --allow-write scripts/test-target-diff.ts
 deno run --allow-run=bash --allow-net=127.0.0.1 --allow-env=PR_RUNS,FC_SEED,NO_PROXY,no_proxy --allow-read="${TMPDIR:-/tmp}" --allow-write="${TMPDIR:-/tmp}" scripts/test-pr.ts

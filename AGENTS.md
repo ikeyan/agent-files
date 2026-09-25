@@ -4,10 +4,12 @@
 
 - 作業が論理単位に達したら確認を取らず自律的にコミットする。指示待ちしない。
 - コミット前にレビューする。判定対象は diff でなく結果のファイル — 変更箇所をファイル全体 (先頭コメント含む) の文脈で、その変更を見ていない初見読者として読み、本 AGENTS.md の指針に沿わなければ修正してからコミットする。
-- レビュー指摘の修正も初回実装と同じ規律を通す (外部依存の契約確認・検証)。レビュー起点のコードは未検証のまま積み上がりやすい。自分のレビューでも外部のレビュー (Codex 等) でも同じ。指摘が canon の目録の次元に当たるなら、同じ次元の他の値も同じコミットで閉じ、生成器のあるスクリプトでは生成器にも足す (目録に無い次元は先に目録に足す)。同じ箇所へのコードの挙動の指摘は review-perspectives の `findings.md` で数える:
-  - 2 回目: 定義域を閉じてから直す。
-  - 3 回目以降か、機構の作り直しを要する指摘: 修正の連鎖を止め、契約確認 → 実測 → 再設計に戻る。
-- push の前に review-perspectives スキルでレビュー→修正を反復し、終了条件を満たしてから push する。終了条件は「実害シナリオつき correctness 指摘の消滅」。cleanup 指摘のゼロは目指さない (高強度のレビューはゼロに収束しない)。却下した指摘は理由を明文化し、次のレビューへ除外条件として引き継ぐ。修正とレビューが済み、手元にやることが無ければ push する。次の作業が見えているなら終えてから push する。
+- レビュー指摘の修正も初回実装と同じ規律を通す (外部依存の契約確認・検証)。レビュー起点のコードは未検証のまま積み上がりやすい。自分のレビューでも外部のレビュー (Codex 等) でも同じ。
+  - 指摘が canon の目録の次元に当たるなら、同じ次元の他の値も同じコミットで閉じ、生成器のあるスクリプトでは生成器にも足す (目録に無い次元は先に目録に足す)。
+  - 同じ箇所へのコードの挙動の指摘は review-perspectives の `findings.md` で数える:
+    - 2 回目: 定義域を閉じてから直す。
+    - 3 回目以降か、機構の作り直しを要する指摘: 修正の連鎖を止め、契約確認 → 実測 → 再設計に戻る。
+- push の前に review-perspectives スキルでレビュー→修正を反復し、終了条件を満たしてから push する。終了条件は「実害シナリオつき correctness 指摘の消滅」。cleanup 指摘のゼロは目指さない (高強度のレビューはゼロに収束しない)。却下した指摘は理由を明文化し、次のレビューへ除外条件として引き継ぐ。修正とレビューが済み、続けて行う作業が無ければ push する。
 
 ## 設計
 
@@ -22,7 +24,7 @@
 - 単一検証コマンドは `./verify.sh`。CI も同じものを回す。含むもの:
   - shellcheck
   - `deno check`
-  - review-perspectives の `target-diff.sh` の fixture と、model based test (`scripts/test-target-diff.ts`。fast-check)
+  - review-perspectives の `target-diff.sh` の fixture (`scripts/test-target-diff.sh`) と model based test (`scripts/test-target-diff.ts`。fast-check)、`hooks/pre-push` の fixture (`scripts/test-pre-push.sh`)
   - pr-workflow の `pr.sh` の、fake GitHub を相手にした model based test (`scripts/test-pr.ts`。fast-check)
   - JSON の構文と schema
   - Markdown のリポ内リンク

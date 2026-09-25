@@ -131,6 +131,13 @@ EOF
 PATH=$tmp/bin-fork:$PATH run . 1 && expect "fork からの PR" "p1.txt p2.txt" "M2 p1.txt p2.txt"
 [ "$(sed -n 's/^work=//p' <<< "$out")" != "$same_repo_work" ] || { echo "fork からの PR: 同じリポジトリの PR と作業ディレクトリを共有している" >&2; status=1; }
 
+# fork を削除した PR (isCrossRepository は true のまま、headRepositoryOwner が null で owner の列が空) は止まる
+mkdir "$tmp/bin-gone" && cat > "$tmp/bin-gone/gh" <<EOF && chmod +x "$tmp/bin-gone/gh"
+#!/bin/sh
+printf 'prhead\t%s\t%s\ttrue\t\npull request: T\n\nPR-BODY\n' $prhead_sha $prbase_sha
+EOF
+PATH=$tmp/bin-gone:$PATH fails "fork を削除した PR" . 1
+
 # clone の形: --single-branch、shallow
 cd "$tmp"
 git clone -q --single-branch --branch stacked origin.git single
