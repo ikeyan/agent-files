@@ -1057,6 +1057,11 @@ try {
   await checkGuardFailure("GITHUB_API_URL の検査 (ホストがドットだけ)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "http://." });
   await checkGuardFailure("GITHUB_API_URL の検査 (ラベルの間が空)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "http://a..b" });
   await checkGuardFailure("GITHUB_API_URL の検査 (ラベルがハイフンで終わる)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "http://a-.b" });
+  // ラベルの長さ (63) だけを見る guard は、ホスト全体が RFC 1035 の上限 (253) を超えても通してしまい、resolve の失敗 (一時的、exit 6) になって watch が再試行し続ける (Codex 指摘: PR #18 review comment r4101817376)
+  const host255 = Array(128).fill("a").join(".");
+  await checkGuardFailure(`GITHUB_API_URL の検査 (ホスト ${host255.length} 文字、範囲外)`, ["reply-resolve", REPO, String(PR), "1", "x"], {
+    GITHUB_API_URL: `http://${host255}`,
+  });
   await checkPermanentCurlFailure(
     "owner/repo にスペースが入る検査",
     ["watch", "o r/x", String(PR), await Deno.makeTempDir({ dir: tmpRoot }), "1"],
