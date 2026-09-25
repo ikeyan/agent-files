@@ -20,7 +20,7 @@
 #   環境変数 GITHUB_API_URL: API の基点 (既定 https://api.github.com)。REST と GraphQL (<基点>/graphql) が同じ基点の下にある api.github.com の配置だけを扱い、GHES (REST は /api/v3、GraphQL は /api/graphql) は対象外。受け付ける形は authority だけ (スキーム・ホスト名か IPv4 リテラルの形・ポートは 1〜65535。ホスト名は RFC 1123 のラベル (英数字で始まり英数字で終わる、間にハイフン可) をドットでつないだもので全体は 253 文字以内 (RFC 1035)。IPv6 リテラルは対象外、パス・クエリ・フラグメント・空白は不可、末尾の / 無し) で、それ以外は起動時に exit 2 で止まる。この構文を満たしながら範囲外の IPv4 (300.1.1.1 など) や存在しないホストは resolve の失敗になり、これは一時的な失敗として扱う (後述)。
 # 出力 (watch、1 行 1 件): open・new・changed に続けてイベント文。説明の変更は "description changed" の行に unified diff が続く。
 #   auth で始まる行を出して終わったら、トークンが無いか無効 (401)。error で始まる行なら、PR 番号・リポジトリ・権限・問い合わせの誤り (3xx、401 以外の 4xx、レート制限でない GraphQL の errors、curl 自身の URL・プロトコルの誤り)。3xx はリポジトリの改名・移動で、新しい名前で起動し直す。
-# 失敗: 一時的な API の失敗 (ネットワーク・5xx・レート制限の 403・429) は、watch では出さずに間隔を倍にして (上限 900 秒) 再試行し、reply-resolve では止まる。curl 自身の失敗も同様に恒久・一時に分ける: プロキシ・名前解決・接続・timeout・応答無し・送受信・途中切断・HTTP/2・HTTP/3 の転送の失敗 (curl(1) の EXIT CODES の 5・6・7・18・28・52・55・56・92・95・96) など再試行で直りうるコードだけを一時的とし、それ以外 (URL・プロトコル・TLS の設定・CA など) は恒久 (error の行で 3)。
+# 失敗: 一時的な API の失敗 (ネットワーク・5xx・レート制限の 403・429) は、watch では出さずに間隔を倍にして (上限 900 秒) 再試行し、reply-resolve では止まる。curl 自身の失敗も同じ規則 (相手や経路の状態で結果が変わりうる転送の失敗は一時的、ローカルの設定・引数・TLS の信頼・機能の欠如は再試行しても変わらないので恒久) で分ける: 一時的は curl(1) の EXIT CODES の 5・6・7・16・18・28・52・55・56・89・92・95・96 (名前解決・接続・送受信・途中切断・timeout・HTTP/2・HTTP/3・QUIC の枠組みの失敗。内訳は req() の case の直前を見る)、それ以外 (URL・プロトコル・TLS の設定・CA など) は恒久 (error の行で 3)。
 #   reply-resolve は、止まった後にそのままやり直してよい (スレッドに自分の同じ本文の返信があれば返信を重ねない)。同じスレッドに並行に起動しない (返信の有無を見てから返信するまでに割り込まれると、返信が重なる)。
 # 事前条件: curl と jq。トークンは GH_TOKEN か gh auth token。
 # GraphQL の $cursor と jq の式は、単一引用符で展開させずに渡す
@@ -50,9 +50,26 @@ req() { # <メソッド> <URL> [<JSON の本文>]: 応答の本文を出す。�
     -w '\n%{http_code}\t%header{x-ratelimit-remaining}\t%header{retry-after}' "$2")
   cc=$?
   if [ "$cc" != 0 ]; then
-    # curl(1) の EXIT CODES: 設定の誤り (URL・プロトコル・TLS・CA など) は種類が多く網羅できないので、直りうるコードだけを一時的として列挙し、残りは恒久とする。5 (プロキシの resolve)・6 (resolve)・7 (connect)・18 (途中で切れる)・28 (timeout)・52 (応答無し)・55 (送信)・56 (受信) はネットワークの状態次第で直りうる。92 (HTTP/2 framing layer のストリームエラー)・95 (HTTP/3 layer の問題)・96 (QUIC connection error。SSL ライブラリのエラーが原因のこともある) も、下位の転送層の一時的な障害で直りうる。35 (TLS handshake) は URL のスキームの取り違えでも出るので恒久に含める (test-pr.ts の checkPermanentCurlConfigFailures で固定)。curl の stderr (-sS) はここでは捕らえず、素通しでこのスクリプトの stderr に出ているので、error の行には code と URL だけ出す
+    # curl(1) の EXIT CODES 全体 (man curl) を、単発のコードごとの指摘 (5 → 92/95/96 → 16 と続いた) を止めるため、次の一つの規則で恒久・一時に分ける (Codex 指摘: PR #18 review comment r4102062690):
+    #   一時的 = 相手や経路の状態で結果が変わりうる転送の失敗 (名前解決・接続・送受信・途中切断・timeout・HTTP/2/3・QUIC の枠組みの失敗)
+    #   恒久   = ローカルの設定・引数・TLS の信頼・機能の欠如 (再試行しても変わらない)
+    # 一時的とするコード (man curl での名前):
+    #   5  Could not resolve proxy (名前解決)
+    #   6  Could not resolve host (名前解決)
+    #   7  Failed to connect to host (接続)
+    #   16 A problem was detected in the HTTP2 framing layer (HTTP/2 の枠組み)
+    #   18 Partial file. Only a part of the file was transferred (途中で切断)
+    #   28 Operation timeout (timeout)
+    #   52 The server did not reply anything (応答無し)
+    #   55 Failed sending network data (送信)
+    #   56 Failure in receiving network data (受信)
+    #   89 No connection available, the session is queued (timeout まで接続待ち)
+    #   92 Stream error in HTTP/2 framing layer (HTTP/2 の枠組み)
+    #   95 A problem was detected in the HTTP/3 layer (HTTP/3 の枠組み)
+    #   96 QUIC connection error (QUIC の枠組み。SSL ライブラリのエラーが原因のこともある)
+    # 恒久側の判断が自明でないもの: 35 (SSL connect error) は「ハンドシェイクの失敗」としか書かれておらずネットワークの状態にも見えるが、URL のスキームの取り違え (TLS を話さない相手に https を向ける) でも同じコードが出る恒久の原因があり、再試行では直らない (test-pr.ts の checkPermanentCurlConfigFailures で固定)。8 (weird server reply)・61 (unrecognized transfer encoding) は受信バイト自体でなく内容の解釈の失敗、47 (too many redirects) はローカルの上限、94 (authentication function error)・97 (proxy handshake error)・99 (poll/select fatal error) はローカルの認証機構・システムコールの失敗で、いずれも転送層の状態には依存しないので恒久。curl の stderr (-sS) はここでは捕らえず、素通しでこのスクリプトの stderr に出ているので、error の行には code と URL だけ出す
     case $cc in
-      5 | 6 | 7 | 18 | 28 | 52 | 55 | 56 | 92 | 95 | 96) return 1 ;;
+      5 | 6 | 7 | 16 | 18 | 28 | 52 | 55 | 56 | 89 | 92 | 95 | 96) return 1 ;;
       *) echo "error curl $cc: $2" >&2; return 3 ;;
     esac
   fi
