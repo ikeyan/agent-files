@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# hooks/pre-push を、token (<git-dir>/push-ok) の有無で push を通す・止めることと、verify.sh が検査に落ちる clone でも core.hooksPath を hooks にし、hooks にできなければ落ちることを検査する。verify.sh から呼ぶ。
+# hooks/pre-push を、token (<git-dir>/push-ok) の有無で push を通す・止めることと、verify.sh が検査に落ちる clone でも core.hooksPath を設定ファイルに hooks と書き (command スコープや GIT_CONFIG の値では済ませない)、hooks にできなければ落ちることを検査する。verify.sh から呼ぶ。
 # ネットワークは使わない (bare リポジトリを file システム上に作って push する)。
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -76,5 +76,17 @@ if (cd repo2 && env -u VERIFY_READONLY ./verify.sh) > /dev/null 2> err4.txt; the
 fi
 grep -q "別の設定元の値が勝つ (worktree " err4.txt || { echo "worktree スコープが勝つことを verify.sh が示さない — $(cat err4.txt)" >&2; status=1; }
 [ "$(git -C repo2 config --worktree --get core.hooksPath)" = /dev/null ] || { echo "verify.sh が worktree スコープの core.hooksPath を書き換えた" >&2; status=1; }
+
+# command スコープ (GIT_CONFIG_COUNT 等・-c が渡す GIT_CONFIG_PARAMETERS) と GIT_CONFIG の値は clone に残らないので、それが hooks でも verify.sh は local に書く
+printf '[core]\n\thooksPath = hooks\n' > hooks.gitconfig
+n=3
+for override in 'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=hooks' "GIT_CONFIG_PARAMETERS='core.hookspath'='hooks'" GIT_CONFIG=../hooks.gitconfig; do
+  read -ra assignments <<< "$override"
+  git clone -q "$here" "repo$n"
+  cp "$here/verify.sh" repo/bad.sh "repo$n/"
+  (cd "repo$n" && env -u VERIFY_READONLY "${assignments[@]}" ./verify.sh) > /dev/null 2>&1 || true
+  [ "$(git -C "repo$n" config --local --get core.hooksPath)" = hooks ] || { echo "$override のとき、verify.sh が local に core.hooksPath を書かない" >&2; status=1; }
+  n=$((n + 1))
+done
 
 exit "$status"

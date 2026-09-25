@@ -2,6 +2,7 @@
 # このリポの単一検証コマンド。引数なしで全部を検査する。
 # 既定では .claude/skills の symlink のずれ (作り忘れ・残骸) と core.hooksPath を直す。VERIFY_READONLY=1 では直さず違反にする (CI 用)。
 # 事前条件: shellcheck・deno・curl (7.84 以降)・jq が PATH にあること。ネットワーク (www.schemastore.org) に出られること。
+# core.hooksPath は設定ファイル (system・global・local・worktree と include) の値で判定し、GIT_CONFIG_COUNT/KEY_<n>/VALUE_<n>・GIT_CONFIG_PARAMETERS (git -c)・GIT_CONFIG は無視する。
 set -euo pipefail
 # nullglob: 空のディレクトリで glob がパターン文字列そのものに化け、存在しないパスを検査してしまうのを防ぐ。
 shopt -s nullglob
@@ -9,17 +10,18 @@ cd "$(dirname "$0")"
 
 readonly_mode=${VERIFY_READONLY:-}
 status=0
-# 後の検査が落ちても hooks/pre-push が有効であるよう、検査より先に行う。local に書いても worktree・command スコープの値が勝つので、書いた後の実効値で確かめる。
-hooks_path=$(git config --get core.hooksPath || true)
+# 後の検査が落ちても hooks/pre-push が有効であるよう、検査より先に行う。command スコープの値は process と共に消え、GIT_CONFIG は git config にしか効かないので、hooks を示していても後の git push の hook にならない。
+file_config() { env -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT=0 git config "$@"; }
+hooks_path=$(file_config --get core.hooksPath || true)
 if [ "$hooks_path" != hooks ]; then
   if [ -n "$readonly_mode" ]; then
     echo "core.hooksPath (${hooks_path:-未設定}) != hooks。 Execute: git config core.hooksPath hooks" >&2
     status=1
-  elif ! git config core.hooksPath hooks; then
+  elif ! file_config core.hooksPath hooks; then
     echo "core.hooksPath を hooks にできない。 Execute: git config core.hooksPath hooks" >&2
     status=1
-  elif [ "$(git config --get core.hooksPath)" != hooks ]; then
-    echo "core.hooksPath: local を hooks にしたが、別の設定元の値が勝つ ($(git config --show-origin --show-scope --get core.hooksPath | tr '\t' ' '))。 Execute: git config --file <その file> --unset core.hooksPath (command なら GIT_CONFIG_* か -c を外す)" >&2
+  elif [ "$(file_config --get core.hooksPath)" != hooks ]; then
+    echo "core.hooksPath: local を hooks にしたが、別の設定元の値が勝つ ($(file_config --show-origin --show-scope --get core.hooksPath | tr '\t' ' '))。 Execute: git config --file <その file> --unset core.hooksPath" >&2
     status=1
   else
     echo "core.hooksPath: ${hooks_path:-未設定} から hooks にした"
