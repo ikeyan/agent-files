@@ -18,6 +18,13 @@
  * - 以後: 状態 S0 から操作列 Δ で S1 になったら、T(S1) の要素のうち Δ で足したものを new、Δ で編集したものを changed、タイトルの変更を changed title <t>、説明の変更を description changed と unified diff で出して exit 0。どれも無ければ出さずに待つ。
  *   - Δ は 2 つに分けて続く 2 周期の始まりで入れ、前半だけでは何も出ないなら、前半の後の状態を S0 とする。
  *   - 生成しない遷移 (GitHub の挙動を確かめていないか、仕様が new と changed のどちらとも決めていないもの): review の dismiss、スレッドの unresolve、resolve 済みのスレッドへの返信、本文の無い review の編集、PR の reopen。
+ * - Codex の利用上限 (pr.sh の先頭の宣言):
+ *   - 扱う上限のコメント L(S0, S1): S1 の PR が open で head に Completed の summary が無いとき、Codex の上限のコメントのうち S0 に無く、Codex の summary の最後の編集より新しいもの。初回は S0 を空とする。
+ *   - L の各要素につき codex-usage-limit <url> <when> を、初回なら open、以後なら new で出す。<when> は偽の PR_CODEX_LIMITS が最後に返したものから決まる: usedPercent が 100 以上で resetsAt のある窓があれば、resetsAt が最も遅いものの resets <ISO 8601> <窓> (<窓> は windowDurationMins が 300 なら 5h、10080 なら weekly、無ければ unknown、ほかは <分>m)。無いか失敗なら reset unknown: <理由>。
+ *   - Δ の前半で差が無く L だけがあれば、その周期で L だけを出して終わる (後半は入らない)。
+ *   - reset が分かれば、以後の周期で reset を過ぎ、head が同じで、Completed も上限のコメントより新しい "@codex review" も無ければ、@codex review をちょうど 1 件 POST して new codex-review requested <url> を出す。POST の応答が切れたら、代わりにそのコメントが new comment me <url> で出る。POST の後は、bot の応答 (Completed・次の上限のコメント・無し) に関わらずもう POST しない。
+ *   - head が変わる・Completed が付く・他人の "@codex review" が先に付く・reset が分からない、のどれかなら POST しない。
+ *   - 偽の PR_CODEX_LIMITS は、失敗 (exit 1) か、両窓の usedPercent (0・99・100・150)、resetsAt (遠い未来の固定値か null)、windowDurationMins (300・10080・1440・null) を返す (窓ごと無いこともある)。reset を過ぎる経路 (p4) では resetsAt を実行時の now + 0〜2 秒にする。
  * - reply-resolve: スレッド先頭の id なら、そのスレッドが resolved で、トークンの持ち主の同じ本文の返信がちょうど 1 件になり、ほかは変わらない (一時的な失敗で exit 1 になったら、そのままやり直す)。スレッド先頭でない id なら exit 1 で何も変えない。
  * - 恒久的な失敗: 401 なら auth の行で exit 2。404・301・権限の 403・レート制限でない GraphQL の errors なら error の行で exit 3。
  * - 一時的な失敗 (5xx・429・レート制限・接続の切断) を 2 件まで挟んでも、上の結果は変わらない。
@@ -48,6 +55,8 @@ const WEB = `https://github.com/${REPO}/pull/${PR}`;
 const DOCS = "https://docs.github.com/rest";
 const SUMMARY = "<!-- codex-pull-request-review-summary -->";
 const USAGE_LIMIT = "You have reached your Codex usage limits for code reviews. You can see your limits in the Codex usage dashboard.";
+const REQUEST = "@codex review";
+const LIMITS_FAILED = "fake limits: failed";
 const FAILING = ["failure", "timed_out", "cancelled", "action_required", "startup_failure"];
 const CASE_SECONDS = 20;
 
@@ -145,6 +154,16 @@ function addComment(w: World, c: CommentSpec) {
   w.issue.push({ id: idOf(n), login: c.login, body, updated_at: timeOf(n) });
 }
 
+/** Codex が summary を今の head の Running か Completed に書き換える (無ければ作る) */
+function summarize(w: World, completed: boolean) {
+  const s = w.issue.find(isSummary);
+  if (!s) addComment(w, { kind: "summary", login: BOT, completed, commit: "head", len: 7 });
+  else {
+    s.body = summaryBody(completed, w.pr.head.slice(0, 7));
+    s.updated_at = timeOf(tick(w));
+  }
+}
+
 function addThread(w: World, login: string, resolved: boolean): Thread {
   const n = tick(w);
   w.rc.push({ id: idOf(n), login, body: `root ${n}`, updated_at: timeOf(n) });
@@ -174,6 +193,9 @@ function addReview(w: World, login: string, state: ReviewState, body: boolean) {
 
 // ---- モデル ----
 
+const isSummary = (c: IssueComment) => c.login === BOT && c.body.startsWith(SUMMARY);
+const isLimit = (c: IssueComment) => c.login === BOT && c.body.startsWith(USAGE_LIMIT);
+
 /** T(S) を、要素の鍵からイベント文への対応で返す (閉じた PR を除く)。 */
 function targets(w: World): Map<string, string> {
   const m = new Map<string, string>();
@@ -183,7 +205,7 @@ function targets(w: World): Map<string, string> {
       if (c.body.includes("**Completed**") && commit && w.pr.head.startsWith(commit)) {
         m.set(`ic:${c.id}`, `codex-review completed ${commit} ${urls.issue(c.id)}`);
       }
-    } else if (!(c.login === BOT && c.body.startsWith(USAGE_LIMIT))) {
+    } else if (!isLimit(c)) {
       m.set(`ic:${c.id}`, `comment ${c.login} ${urls.issue(c.id)}`);
     }
   }
@@ -222,13 +244,42 @@ function revisions(w: World): Map<string, string> {
 }
 
 const closedLine = (w: World) => `changed pr closed merged=${w.pr.merged} ${WEB}`;
+const iso = (epoch: number) => new Date(epoch * 1000).toISOString().replace(".000Z", "Z");
 
-function expectInitial(w: World): string[] {
-  const lines = [...targets(w).values()].map((t) => `open ${t}`);
-  if (w.pr.state === "closed") lines.push(closedLine(w));
-  return lines;
+/** 偽の PR_CODEX_LIMITS の 1 回の出力 (失敗なら "fail") から、上限の窓の reset の epoch 秒と windowDurationMins を決める。分からなければ null */
+function resetOf(out: string): { at: number; mins: string } | null {
+  let r: { at: number; mins: string } | null = null;
+  for (const l of out.split("\n")) {
+    const [k, used, reset, mins] = l.split("\t");
+    if ((k === "primary" || k === "secondary") && used !== "-" && Number(used) >= 100 && reset !== "-" && (r === null || Number(reset) > r.at)) r = { at: Number(reset), mins };
+  }
+  return r;
 }
 
+const windowLabel = (mins: string) => ({ "300": "5h", "10080": "weekly", "-": "unknown" } as Record<string, string>)[mins] ?? `${mins}m`;
+
+function whenOf(out: string): string {
+  if (out === "fail") return `reset unknown: ${LIMITS_FAILED}`;
+  const r = resetOf(out);
+  return r === null ? "reset unknown: no window at 100% with resetsAt" : `resets ${iso(r.at)} ${windowLabel(r.mins)}`;
+}
+
+/** L(S0, S1) の codex-usage-limit の行。S0 が null なら初回 */
+function limitLines(w0: World | null, w1: World, when: string): string[] {
+  if (w1.pr.state !== "open" || [...targets(w1).values()].some((t) => t.startsWith("codex-review completed "))) return [];
+  const seen = new Set(w0?.issue.filter(isLimit).map((c) => c.id));
+  const last = w1.issue.filter(isSummary).map((c) => c.updated_at).reduce((a, b) => a > b ? a : b, "");
+  return w1.issue.filter((c) => isLimit(c) && !seen.has(c.id) && c.updated_at > last)
+    .map((c) => `${w0 ? "new" : "open"} codex-usage-limit ${urls.issue(c.id)} ${when}`);
+}
+
+function expectInitial(w: World, when: string): string[] {
+  const lines = [...targets(w).values()].map((t) => `open ${t}`);
+  if (w.pr.state === "closed") lines.push(closedLine(w));
+  return [...lines, ...limitLines(null, w, when)];
+}
+
+/** 上限のコメント以外の差の行 */
 function expectDelta(w0: World, w1: World): string[] {
   const r0 = revisions(w0), r1 = revisions(w1);
   const lines: string[] = [];
@@ -255,12 +306,12 @@ type Op =
   | { op: "editReviewComment"; i: number; shown: boolean; text: string }
   | { op: "resolve"; i: number }
   | { op: "push"; summary: "stale" | "running" | "completed" }
+  | { op: "limit"; push: boolean }
   | { op: "ci"; check: boolean; name: string; conclusion: string }
   | { op: "title"; title: string }
   | { op: "body"; body: string | null }
   | { op: "close"; merged: boolean };
 
-const isSummary = (c: IssueComment) => c.login === BOT && c.body.startsWith(SUMMARY);
 
 function apply(w: World, o: Op) {
   const unresolved = w.threads.filter((t) => !t.resolved);
@@ -276,7 +327,7 @@ function apply(w: World, o: Op) {
         const body = summaryBody(o.complete, w.pr.head.slice(0, 7));
         if (body === c.body) break;
         c.body = body;
-      } else if (!(c.login === BOT && c.body.startsWith(USAGE_LIMIT))) c.body = `${c.body}\n${o.text}`;
+      } else if (!isLimit(c)) c.body = `${c.body}\n${o.text}`;
       c.updated_at = timeOf(tick(w));
       break;
     }
@@ -320,17 +371,15 @@ function apply(w: World, o: Op) {
     case "resolve":
       if (unresolved.length > 0) unresolved[o.i % unresolved.length].resolved = true;
       break;
-    case "push": {
+    case "push":
       w.pr.head = shaOf(tick(w));
-      if (o.summary === "stale") break;
-      const s = w.issue.find(isSummary);
-      if (!s) addComment(w, { kind: "summary", login: BOT, completed: o.summary === "completed", commit: "head", len: 7 });
-      else {
-        s.body = summaryBody(o.summary === "completed", w.pr.head.slice(0, 7));
-        s.updated_at = timeOf(tick(w));
-      }
+      if (o.summary !== "stale") summarize(w, o.summary === "completed");
       break;
-    }
+    case "limit":
+      // 上限中の Codex は summary を更新せず、push ごとに上限のコメントを出す (canon: facts/codex-github/usage-limit-auto-resume)
+      if (o.push) w.pr.head = shaOf(tick(w));
+      addComment(w, { kind: "limit", login: BOT });
+      break;
     case "ci": {
       const n = tick(w);
       if (o.check) w.checks.push({ id: idOf(n), sha: w.pr.head, name: o.name, conclusion: o.conclusion });
@@ -469,11 +518,35 @@ const opArb: fc.Arbitrary<Op> = fc.oneof(
   { weight: 2, arbitrary: fc.record({ op: fc.constant("editReviewComment" as const), i: fc.nat(200), shown: fc.boolean(), text: textArb }) },
   { weight: 1, arbitrary: fc.record({ op: fc.constant("resolve" as const), i: fc.nat(200) }) },
   { weight: 1, arbitrary: fc.record({ op: fc.constant("push" as const), summary: fc.constantFrom("stale" as const, "running" as const, "completed" as const) }) },
+  { weight: 1, arbitrary: fc.record({ op: fc.constant("limit" as const), push: fc.boolean() }) },
   { weight: 1, arbitrary: fc.record({ op: fc.constant("ci" as const), check: fc.boolean(), name: fc.constantFrom("build", "ci/a"), conclusion: fc.constantFrom(...FAILING) }) },
   { weight: 1, arbitrary: fc.record({ op: fc.constant("title" as const), title: titleArb }) },
   { weight: 1, arbitrary: fc.record({ op: fc.constant("body" as const), body: bodyArb }) },
   { weight: 1, arbitrary: fc.record({ op: fc.constant("close" as const), merged: fc.boolean() }) },
 );
+
+/** 偽の PR_CODEX_LIMITS が返すもの ("fail" か codex-limits.sh の先頭の形の行)。resetsAt の +<k> は実行時の now + k 秒 */
+type Window = { used: number; reset: number | string | null; mins: number | null } | null;
+const windowText = (name: string, w: Window) => w === null ? `${name}\t-\t-\t-` : `${name}\t${w.used}\t${w.reset ?? "-"}\t${w.mins ?? "-"}`;
+const specOf = (ws: [Window, Window] | null) => ws === null ? "fail" : `${windowText("primary", ws[0])}\n${windowText("secondary", ws[1])}\nreached\t-`;
+const minsArb = fc.constantFrom(300, 10080, 1440, null);
+const windowArb = (reset: fc.Arbitrary<number | string | null>) =>
+  fc.option(fc.record({ used: fc.constantFrom(0, 99, 100, 150), reset, mins: minsArb }), { nil: null });
+const FAR = [4102444800, 4102531200]; // 2100-01-01 と 2100-01-02。以後の周期で reset を過ぎない
+const farLimitsArb = fc.oneof(
+  { weight: 1, arbitrary: fc.constant(null) },
+  { weight: 4, arbitrary: fc.tuple(windowArb(fc.constantFrom<number | null>(...FAR, null)), windowArb(fc.constantFrom<number | null>(...FAR, null))) },
+).map(specOf);
+const soonReset = fc.constantFrom<string | null>("+0", "+1", "+2", null);
+/** reset を過ぎる経路が検査に入るように、reset の分かる窓を多くする */
+const soonLimitsArb = fc.oneof(
+  { weight: 1, arbitrary: fc.constant(null) },
+  { weight: 1, arbitrary: fc.tuple(windowArb(soonReset), windowArb(soonReset)) },
+  {
+    weight: 3,
+    arbitrary: fc.tuple(fc.record({ used: fc.constantFrom(100, 150), reset: fc.constantFrom("+0", "+1", "+2"), mins: minsArb }), windowArb(soonReset)),
+  },
+).map(specOf);
 
 type Transient = { kind: "500" | "429" | "403" | "drop"; applied: boolean };
 type Permanent = "401" | "404" | "301" | "403" | "graphql";
@@ -538,9 +611,11 @@ class Fake {
   ends: number[] = []; // 周期の終わり (commit status の最後のページ) ごとの、その時点の starts
   log: string[] = [];
   procs: Proc[] = [];
+  posts: { id: number; at: number }[] = []; // 受けた issue comment の POST と、受けた時刻 (epoch 秒)
   private server: Deno.HttpServer<Deno.NetAddr>;
 
-  constructor(world: World, private skip: number, private failures: Transient[], private permanent: Permanent | null) {
+  /** limits: pr.sh に PR_CODEX_LIMITS として渡すパス */
+  constructor(world: World, private skip: number, private failures: Transient[], private permanent: Permanent | null, readonly limits: string) {
     this.world = world;
     this.server = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, (req) => this.handle(req));
   }
@@ -551,6 +626,17 @@ class Fake {
 
   close() {
     return this.server.shutdown();
+  }
+
+  /** PR_CODEX_LIMITS が最後に返したもの。回っていなければ null */
+  async lastLimits(): Promise<string | null> {
+    const log = await Deno.readTextFile(`${this.limits}.log`).catch(() => "");
+    return log === "" ? null : log.split("--\n").at(-1)!.replace(/\n$/, "");
+  }
+
+  async when(): Promise<string> {
+    const out = await this.lastLimits();
+    return out === null ? "(PR_CODEX_LIMITS が回っていない)" : whenOf(out);
   }
 
   private async handle(req: Request): Promise<Response> {
@@ -612,6 +698,13 @@ class Fake {
           html_url: urls.rc(c.id),
         })),
       );
+    }
+    if (method === "POST" && rest === `issues/${PR}/comments`) {
+      const n = tick(w);
+      const c = { id: idOf(n), login: ME, body: JSON.parse(body).body, updated_at: timeOf(n) };
+      w.issue.push(c);
+      this.posts.push({ id: c.id, at: Date.now() / 1000 });
+      return json(201, { id: c.id, user: { login: ME }, body: c.body, updated_at: c.updated_at, html_url: urls.issue(c.id) });
     }
     if (method === "POST" && (m = rest.match(new RegExp(`^pulls/${PR}/comments/(\\d+)/replies$`)))) {
       const t = w.threads.find((t) => t.root === Number(m![1]));
@@ -689,13 +782,14 @@ class Fake {
  * pr.sh の子プロセスの環境 (親から継承しない。clearEnv と組で使う)。GH_TOKEN は既定で test、追加分は extra で上書き。
  * curl が読むプロキシの環境変数を届かないプロキシに向けて NO_PROXY は与えず、既定の設定ファイル ($CURL_HOME/.curlrc が最初に探される) では
  * プロキシと接続先を届かない先に変える。127.0.0.1 の fake に届くことが、pr.sh が 127.0.0.1 宛てにプロキシを使わず設定ファイルを読まないことの確認になる
- * (canon: facts/curl/environment-and-config-inputs)。
+ * (canon: facts/curl/environment-and-config-inputs)。PR_CODEX_LIMITS は既定で無いパスにし、既定の codex-limits.sh (本物の codex) を回さない。
  */
 function prEnv(extra: Record<string, string> = {}): Record<string, string> {
   const proxy = "http://127.0.0.1:9";
   return {
     PATH: Deno.env.get("PATH") ?? "",
     GH_TOKEN: "test",
+    PR_CODEX_LIMITS: `${tmpRoot}/no-such-limits`,
     CURL_HOME: curlHome,
     http_proxy: proxy,
     HTTP_PROXY: proxy,
@@ -729,7 +823,7 @@ class Proc {
     this.child = new Deno.Command("bash", {
       args: [script, ...args],
       clearEnv: true,
-      env: prEnv({ GITHUB_API_URL: fake.url }),
+      env: prEnv({ GITHUB_API_URL: fake.url, PR_CODEX_LIMITS: fake.limits }),
       stdin: "null",
       stdout: "piped",
       stderr: "piped",
@@ -841,10 +935,10 @@ function checkPermanent(code: number, out: string, p: Permanent, what: string, p
 const watch = (fake: Fake, dir: string) => new Proc(["watch", REPO, String(PR), dir, "1"], fake);
 
 /** 初回の watch を回して照合する。T(S) が空なら待っている pr.sh を返す。 */
-async function initial(w: World, fake: Fake, dir: string, permanent: Permanent | null): Promise<Proc | null> {
+async function initial(w: World, fake: Fake, dir: string, permanent: Permanent | null, when: string): Promise<Proc | null> {
   const deadline = Date.now() + CASE_SECONDS * 1000;
   const proc = watch(fake, dir);
-  const want = expectInitial(w);
+  const want = expectInitial(w, when);
   if (permanent === null && want.length === 0) {
     await expectQuiet(fake, proc, deadline, 1, "初回で出す対象が無い");
     if (!(await exists(`${dir}/state`))) throw new Error(`初回で状態ファイルができていない\n${proc.show()}`);
@@ -859,8 +953,30 @@ async function initial(w: World, fake: Fake, dir: string, permanent: Permanent |
   return null;
 }
 
-async function withFake(w: World, failures: { skip: number; list: Transient[] }, permanent: Permanent | null, body: (fake: Fake, dir: string) => Promise<void>) {
-  const fake = new Fake(w, failures.skip, structuredClone(failures.list), permanent);
+const LIMITS_STUB = `#!/bin/sh
+echo -- >> "$0.log"
+if [ "$(cat "$0.spec")" = fail ]; then echo fail >> "$0.log"; echo "${LIMITS_FAILED}" >&2; exit 1; fi
+awk -F'\\t' -v OFS='\\t' -v now="$(date +%s)" '$3 ~ /^[+]/ { $3 = now + substr($3, 2) } { print }' "$0.spec" | tee -a "$0.log"
+`;
+
+/** spec (specOf の形) を返し、返したものを <パス>.log に足していく偽の PR_CODEX_LIMITS を置いて、そのパスを返す。spec が null なら無いパスを返す */
+async function limitsStub(spec: string | null): Promise<string> {
+  const path = `${await Deno.makeTempDir({ dir: tmpRoot })}/limits`;
+  if (spec === null) return path;
+  await Deno.writeTextFile(`${path}.spec`, `${spec}\n`);
+  await Deno.writeTextFile(path, LIMITS_STUB);
+  await Deno.chmod(path, 0o755);
+  return path;
+}
+
+async function withFake(
+  w: World,
+  failures: { skip: number; list: Transient[] },
+  permanent: Permanent | null,
+  limits: string | null,
+  body: (fake: Fake, dir: string) => Promise<void>,
+) {
+  const fake = new Fake(w, failures.skip, structuredClone(failures.list), permanent, await limitsStub(limits));
   const dir = await Deno.makeTempDir({ dir: tmpRoot });
   try {
     await body(fake, dir);
@@ -874,14 +990,23 @@ async function withFake(w: World, failures: { skip: number; list: Transient[] },
 
 // ---- 性質 ----
 
-const p1 = fc.asyncProperty(worldArb, failuresArb, permanentArb, async (spec, failures, permanent) => {
+/** 上限明けの要求は p4 だけが扱う (p1・p2 の reset は遠い未来) */
+function expectNoPost(fake: Fake, what: string) {
+  if (fake.posts.length > 0) throw new Error(`${what}: @codex review を POST した`);
+}
+
+const p1 = fc.asyncProperty(worldArb, failuresArb, permanentArb, farLimitsArb, async (spec, failures, permanent, limits) => {
   const w = build(spec);
-  await withFake(structuredClone(w), failures, permanent, async (fake, dir) => {
-    await initial(w, fake, dir, permanent);
+  await withFake(structuredClone(w), failures, permanent, limits, async (fake, dir) => {
+    await initial(w, fake, dir, permanent, whenOf(limits));
+    if (permanent === null && limitLines(null, w, "").length === 0 && (await fake.lastLimits()) !== null) {
+      throw new Error("初回: 扱う上限のコメントが無いのに PR_CODEX_LIMITS を回した");
+    }
+    expectNoPost(fake, "初回");
   });
 });
 
-const p2 = fc.asyncProperty(worldArb, fc.array(opArb, { minLength: 1, maxLength: 3 }), fc.nat(), failuresArb, async (spec, generated, split, failures) => {
+const p2 = fc.asyncProperty(worldArb, fc.array(opArb, { minLength: 1, maxLength: 3 }), fc.nat(), failuresArb, farLimitsArb, async (spec, generated, split, failures, limits) => {
   const w0 = build({ ...spec, closed: false });
   // Δ を 2 つに分け、後半を次の周期 (前半で差が出たなら窓の後の取り直し) の始まりで入れる
   const cut = split % (generated.length + 1);
@@ -889,31 +1014,38 @@ const p2 = fc.asyncProperty(worldArb, fc.array(opArb, { minLength: 1, maxLength:
   for (const o of generated.slice(0, cut)) apply(mid, o);
   const w1 = structuredClone(mid);
   for (const o of generated.slice(cut)) apply(w1, o);
-  const quiet = (a: World, b: World) => expectDelta(a, b).length === 0 && a.pr.body === b.pr.body;
-  // 前半で何も出なければ、pr.sh はその周期を基準に記録する
-  const base = quiet(w0, mid) ? mid : w0;
-  await withFake(structuredClone(w0), failures, null, async (fake, dir) => {
-    let proc = await initial(w0, fake, dir, null);
+  const when = whenOf(limits);
+  // 前半で差が出れば窓の後の取り直し (後半) で出す。差が無く上限のコメントだけなら前半で出す。何も無ければ、pr.sh は前半の周期を基準に記録する
+  const [base, final] = expectDelta(w0, mid).length > 0 || w0.pr.body !== mid.pr.body
+    ? [w0, w1]
+    : limitLines(w0, mid, when).length > 0
+    ? [w0, mid]
+    : [mid, w1];
+  const want = [...expectDelta(base, final), ...limitLines(base, final, when)];
+  await withFake(structuredClone(w0), failures, null, limits, async (fake, dir) => {
+    let proc = await initial(w0, fake, dir, null, when);
     fake.pending = [mid, w1].map((w) => structuredClone(w));
     // 初回で出して終わったら、gh.md の手順どおり同じ状態のディレクトリで起動し直す
     proc ??= watch(fake, dir);
     const deadline = Date.now() + CASE_SECONDS * 1000;
-    if (quiet(base, w1)) {
+    if (want.length === 0 && base.pr.body === final.pr.body) {
       await until(() => fake.pending.length === 0, proc, deadline);
       // 差を見つけたら窓を置いて取り直してから出すので、Δ を入れ終えた周期の次の周期まで待つ
       await expectQuiet(fake, proc, deadline, 2, "Δ に出すものが無い");
       proc.kill();
+      expectNoPost(fake, "以後");
       return;
     }
     const code = await proc.exit(deadline);
     if (code !== 0) throw new Error(`以後: exit ${code}\n${proc.show()}`);
     const { events, diff } = parse(proc.out);
-    expectLines(events, expectDelta(base, w1), "以後", proc);
-    const bodyChanged = base.pr.body !== w1.pr.body;
+    expectLines(events, want, "以後", proc);
+    const bodyChanged = base.pr.body !== final.pr.body;
     if (bodyChanged !== (diff !== null)) throw new Error(`以後: 説明の変更 (${bodyChanged}) と description changed の有無が合わない\n${proc.show()}`);
-    if (diff !== null && JSON.stringify(patch(fileLines(base.pr.body), diff)) !== JSON.stringify(fileLines(w1.pr.body))) {
+    if (diff !== null && JSON.stringify(patch(fileLines(base.pr.body), diff)) !== JSON.stringify(fileLines(final.pr.body))) {
       throw new Error(`以後: diff を当てても新しい説明にならない\n${proc.show()}`);
     }
+    expectNoPost(fake, "以後");
   });
 });
 
@@ -948,7 +1080,7 @@ const p3 = fc.asyncProperty(
       id = w.rc.at(-1)!.id;
     }
     const before = structuredClone(w);
-    await withFake(w, failures, permanent, async (fake) => {
+    await withFake(w, failures, permanent, "fail", async (fake) => {
       const deadline = Date.now() + CASE_SECONDS * 1000;
       let proc: Proc;
       let code: number;
@@ -984,6 +1116,76 @@ const p3 = fc.asyncProperty(
           if (t.resolved !== (t.node === thread.node || b.resolved)) throw new Error(`reply-resolve: resolve の状態が違う: ${t.node}\n${proc.show()}`);
         }
       }
+    });
+  },
+);
+
+/**
+ * 上限のコメントを初回で扱った後、before を入れて起動し直す。reset が分かり before が none なら reset の後に @codex review がちょうど 1 件 POST され、
+ * そこへ bot の応答 after を入れて起動し直しても、もう POST されない。それ以外は、reset を過ぎてから起動し直しても POST されない。
+ */
+const p4 = fc.asyncProperty(
+  worldArb,
+  soonLimitsArb,
+  fc.constantFrom("none" as const, "push" as const, "completed" as const, "request" as const, "close" as const),
+  fc.constantFrom("completed" as const, "limit" as const, "none" as const),
+  failuresArb,
+  async (spec, limits, before, after, failures) => {
+    const w0 = build({ ...spec, closed: false });
+    // head に Completed の summary が無い状態で、上限のコメントが最新
+    w0.pr.head = shaOf(tick(w0));
+    addComment(w0, { kind: "limit", login: BOT });
+    await withFake(structuredClone(w0), failures, null, limits, async (fake, dir) => {
+      const deadline = Date.now() + CASE_SECONDS * 1000;
+      /** 起動して終わるのを待ち、出力を want (期待する行か、照合の成否) で確かめる */
+      const exits = async (what: string, want: (got: string[]) => Promise<string[] | boolean> | string[] | boolean) => {
+        const proc = watch(fake, dir);
+        const code = await proc.exit(deadline);
+        if (code !== 0) throw new Error(`${what}: exit ${code}\n${proc.show()}`);
+        const got = proc.out.split("\n").slice(0, -1);
+        const w = await want(got);
+        if (w === false) throw new Error(`${what}: 出力が違う\n${proc.show()}`);
+        if (w !== true) expectLines(got, w, what, proc);
+      };
+      await exits("初回", async () => expectInitial(w0, await fake.when()));
+      const reset = resetOf((await fake.lastLimits()) ?? "fail");
+      const s1 = structuredClone(fake.world);
+      const w = fake.world;
+      if (before === "push") w.pr.head = shaOf(tick(w));
+      else if (before === "completed") summarize(w, true);
+      else if (before === "request") addComment(w, { kind: "text", login: "alice", text: REQUEST });
+      else if (before === "close") w.pr.state = "closed";
+      if (before !== "none" || reset === null) {
+        // 要求を出すはずの周期に before が重なるように、reset を過ぎてから起動し直す
+        if (reset !== null) await new Promise((r) => setTimeout(r, Math.max(0, (reset.at + 1) * 1000 - Date.now())));
+        const d = expectDelta(s1, w);
+        if (d.length > 0) await exits(`${before} の後`, () => d);
+        if (w.pr.state === "open") {
+          const proc = watch(fake, dir);
+          await expectQuiet(fake, proc, deadline, 2, `${before} の後 (reset ${reset?.at ?? "不明"})`);
+          proc.kill();
+        }
+        expectNoPost(fake, `${before} の後`);
+        return;
+      }
+      await exits("reset の後", (got) => {
+        if (fake.posts.length !== 1) throw new Error(`reset の後: POST が ${fake.posts.length} 件`);
+        if (fake.posts[0].at < reset.at) throw new Error(`reset (${reset.at}) の前 (${fake.posts[0].at}) に POST した`);
+        const url = urls.issue(fake.posts[0].id);
+        // POST の応答が切れたら、次の周期でそのコメントを自分のコメントとして見つけ、もう POST しない
+        return [[`new codex-review requested ${url}`], [`new comment ${ME} ${url}`]].some((l) => JSON.stringify(l) === JSON.stringify(got));
+      });
+      const s2 = structuredClone(fake.world);
+      if (after === "completed") summarize(fake.world, true);
+      else if (after === "limit") addComment(fake.world, { kind: "limit", login: BOT });
+      if (after === "none") {
+        const proc = watch(fake, dir);
+        await expectQuiet(fake, proc, deadline, 2, "要求に bot が応えない");
+        proc.kill();
+      } else {
+        await exits(`要求への bot の応答 (${after})`, async () => after === "completed" ? expectDelta(s2, fake.world) : limitLines(s2, fake.world, await fake.when()));
+      }
+      if (fake.posts.length !== 1) throw new Error(`bot の応答 (${after}) の後: POST が ${fake.posts.length} 件`);
     });
   },
 );
@@ -1051,6 +1253,26 @@ async function checkPermanentCurlConfigFailures() {
   }
 }
 
+/**
+ * open の PR に上限のコメントが 1 件だけある初回で、PR_CODEX_LIMITS が spec を返す (null なら PR_CODEX_LIMITS が無い) とき、codex-usage-limit の行の
+ * <when> が want になることを確かめる。生成器が当たるかは確率に任せるので、失敗・該当する窓が無い・両窓が上限の場合の窓の選び方をここで固定して確かめる
+ */
+async function checkLimitsLine(what: string, spec: string | null, want: string | RegExp) {
+  const w: World = { n: 0, pr: { state: "open", merged: false, title: "t", body: null, head: "" }, issue: [], rc: [], threads: [], reviews: [], checks: [], statuses: [] };
+  w.pr.head = shaOf(tick(w));
+  addComment(w, { kind: "limit", login: BOT });
+  const prefix = `open codex-usage-limit ${urls.issue(w.issue[0].id)} `;
+  await withFake(w, { skip: 0, list: [] }, null, spec, async (fake, dir) => {
+    const proc = watch(fake, dir);
+    const code = await proc.exit(Date.now() + CASE_SECONDS * 1000);
+    const line = proc.out.replace(/\n$/, "");
+    const when = line.startsWith(prefix) ? line.slice(prefix.length) : null;
+    if (code !== 0 || when === null || (typeof want === "string" ? when !== want : !want.test(when))) {
+      throw new Error(`${what}: ${prefix}${want} の 1 行のはず (exit ${code})\n${proc.show()}`);
+    }
+  });
+}
+
 // ---- 入口 ----
 
 const tmpRoot = await Deno.makeTempDir({ prefix: "pr-pbt." });
@@ -1096,11 +1318,25 @@ try {
     {},
   );
   await checkPermanentCurlConfigFailures();
+  await checkLimitsLine("PR_CODEX_LIMITS が exit 1", "fail", `reset unknown: ${LIMITS_FAILED}`);
+  await checkLimitsLine("PR_CODEX_LIMITS が無い", null, /^reset unknown: .*limits: No such file or directory$/);
+  await checkLimitsLine(
+    "100% の窓に resetsAt が無い",
+    specOf([{ used: 99, reset: FAR[0], mins: 300 }, { used: 100, reset: null, mins: 10080 }]),
+    "reset unknown: no window at 100% with resetsAt",
+  );
+  // 窓の名前は windowDurationMins から決め、primary・secondary の別からは決めない
+  await checkLimitsLine(
+    "両窓が 100% なら resetsAt の遅いほう",
+    specOf([{ used: 100, reset: FAR[1], mins: 10080 }, { used: 150, reset: FAR[0], mins: 300 }]),
+    `resets ${iso(FAR[1])} weekly`,
+  );
   // 1 件に数秒かかるので、縮小せずに最初の反例で止める (FC_SEED と表示される path で再現する)
   const params = { numRuns, ...(seedEnv ? { seed: Number(seedEnv) } : {}), endOnFailure: true, verbose: fc.VerbosityLevel.Verbose };
   await fc.assert(p1, params);
   await fc.assert(p2, params);
   await fc.assert(p3, params);
+  await fc.assert(p4, params);
 } finally {
   await Deno.remove(tmpRoot, { recursive: true }).catch(() => {});
 }

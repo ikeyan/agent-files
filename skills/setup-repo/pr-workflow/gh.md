@@ -39,6 +39,11 @@ gh 2.98.0 で `--help` と実行を確認したもの。「未実測」と書い
   - `<dir>` は PR ごとに 1 つ作り、その PR の間は使い続ける: `mktemp -d -p "${TMPDIR:-/tmp}" watch-pr.XXXXXX`。共有の `/tmp` に固定名で置かない (`canon: facts/shell/mktemp-tmpdir-handling-bsd-vs-gnu`)。
   - 出力は終わったときにまとめて届く。終わったら次のとおりにする。
     - `open`・`new`・`changed` の行: 対応してから、同じ `<dir>` で起動し直す。止まっていた間の変化は、起動し直した最初の周期で出る。
+    - `codex-usage-limit` の行 (Codex のレビューの利用上限。行の形は `pr.sh` の先頭): 次のとおりにしてから起動し直す。reset が分かっていれば、それを過ぎると watch が `@codex review` を出す。
+      - `resets <時刻> 5h`: 何もしない。
+      - `resets <時刻>` でほかの窓 (`weekly` など): PushNotification で reset の時刻をユーザーに知らせる。
+      - `reset unknown: <理由>`: PushNotification で理由をユーザーに知らせる (push か手動の `@codex review` までレビューは来ない)。
+    - `codex-review requested` の行 (watch が `@codex review` を出した): 起動し直すだけ。
     - PR の close: 起動し直さない。
     - `auth` の行 (トークンが無いか無効): PushNotification でユーザーに gh auth login を頼み、済んだら起動し直す。
   - 起動した shell は Bash ツールの時間の上限に縛られない (900 秒の sleep が最後まで走ることを実測)。
