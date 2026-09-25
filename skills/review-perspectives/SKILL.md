@@ -68,7 +68,8 @@ description: Use when reviewing a diff before commit or push, when asked to revi
    後始末と、止まったときの行動:
 
    - レビューが終わったら、対象を指定したときは `git worktree remove <repo= のパス>` してから、`rm -r <run= のパス>` で消す。
-   - レビューと修正の反復を終えたら (push したら)、`<work= のパス>/findings.md` を消す。
+   - 系列が終わったら (PR が merge か close されたら)、`<work= のパス>` を消す。
+   - `<work= のパス>/findings.md` は系列が終わるまで (PR が merge か close されるまで) 残す。push の後も外部のレビュー (Codex 等) は同じ箇所に指摘を続けるので、push で消すと回数が 1 に戻る。外部のレビューで確定した指摘も手順 5 と同じ形で書き足す。
    - `cannot lock ref`、`.lock': File exists`、または `shallow file has changed since we read it` で止まったら、同時に回している別の実行の fetch と衝突したので、やり直す。
    - origin が無い、fetch か `set-head` が失敗した、対象が解決できない、または `共通の祖先が無い` で止まったら、どこからの変更をレビューするかをユーザーに確かめる。
    - `<path> はリポジトリのルートからの相対パス` で止まったら、ルート相対のパスに直して回す。git が `outside repository` か `empty string is not a valid pathspec` で止まったときも同じ。
