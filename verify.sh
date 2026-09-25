@@ -7,26 +7,25 @@ set -euo pipefail
 shopt -s nullglob
 cd "$(dirname "$0")"
 
-check_files() { # <コマンド…> -- <パターン…>: git が知っているファイルが 1 件以上あるときだけコマンドを回す
-  local cmd=() files=()
-  while [ "$1" != "--" ]; do cmd+=("$1"); shift; done
-  shift
-  while IFS= read -r file; do files+=("$file"); done < <(git ls-files --cached --others --exclude-standard "$@")
-  if [ ${#files[@]} -gt 0 ]; then "${cmd[@]}" "${files[@]}"; fi
-}
-check_files shellcheck -- '*.sh' hooks/pre-push
-check_files deno check -- '*.ts'
-scripts/test-target-diff.sh
-scripts/test-pre-push.sh
-# 書き込みは $TMPDIR の下だけだが、シンボリックリンクを作るので Deno はパスを絞った許可を受け付けない
-deno run --allow-run=git,bash --allow-env --allow-read --allow-write scripts/test-target-diff.ts
-deno run --allow-run=bash --allow-net=127.0.0.1 --allow-env=PR_RUNS,FC_SEED,NO_PROXY,no_proxy --allow-read="${TMPDIR:-/tmp}" --allow-write="${TMPDIR:-/tmp}" scripts/test-pr.ts
+readonly_mode=${VERIFY_READONLY:-}
+status=0
+# hooks/pre-push は core.hooksPath で有効になる。clone の設定は作業ツリーに入らないのでここで揃える。後の検査が落ちても揃っているように、検査より先に行う。
+hooks_path=$(git config --get core.hooksPath || true)
+if [ "$hooks_path" != hooks ]; then
+  if [ -n "$readonly_mode" ]; then
+    echo "core.hooksPath (${hooks_path:-未設定}) != hooks。 Execute: git config core.hooksPath hooks" >&2
+    status=1
+  elif git config core.hooksPath hooks; then
+    echo "core.hooksPath: ${hooks_path:-未設定} から hooks にした"
+  else
+    echo "core.hooksPath を hooks にできない。 Execute: git config core.hooksPath hooks" >&2
+    status=1
+  fi
+fi
 
 # .claude/skills と skills/ の対応 (構造は README)。symlink の作成は deno だと無制限の
 # --allow-write/--allow-read が要るので shell 側で扱う。Claude Code のサンドボックス内では
 # .claude/skills が保護パスで書けないので、直せなければ違反として報告して検査を続ける。
-readonly_mode=${VERIFY_READONLY:-}
-status=0
 if [ -L .claude/skills ]; then
   echo ".claude/skills: symlink になっている (実体のディレクトリであるべき。構造は README)" >&2
   status=1
@@ -88,19 +87,20 @@ else
   done
 fi
 
-# hooks/pre-push は core.hooksPath で有効になる。clone の設定は作業ツリーに入らないのでここで揃える。
-hooks_path=$(git config --get core.hooksPath || true)
-if [ "$hooks_path" != hooks ]; then
-  if [ -n "$readonly_mode" ]; then
-    echo "core.hooksPath (${hooks_path:-未設定}) != hooks。 Execute: git config core.hooksPath hooks" >&2
-    status=1
-  elif git config core.hooksPath hooks; then
-    echo "core.hooksPath: ${hooks_path:-未設定} から hooks にした"
-  else
-    echo "core.hooksPath を hooks にできない。 Execute: git config core.hooksPath hooks" >&2
-    status=1
-  fi
-fi
+check_files() { # <コマンド…> -- <パターン…>: git が知っているファイルが 1 件以上あるときだけコマンドを回す
+  local cmd=() files=()
+  while [ "$1" != "--" ]; do cmd+=("$1"); shift; done
+  shift
+  while IFS= read -r file; do files+=("$file"); done < <(git ls-files --cached --others --exclude-standard "$@")
+  if [ ${#files[@]} -gt 0 ]; then "${cmd[@]}" "${files[@]}"; fi
+}
+check_files shellcheck -- '*.sh' hooks/pre-push
+check_files deno check -- '*.ts'
+scripts/test-target-diff.sh
+scripts/test-pre-push.sh
+# 書き込みは $TMPDIR の下だけだが、シンボリックリンクを作るので Deno はパスを絞った許可を受け付けない
+deno run --allow-run=git,bash --allow-env --allow-read --allow-write scripts/test-target-diff.ts
+deno run --allow-run=bash --allow-net=127.0.0.1 --allow-env=PR_RUNS,FC_SEED,PATH --allow-read="${TMPDIR:-/tmp}" --allow-write="${TMPDIR:-/tmp}" scripts/test-pr.ts
 
 git ls-files --cached --others --exclude-standard |
   deno run --allow-read=. --allow-net=www.schemastore.org scripts/verify.ts

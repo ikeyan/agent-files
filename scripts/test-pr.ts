@@ -686,16 +686,25 @@ class Fake {
 // ---- 実行 ----
 
 /**
- * pr.sh の子プロセスに渡す環境を組み立てる (GH_TOKEN は既定で test、追加分は extra で上書き)。
- * 継承した http_proxy 等があると 127.0.0.1 の fake への要求もそれ経由になり fake に届かず固まるので、
- * NO_PROXY・no_proxy に 127.0.0.1 を足す (継承値があれば連結する)。
+ * pr.sh の子プロセスの環境 (親から継承しない。clearEnv と組で使う)。GH_TOKEN は既定で test、追加分は extra で上書き。
+ * curl が読むプロキシの環境変数を届かないプロキシに向けて NO_PROXY は与えず、既定の設定ファイル ($CURL_HOME/.curlrc が最初に探される) では
+ * プロキシと接続先を届かない先に変える。127.0.0.1 の fake に届くことが、pr.sh が 127.0.0.1 宛てにプロキシを使わず設定ファイルを読まないことの確認になる
+ * (canon: facts/curl/environment-and-config-inputs)。
  */
 function prEnv(extra: Record<string, string> = {}): Record<string, string> {
-  const withLoopback = (name: string) => {
-    const inherited = Deno.env.get(name);
-    return inherited ? `${inherited},127.0.0.1` : "127.0.0.1";
+  const proxy = "http://127.0.0.1:9";
+  return {
+    PATH: Deno.env.get("PATH") ?? "",
+    GH_TOKEN: "test",
+    CURL_HOME: curlHome,
+    http_proxy: proxy,
+    HTTP_PROXY: proxy,
+    https_proxy: proxy,
+    HTTPS_PROXY: proxy,
+    all_proxy: proxy,
+    ALL_PROXY: proxy,
+    ...extra,
   };
-  return { GH_TOKEN: "test", NO_PROXY: withLoopback("NO_PROXY"), no_proxy: withLoopback("no_proxy"), ...extra };
 }
 
 async function within<T>(p: Promise<T>, deadline: number): Promise<T | undefined> {
@@ -719,6 +728,7 @@ class Proc {
   constructor(args: string[], fake: Fake) {
     this.child = new Deno.Command("bash", {
       args: [script, ...args],
+      clearEnv: true,
       env: prEnv({ GITHUB_API_URL: fake.url }),
       stdin: "null",
       stdout: "piped",
@@ -984,6 +994,7 @@ const p3 = fc.asyncProperty(
 async function checkPermanentCurlFailure(what: string, args: string[], env: Record<string, string>) {
   const cmd = new Deno.Command("bash", {
     args: [script, ...args],
+    clearEnv: true,
     env: prEnv(env),
     stdout: "piped",
     stderr: "piped",
@@ -1001,6 +1012,7 @@ async function checkPermanentCurlFailure(what: string, args: string[], env: Reco
 async function checkGuardFailure(what: string, args: string[], env: Record<string, string>) {
   const cmd = new Deno.Command("bash", {
     args: [script, ...args],
+    clearEnv: true,
     env: prEnv(env),
     stdout: "piped",
     stderr: "piped",
@@ -1016,7 +1028,8 @@ async function checkGuardFailure(what: string, args: string[], env: Record<strin
 
 /**
  * URL のスキームの取り違え (TLS を話さない相手に https で GITHUB_API_URL を向ける) と、CURL_CA_BUNDLE が読めない設定が、ともに curl 自身の
- * 恒久的な失敗として exit 3 と error の行になることを確かめる。生成器は GITHUB_API_URL や CURL_CA_BUNDLE の形を変えないので、ここで固定して確かめる。
+ * 恒久的な失敗として exit 3 と error の行になることを確かめる。取り違えは NO_PROXY に載る 127.0.0.1 以外のホスト宛てでも確かめる (プロキシを通ると届かず一時的な失敗になる)。
+ * 生成器は GITHUB_API_URL や CURL_CA_BUNDLE・NO_PROXY の形を変えないので、ここで固定して確かめる。
  */
 async function checkPermanentCurlConfigFailures() {
   const server = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, () => new Response("not tls"));
@@ -1028,6 +1041,11 @@ async function checkPermanentCurlConfigFailures() {
       ["reply-resolve", REPO, String(PR), "1", "x"],
       { GITHUB_API_URL: api, CURL_CA_BUNDLE: `${tmpRoot}/no-such-ca-bundle` },
     );
+    await checkPermanentCurlFailure(
+      "NO_PROXY に載るホストの検査",
+      ["reply-resolve", REPO, String(PR), "1", "x"],
+      { GITHUB_API_URL: `https://localhost:${(server.addr as Deno.NetAddr).port}`, NO_PROXY: "localhost", no_proxy: "localhost" },
+    );
   } finally {
     await server.shutdown();
   }
@@ -1036,6 +1054,8 @@ async function checkPermanentCurlConfigFailures() {
 // ---- 入口 ----
 
 const tmpRoot = await Deno.makeTempDir({ prefix: "pr-pbt." });
+const curlHome = await Deno.makeTempDir({ dir: tmpRoot });
+await Deno.writeTextFile(`${curlHome}/.curlrc`, 'proxy = "http://127.0.0.1:9"\nconnect-to = "::127.0.0.1:9"\n');
 try {
   await checkGuardFailure("GITHUB_API_URL の検査 (スペースが入る)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "not a url" });
   await checkGuardFailure("GITHUB_API_URL の検査 (スキーム省略)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "not-a-url" });
