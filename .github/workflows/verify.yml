@@ -17,7 +17,7 @@ jobs:
         with:
           deno-version: v2.x
       # clone の設定は checkout に入らない。開発者の clone と同じに揃えてから検査する。
-      - run: git config core.hooksPath hooks
+      - run: git config core.hooksPath "$(git rev-parse --path-format=absolute --show-toplevel)/hooks"
       - run: ./verify.sh
         env:
           # CI は作業ツリーを直さない。symlink のずれは違反として落とす。

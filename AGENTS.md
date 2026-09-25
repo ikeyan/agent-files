@@ -32,7 +32,7 @@
   - JSON の構文と schema
   - Markdown のリポ内リンク
   - `.claude/skills` と `skills/` の対応
-- `./verify.sh` は `.claude/skills` の symlink のずれと `core.hooksPath` (`hooks` であるべき) をその場で直す。CI は `VERIFY_READONLY=1` で直さず落とす。
+- `./verify.sh` は `.claude/skills` の symlink のずれと `core.hooksPath` (main worktree の `hooks` の絶対パスであるべき) をその場で直す。CI は `VERIFY_READONLY=1` で直さず落とす。
 - 必要なもの: `shellcheck`、`deno`、`curl` (7.84 以降)、`jq`、`www.schemastore.org` への到達。
 
 ## コメントの書き方
