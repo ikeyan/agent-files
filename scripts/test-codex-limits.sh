@@ -3,8 +3,11 @@
 # 応答しない例は codex-limits.sh の 30 秒の timeout を待つので、他の例と並行に回す。
 set -euo pipefail
 script=$(cd "$(dirname "$0")/.." && pwd)/skills/setup-repo/pr-workflow/codex-limits.sh
+bash_bin=$(command -v bash)
 tmp=$(cd "$(mktemp -d "${TMPDIR:-/tmp}/test-codex-limits.XXXXXX")" && pwd -P)
-trap 'rm -rf "$tmp"' EXIT
+hang=
+# kill は hang の run() が wait 済み (プロセスが既に居ない) でも起こるので、trap の続き (rm -rf) を set -e で打ち切らせない
+trap 'kill "$hang" 2> /dev/null || true; rm -rf "$tmp"' EXIT
 status=0
 
 mkdir "$tmp/bin"
@@ -27,13 +30,13 @@ done
 EOF
 chmod +x "$tmp/bin/codex"
 
-run() { # <例の名前> <mode> [<id 2 への応答>]: 例のディレクトリで codex-limits.sh を回し、stdout・stderr・終了コードを置く
+run() { # <例の名前> <mode> [<id 2 への応答>] [<PATH>]: 例のディレクトリで codex-limits.sh を回し、stdout・stderr・終了コードを置く
   local case=$tmp/$1
   mkdir "$case" "$case/tmp"
   echo "$2" > "$case/mode"
   printf '%s\n' "${3:-}" > "$case/response"
   set +e
-  CASE=$case TMPDIR=$case/tmp PATH="$tmp/bin:$PATH" bash "$script" > "$case/stdout" 2> "$case/stderr"
+  CASE=$case TMPDIR=$case/tmp PATH="${4:-$tmp/bin:$PATH}" "$bash_bin" "$script" > "$case/stdout" 2> "$case/stderr"
   echo $? > "$case/code"
   set -e
 }
@@ -67,10 +70,28 @@ expect exit 2 "" "codex-limits.sh: codex app-server が応答の前に終わっ�
 
 mkdir "$tmp/none" "$tmp/none/tmp"
 set +e
-TMPDIR=$tmp/none/tmp PATH=/usr/bin:/bin "$(command -v bash)" "$script" > "$tmp/none/stdout" 2> "$tmp/none/stderr"
+TMPDIR=$tmp/none/tmp PATH=/usr/bin:/bin "$bash_bin" "$script" > "$tmp/none/stdout" 2> "$tmp/none/stderr"
 echo $? > "$tmp/none/code"
 set -e
-expect none 2 "" "codex-limits.sh: codex が PATH に無い"
+expect none 2 "" "codex-limits.sh: codex app-server が応答の前に終わった"
+
+# jq だけ PATH に無い例。PATH のディレクトリを丸ごと除くと mktemp 等の必須コマンドも道連れになり得るので、必要なコマンドだけを集めたディレクトリを使う
+mkdir "$tmp/nojq-bin"
+ln -s "$tmp/bin/codex" "$tmp/nojq-bin/codex"
+for c in mktemp mkfifo cat rm bash; do ln -s "$(command -v "$c")" "$tmp/nojq-bin/$c"; done
+nojq_path=$tmp/nojq-bin
+nojq_start=$SECONDS
+run nojq respond '{"id":2,"result":{"rateLimits":{}}}' "$nojq_path"
+nojq_elapsed=$((SECONDS - nojq_start))
+[ "$nojq_elapsed" -lt 5 ] || { echo "nojq: $nojq_elapsed 秒かかった — jq 不在なのに 30 秒 timeout を待った疑い" >&2; status=1; }
+[ "$(cat "$tmp/nojq/code")" = 2 ] || { echo "nojq: 終了コード $(cat "$tmp/nojq/code") != 2 — $(cat "$tmp/nojq/stderr")" >&2; status=1; }
+[ "$(cat "$tmp/nojq/stdout")" = "" ] || { echo "nojq: stdout が違う — $(cat "$tmp/nojq/stdout")" >&2; status=1; }
+case "$(head -n 1 "$tmp/nojq/stderr")" in
+  *jq*) ;;
+  *) echo "nojq: stderr が jq に言及していない — $(cat "$tmp/nojq/stderr")" >&2; status=1 ;;
+esac
+if [ -f "$tmp/nojq/pid" ] && kill -0 "$(cat "$tmp/nojq/pid")" 2> /dev/null; then echo "nojq: app-server が残っている" >&2; status=1; fi
+[ -z "$(ls "$tmp/nojq/tmp")" ] || { echo "nojq: 一時ディレクトリが残っている — $(ls "$tmp/nojq/tmp")" >&2; status=1; }
 
 wait "$hang"
 expect hang 2 "" "codex-limits.sh: codex app-server が 30 秒以内に応答しない"
