@@ -1,7 +1,7 @@
 /**
  * test-target-diff.ts — skills/review-perspectives/target-diff.sh の model based test。verify.sh から呼ぶ。
  *
- * 履歴の操作列と環境の形を生成し、履歴のモデルから「対象のコミット集合」と「対象のファイル集合」を計算して、スクリプトが書き出した target.diff と照合する。生成する次元は canon の `facts/git/repository-shapes` の目録の行で、目録の行を足したらここの生成器にも次元を足す。出力を変える git の設定は diff.external・GIT_EXTERNAL_DIFF・textconv・color.diff・diff.noprefix を生成する。log.showSignature は unsigned commit では検証結果の行が出ず観測できないので生成しない (fixture でも扱わない)。scripts/test-target-diff.sh は、生成に向かない形 (unborn HEAD、打ち消し合うコミット、origin の HEAD 無し、消した path) を例で固定する。
+ * 履歴の操作列と環境の形を生成し、履歴のモデルから「対象のコミット集合」と「対象のファイル集合」を計算して、スクリプトが書き出した target.diff と照合する。生成する次元は canon の `facts/git/repository-shapes` の目録の行で、目録の行を足したらここの生成器にも次元を足す。出力を変える git の設定は diff.external・GIT_EXTERNAL_DIFF・textconv・color.diff・diff.noprefix を生成する。log.showSignature は unsigned commit では検証結果の行が出ず観測できないので生成しない (fixture でも扱わない)。作業ツリーの項目は、対象無しの checkout に限り稀に tracked submodule の中の未コミットの変更 (dirtySubmodule) も生成し、target-diff.sh の対象外の宣言 (submodule の中身は見ない) を確かめる。scripts/test-target-diff.sh は、生成に向かない形 (unborn HEAD、打ち消し合うコミット、origin の HEAD 無し、消した path) を例で固定する。
  *
  * モデル (スクリプトの先頭の仕様を集合で書いたもの):
  * - 各コミットは 1 つのファイルを足す (merge commit は足さない)。commit c の内容 = c の祖先 (c を含む) のファイル。
@@ -46,6 +46,8 @@ interface Commit {
   id: string;
   parents: string[];
   file: string | null;
+  /** file 1 つに収まらない commit (submodule の追加は gitlink とあわせて .gitmodules も足す) 用。無ければ file を使う。 */
+  files?: string[];
 }
 
 class History {
@@ -160,6 +162,7 @@ const caseArb = fc.record({
   modify: fc.option(fc.nat(30), { nil: null }),
   untracked: fc.subarray([...UNTRACKED]),
   unbornNested: rarely,
+  dirtySubmodule: rarely,
   target: targetArb,
   paths: fc.array(fc.nat(40), { maxLength: 3 }),
   clone: fc.constantFrom("full", "single-branch", "shallow"),
@@ -310,12 +313,18 @@ async function runCase(c: Case, root: string): Promise<void> {
   // ---- モデルで期待値を決める ----
   const co = pickBranch(c.checkout);
   const localIds = Array.from({ length: c.localCommits }, (_, i) => `l${i + 1}`);
-  const coTip = localIds.at(-1) ?? h.tips.get(co)!;
+  // 対象外の宣言 (submodule の中身は見ない) は作業ツリーの変更の話なので、対象無しの checkout でだけ意味を持つ
+  const useSubmodule = c.dirtySubmodule && c.target.kind === "checkout";
+  let coTip = localIds.at(-1) ?? h.tips.get(co)!;
   const originTips = new Map(h.tips);
   let prev = h.tips.get(co)!;
   for (const id of localIds) {
     h.commits.set(id, { id, parents: [prev], file: `${id}.txt` });
     prev = id;
+  }
+  if (useSubmodule) {
+    h.commits.set("lsm", { id: "lsm", parents: [prev], file: null, files: [".gitmodules", "sm"] });
+    coTip = "lsm";
   }
   h.tips.set(co, coTip);
 
@@ -383,16 +392,18 @@ async function runCase(c: Case, root: string): Promise<void> {
   // path を付けた git log は、その path の内容がどの親とも違う commit だけを出す (merge commit は両側がその path のファイルを持ち込むときだけ)
   const filtered = (id: string) => new Set(h.filesOf(h.ancestors(id)).filter(matches));
   const shown = (id: string) => {
-    const { file, parents } = h.commits.get(id)!;
-    if (file !== null) return matches(file);
+    const { file, files, parents } = h.commits.get(id)!;
+    const added = files ?? (file !== null ? [file] : []);
+    if (added.length > 0) return added.some(matches);
     if (paths.length === 0) return true;
     const mine = filtered(id);
     return parents.every((p) => [...mine].some((f) => !filtered(p).has(f)));
   };
   for (const id of set) {
-    const f = h.commits.get(id)!.file;
+    const { file, files } = h.commits.get(id)!;
+    const added = files ?? (file !== null ? [file] : []);
     if (shown(id)) expected.commits.add(id);
-    if (f !== null && matches(f)) expected.files.add(f);
+    for (const f of added) if (matches(f)) expected.files.add(f);
   }
   const worktreeFiles: string[] = [];
   const tipFiles = h.filesOf(h.ancestors(coTip));
@@ -422,11 +433,21 @@ async function runCase(c: Case, root: string): Promise<void> {
     await commitFile(clone, `${id}.txt`, id);
     shas.set(id, await git(clone, "rev-parse", "HEAD"));
   }
-  if (t.kind === "commit") targetArg = shas.get(rev!);
-  if (localBranch) {
-    const r = await run("git", ["branch", "-q", localBranch, `origin/${localBranch}`], clone);
-    if (!r.ok && !/already exists/.test(r.stderr)) throw new Error(`git branch ${localBranch}: ${r.stderr}`);
+  if (useSubmodule) {
+    const subRepo = `${root}/sub.git`;
+    await Deno.mkdir(subRepo);
+    await git(subRepo, "init", "-q", "-b", "main");
+    await Deno.writeTextFile(`${subRepo}/f.txt`, "f\n");
+    await git(subRepo, "add", "-A");
+    await git(subRepo, "commit", "-q", "-m", "f");
+    await git(clone, "-c", "protocol.file.allow=always", "submodule", "add", subRepo, "sm");
+    await git(clone, "commit", "-q", "-m", "lsm");
+    shas.set("lsm", await git(clone, "rev-parse", "HEAD"));
+    await Deno.writeTextFile(`${clone}/sm/dirty.txt`, "d\n");
   }
+  if (t.kind === "commit") targetArg = shas.get(rev!);
+  // co 以外の手元のブランチ (main を含む) は、この生成器では常に origin/<b> から作るだけで先へ進めないので、-f で作り直しても同じ commit になる
+  if (localBranch) await git(clone, "branch", "-q", "-f", localBranch, `origin/${localBranch}`);
   if (deletedBranch) await git(origin, "branch", "-q", "-D", deletedBranch);
   if (t.kind === "checkout" && t.detached) await git(clone, "checkout", "-q", "--detach");
   let wt = clone; // 作業ツリーの変更を置き、スクリプトを回すリポジトリ
