@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # このリポの単一検証コマンド。引数なしで全部を検査する。
-# 既定では .claude/skills の symlink のずれ (作り忘れ・残骸) と core.hooksPath を直す。VERIFY_READONLY=1 では直さず違反にする (CI 用)。
+# 段は 2 種類で、その場で直す設定 (core.hooksPath、.claude/skills の symlink のずれ) を先に揃え、検査を後に回す。検査が落ちても設定は揃っているようにするため。VERIFY_READONLY=1 では直さず違反にする (CI 用)。
 # 事前条件: shellcheck・deno・curl (7.84 以降)・jq が PATH にあること。ネットワーク (www.schemastore.org) に出られること。
 # core.hooksPath は設定ファイル (system・global・local・worktree と include) の値で判定し、GIT_CONFIG_COUNT/KEY_<n>/VALUE_<n>・GIT_CONFIG_PARAMETERS (git -c)・GIT_CONFIG は無視する。
 set -euo pipefail
