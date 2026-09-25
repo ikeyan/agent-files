@@ -1052,6 +1052,11 @@ try {
   await checkGuardFailure("GITHUB_API_URL の検査 (ポート 65536、範囲外)", ["reply-resolve", REPO, String(PR), "1", "x"], {
     GITHUB_API_URL: "http://127.0.0.1:65536",
   });
+  // ホストの文字クラスだけでは http://- や http://a..b も通り、curl の resolve 失敗 (一時的、exit 6) になって watch が再試行し続ける (Codex 指摘: PR #18 review comment r4101741414)。RFC 1123 のラベルで閉じて弾く
+  await checkGuardFailure("GITHUB_API_URL の検査 (ホストがハイフンだけ)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "http://-" });
+  await checkGuardFailure("GITHUB_API_URL の検査 (ホストがドットだけ)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "http://." });
+  await checkGuardFailure("GITHUB_API_URL の検査 (ラベルの間が空)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "http://a..b" });
+  await checkGuardFailure("GITHUB_API_URL の検査 (ラベルがハイフンで終わる)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "http://a-.b" });
   await checkPermanentCurlFailure(
     "owner/repo にスペースが入る検査",
     ["watch", "o r/x", String(PR), await Deno.makeTempDir({ dir: tmpRoot }), "1"],
