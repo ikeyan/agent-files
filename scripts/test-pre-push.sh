@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# hooks/pre-push を、token (<git-dir>/push-ok) の有無で push を通す・止めることと、verify.sh が core.hooksPath を main worktree の hooks の絶対パスとして設定ファイルに書く (検査に落ちる clone でも、linked worktree で回しても。command スコープや GIT_CONFIG の値では済ませない) こと、書けないときや main worktree に hooks/pre-push が無いときは落ちることを検査する。verify.sh から呼ぶ。
+# hooks/pre-push を、token (<git-dir>/push-ok) の有無で push を通す・止めることと、verify.sh がそれを common git dir の hooks へ写す (検査に落ちる clone でも。写しが改変されていれば写し直す) ことを検査する。写しは main worktree の checkout によらず linked worktree の push も止めること、core.hooksPath が hook をよそへ向けていれば verify.sh が設定を書かずに落ちることも見る。verify.sh から呼ぶ。
 # ネットワークは使わない (bare リポジトリを file システム上に作って push する)。
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -12,7 +12,7 @@ status=0
 cd "$tmp"
 git init -q -b main --bare remote.git
 git clone -q remote.git clone
-git -C clone config core.hooksPath "$here/hooks"
+install -m 755 "$here/hooks/pre-push" "$(git -C clone rev-parse --path-format=absolute --git-common-dir)/hooks/pre-push"
 echo x > clone/a.txt && git -C clone add a.txt && git -C clone commit -q -m a
 
 # token が無ければ push は止まり、remote には何も届かない
@@ -51,7 +51,7 @@ if git -C clone push origin main 2>/dev/null; then
   status=1
 fi
 
-# verify.sh は、検査が落ちても core.hooksPath を main worktree の hooks にしてから落ちる (hook が無い clone から push できる期間を作らない)。
+# verify.sh は、検査が落ちても hooks/pre-push を common git dir の hooks に写してから落ちる (hook が無い clone から push できる期間を作らない)。
 # 作業ツリーの verify.sh を clone に写し、shellcheck が落ちるファイルを置いて回す。VERIFY_READONLY は直さないモードなので、CI から継承した値を外す
 git clone -q "$here" repo
 cp "$here/verify.sh" repo/verify.sh
@@ -59,13 +59,27 @@ cat > repo/bad.sh <<'BAD'
 #!/bin/bash
 if [ $x = y ]; then :; fi
 BAD
+hook=$tmp/repo/.git/hooks/pre-push
 if (cd repo && env -u VERIFY_READONLY ./verify.sh) > /dev/null 2>&1; then
   echo "shellcheck が落ちるファイルがあるのに verify.sh が通った" >&2
   status=1
 fi
-[ "$(git -C repo config --get core.hooksPath)" = "$tmp/repo/hooks" ] || { echo "検査に落ちた verify.sh が core.hooksPath を $tmp/repo/hooks にしていない" >&2; status=1; }
+if [ ! -x "$hook" ] || ! cmp -s repo/hooks/pre-push "$hook"; then
+  echo "検査に落ちた verify.sh が $hook に hooks/pre-push の実行可能な写しを置いていない" >&2
+  status=1
+fi
 
-# linked worktree は local の core.hooksPath を共有する。hooks/ の無い worktree (hooks/pre-push の無い commit と同じ) からも、token 無しの push は止まる
+# 写しが改変されていれば verify.sh は写し直す。VERIFY_READONLY=1 では写さずに落ちて示す
+printf x >> "$hook"
+(cd repo && env -u VERIFY_READONLY ./verify.sh) > /dev/null 2>&1 || true
+cmp -s repo/hooks/pre-push "$hook" || { echo "改変された写しを verify.sh が写し直さない" >&2; status=1; }
+printf x >> "$hook"
+(cd repo && VERIFY_READONLY=1 ./verify.sh) > /dev/null 2> err4.txt || true
+grep -q "$hook: hooks/pre-push と同じ実行可能なファイルでない" err4.txt || { echo "VERIFY_READONLY=1 の verify.sh が改変された写しを示さない — $(cat err4.txt)" >&2; status=1; }
+! cmp -s repo/hooks/pre-push "$hook" || { echo "VERIFY_READONLY=1 の verify.sh が写しを直した" >&2; status=1; }
+cp repo/hooks/pre-push "$hook"
+
+# hooks/ の無い linked worktree (hooks/pre-push の無い commit と同じ) からも、token 無しの push は止まる
 git -C repo worktree add -q --detach ../wt
 rm -r wt/hooks
 if git -C wt push "$tmp/remote.git" HEAD:refs/heads/wt 2>err5.txt; then
@@ -74,46 +88,25 @@ if git -C wt push "$tmp/remote.git" HEAD:refs/heads/wt 2>err5.txt; then
 fi
 grep -q push-ok err5.txt || { echo "hooks/ の無い linked worktree の token 無しの push のエラーに push-ok が無い — $(cat err5.txt)" >&2; status=1; }
 
-# linked worktree で回した verify.sh も、その worktree でなく main worktree の hooks を書く
-git -C repo config core.hooksPath hooks
-cp "$here/verify.sh" repo/bad.sh wt/
-(cd wt && env -u VERIFY_READONLY ./verify.sh) > /dev/null 2>&1 || true
-[ "$(git -C repo config --get core.hooksPath)" = "$tmp/repo/hooks" ] || { echo "linked worktree の verify.sh が core.hooksPath を $tmp/repo/hooks にしていない ($(git -C repo config --get core.hooksPath))" >&2; status=1; }
-
-# main worktree に hooks/pre-push が無ければ、どの worktree の push も素通りするので verify.sh は落ちて示す
-rm repo/hooks/pre-push
-(cd wt && env -u VERIFY_READONLY ./verify.sh) > /dev/null 2> err6.txt || true
-grep -q "$tmp/repo/hooks/pre-push: 実行可能なファイルが無く" err6.txt || { echo "main worktree に hooks/pre-push が無いことを verify.sh が示さない — $(cat err6.txt)" >&2; status=1; }
-
-# worktree スコープの値が local に勝つ clone では、verify.sh は落ちて設定元を示し、worktree の設定は書き換えない
-git clone -q "$here" repo2
-cp "$here/verify.sh" repo/bad.sh repo2/
-git -C repo2 config extensions.worktreeConfig true
-git -C repo2 config --worktree core.hooksPath /dev/null
-if (cd repo2 && env -u VERIFY_READONLY ./verify.sh) > /dev/null 2> err4.txt; then
-  echo "worktree スコープの core.hooksPath が勝つのに verify.sh が通った" >&2
+# main worktree を hooks/pre-push の無い commit に切り替えても、linked worktree からの token 無しの push は止まる
+git -C repo checkout -q --detach
+git -C repo rm -q hooks/pre-push
+git -C repo commit -q -m 'hooks/pre-push の無い commit'
+if git -C wt push "$tmp/remote.git" HEAD:refs/heads/wt 2>err6.txt; then
+  echo "main worktree が hooks/pre-push の無い commit のとき、linked worktree から token 無しで push が通った" >&2
   status=1
 fi
-grep -q "別の設定元の値が勝つ (worktree " err4.txt || { echo "worktree スコープが勝つことを verify.sh が示さない — $(cat err4.txt)" >&2; status=1; }
-[ "$(git -C repo2 config --worktree --get core.hooksPath)" = /dev/null ] || { echo "verify.sh が worktree スコープの core.hooksPath を書き換えた" >&2; status=1; }
+grep -q push-ok err6.txt || { echo "main worktree が hooks/pre-push の無い commit のときの token 無しの push のエラーに push-ok が無い — $(cat err6.txt)" >&2; status=1; }
 
-# command スコープ (GIT_CONFIG_COUNT 等・-c が渡す GIT_CONFIG_PARAMETERS) と GIT_CONFIG の値は clone に残らないので、それが main worktree の hooks でも verify.sh は local に書く
-n=3
-for source in count parameters file; do
-  want="$tmp/repo$n/hooks"
-  case $source in
-    count) assignments=(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath "GIT_CONFIG_VALUE_0=$want") ;;
-    parameters) assignments=("GIT_CONFIG_PARAMETERS='core.hookspath'='$want'") ;;
-    file)
-      printf '[core]\n\thooksPath = %s\n' "$want" > hooks.gitconfig
-      assignments=(GIT_CONFIG=../hooks.gitconfig)
-      ;;
-  esac
-  git clone -q "$here" "repo$n"
-  cp "$here/verify.sh" repo/bad.sh "repo$n/"
-  (cd "repo$n" && env -u VERIFY_READONLY "${assignments[@]}" ./verify.sh) > /dev/null 2>&1 || true
-  [ "$(git -C "repo$n" config --local --get core.hooksPath)" = "$want" ] || { echo "${assignments[*]} のとき、verify.sh が local に core.hooksPath を書かない" >&2; status=1; }
-  n=$((n + 1))
-done
+# core.hooksPath が hook をよそへ向けていれば、verify.sh は設定元を示して落ち、設定は書き換えない
+git clone -q "$here" repo2
+cp "$here/verify.sh" repo/bad.sh repo2/
+git -C repo2 config core.hooksPath hooks
+if (cd repo2 && env -u VERIFY_READONLY ./verify.sh) > /dev/null 2> err7.txt; then
+  echo "core.hooksPath が hook をよそへ向けているのに verify.sh が通った" >&2
+  status=1
+fi
+grep -q "local file:.git/config hooks" err7.txt || { echo "core.hooksPath の設定元を verify.sh が示さない — $(cat err7.txt)" >&2; status=1; }
+[ "$(git -C repo2 config --get core.hooksPath)" = hooks ] || { echo "verify.sh が core.hooksPath を書き換えた" >&2; status=1; }
 
 exit "$status"

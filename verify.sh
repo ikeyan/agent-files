@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # このリポの単一検証コマンド。引数なしで全部を検査する。
-# 段は 2 種類で、その場で直す設定 (core.hooksPath、.claude/skills の symlink のずれ) を先に揃え、検査を後に回す。検査が落ちても設定は揃っているようにするため。VERIFY_READONLY=1 では直さず違反にする (CI 用)。
+# 段は 2 種類で、その場で直す状態 (hooks/pre-push の写し、.claude/skills の symlink のずれ) を先に揃え、検査を後に回す。検査が落ちても状態は揃っているようにするため。VERIFY_READONLY=1 では直さず違反にする (CI 用)。
 # 事前条件: shellcheck・deno・curl (7.84 以降)・jq が PATH にあること。ネットワーク (www.schemastore.org) に出られること。
-# core.hooksPath は設定ファイル (system・global・local・worktree と include) の値で判定し、GIT_CONFIG_COUNT/KEY_<n>/VALUE_<n>・GIT_CONFIG_PARAMETERS (git -c)・GIT_CONFIG は無視する。値は main worktree (git rev-parse --git-common-dir の親) の hooks の絶対パスで、main worktree の .git がディレクトリであるリポ (--separate-git-dir や bare でない) に限る。
+# git は hook を $GIT_COMMON_DIR/hooks (linked worktree も共有し、checkout で変わらない) から呼ぶので、hooks/pre-push をそこへ写す。core.hooksPath (どの scope でも) が hook をよそへ向けていれば違反にし、設定は書かない。
+# 判定は verify.sh を走らせた環境 (GIT_CONFIG_GLOBAL・GIT_CONFIG_COUNT などの設定の差し替えを含む) についてのものなので、push する環境で走らせる。
 set -euo pipefail
 # nullglob: 空のディレクトリで glob がパターン文字列そのものに化け、存在しないパスを検査してしまうのを防ぐ。
 shopt -s nullglob
@@ -10,28 +11,24 @@ cd "$(dirname "$0")"
 
 readonly_mode=${VERIFY_READONLY:-}
 status=0
-# 後の検査が落ちても hooks/pre-push が有効であるよう、検査より先に行う。command スコープの値は process と共に消え、GIT_CONFIG は git config にしか効かないので、同じ値を示していても後の git push の hook にならない。
-# 相対パスは hook を走らせる worktree ごとに解決され、hooks/ の無い commit の worktree からは hook 無しで push が通るので、main worktree の hooks を絶対パスで指す。
-file_config() { env -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT=0 git config "$@"; }
-hooks_dir=$(git rev-parse --path-format=absolute --git-common-dir)
-hooks_dir=${hooks_dir%/*}/hooks
-hooks_path=$(file_config --get core.hooksPath || true)
-if [ "$hooks_path" != "$hooks_dir" ]; then
+common=$(git rev-parse --path-format=absolute --git-common-dir)
+hooks_dir=$(git rev-parse --path-format=absolute --git-path hooks)
+if [ "$hooks_dir" != "$common/hooks" ]; then
+  echo "hook の置き場が $hooks_dir で、$common/hooks でない ($(git config --show-origin --show-scope --get core.hooksPath | tr '\t' ' '))。 Execute: git config --file <その file> --unset core.hooksPath" >&2
+  status=1
+fi
+hook=$common/hooks/pre-push
+if [ ! -x "$hook" ] || ! cmp -s hooks/pre-push "$hook"; then
   if [ -n "$readonly_mode" ]; then
-    echo "core.hooksPath (${hooks_path:-未設定}) != $hooks_dir。 Execute: git config core.hooksPath '$hooks_dir'" >&2
+    echo "$hook: hooks/pre-push と同じ実行可能なファイルでない。 Execute: install -m 755 hooks/pre-push '$hook'" >&2
     status=1
-  elif ! file_config core.hooksPath "$hooks_dir"; then
-    echo "core.hooksPath を $hooks_dir にできない。 Execute: git config core.hooksPath '$hooks_dir'" >&2
-    status=1
-  elif [ "$(file_config --get core.hooksPath)" != "$hooks_dir" ]; then
-    echo "core.hooksPath: local を $hooks_dir にしたが、別の設定元の値が勝つ ($(file_config --show-origin --show-scope --get core.hooksPath | tr '\t' ' '))。 Execute: git config --file <その file> --unset core.hooksPath" >&2
-    status=1
+  elif mkdir -p "$common/hooks" && install -m 755 hooks/pre-push "$hook"; then
+    echo "$hook: hooks/pre-push を写した"
   else
-    echo "core.hooksPath: ${hooks_path:-未設定} から $hooks_dir にした"
+    echo "$hook: hooks/pre-push を写せない。 Execute: install -m 755 hooks/pre-push '$hook'" >&2
+    status=1
   fi
 fi
-# hooks_dir に実行可能な pre-push が無いと、git は hook 無しで push を通す。
-[ -x "$hooks_dir/pre-push" ] || { echo "$hooks_dir/pre-push: 実行可能なファイルが無く、どの worktree の push も hook 無しで通る (main worktree が hooks/pre-push の無い commit にあるか、.git がディレクトリでないリポ)" >&2; status=1; }
 
 # .claude/skills と skills/ の対応 (構造は README)。symlink の作成は deno だと無制限の
 # --allow-write/--allow-read が要るので shell 側で扱う。Claude Code のサンドボックス内では
