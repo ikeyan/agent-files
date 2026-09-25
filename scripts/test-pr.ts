@@ -956,8 +956,9 @@ const p3 = fc.asyncProperty(
         if (mine.length !== 1) throw new Error(`reply-resolve: 自分の同じ本文の返信が ${mine.length} 件\n${proc.show()}`);
         if (after.rc.length !== before.rc.length + (prior.mine ? 0 : 1)) throw new Error(`reply-resolve: 返信の数が合わない\n${proc.show()}`);
         for (const t of after.threads) {
-          const was = before.threads.find((b) => b.node === t.node)!.resolved;
-          if (t.resolved !== (t.node === thread.node || was)) throw new Error(`reply-resolve: resolve の状態が違う: ${t.node}\n${proc.show()}`);
+          const b = before.threads.find((b) => b.node === t.node);
+          if (!b) throw new Error(`reply-resolve: スレッドが before に無い: ${t.node}`);
+          if (t.resolved !== (t.node === thread.node || b.resolved)) throw new Error(`reply-resolve: resolve の状態が違う: ${t.node}\n${proc.show()}`);
         }
       }
     });
@@ -966,7 +967,7 @@ const p3 = fc.asyncProperty(
 
 // ---- 固定の検査 ----
 
-/** <args> と <env> の組が curl 自身に恒久的な失敗 (URL・プロトコルの誤り) として扱われ、exit 3 と error の行 (stdout、fail 3 から) で止まることを確かめる。生成器は GITHUB_API_URL と repo の形を変えないので、ここで固定して確かめる */
+/** <args> と <env> の組が curl 自身に恒久的な失敗 (URL・プロトコルの誤り) として扱われ、exit 3 と error の行 (stdout、fail 3 から) で止まることを確かめる。生成器は repo の形を変えないので、ここで固定して確かめる */
 async function checkPermanentCurlFailure(what: string, args: string[], env: Record<string, string>) {
   const cmd = new Deno.Command("bash", {
     args: [script, ...args],
@@ -983,11 +984,29 @@ async function checkPermanentCurlFailure(what: string, args: string[], env: Reco
   }
 }
 
+/** <args> と <env> の組が pr.sh の起動時の GITHUB_API_URL の形の検査で止まり、exit 2 と "pr.sh: GITHUB_API_URL は" で始まる行 (stderr) になることを確かめる。生成器は GITHUB_API_URL の形を変えないので、ここで固定して確かめる */
+async function checkGuardFailure(what: string, args: string[], env: Record<string, string>) {
+  const cmd = new Deno.Command("bash", {
+    args: [script, ...args],
+    env: { GH_TOKEN: "test", ...env },
+    stdout: "piped",
+    stderr: "piped",
+  });
+  const { code, stdout, stderr } = await cmd.output();
+  const err = new TextDecoder().decode(stderr);
+  if (code !== 2 || !err.split("\n").some((l) => l.startsWith("pr.sh: GITHUB_API_URL は"))) {
+    throw new Error(
+      `${what}: exit 2 と "pr.sh: GITHUB_API_URL は" の行 (stderr) のはず (exit ${code})\nstdout:\n${new TextDecoder().decode(stdout)}\nstderr:\n${err}`,
+    );
+  }
+}
+
 // ---- 入口 ----
 
 const tmpRoot = await Deno.makeTempDir({ prefix: "pr-pbt." });
 try {
-  await checkPermanentCurlFailure("GITHUB_API_URL の検査", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "not a url" });
+  await checkGuardFailure("GITHUB_API_URL の検査 (スペースが入る)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "not a url" });
+  await checkGuardFailure("GITHUB_API_URL の検査 (スキーム省略)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "not-a-url" });
   await checkPermanentCurlFailure(
     "owner/repo にスペースが入る検査",
     ["watch", "o r/x", String(PR), await Deno.makeTempDir({ dir: tmpRoot }), "1"],

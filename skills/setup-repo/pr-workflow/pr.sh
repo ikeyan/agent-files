@@ -17,7 +17,7 @@
 #     自分 (トークンの持ち主) の通常のコメントは出す (エージェントの返信とユーザー自身の指示を見分けられない)。
 #   pr.sh reply-resolve <owner>/<repo> <PR 番号> <スレッド先頭のレビューコメントの id (整数)> <本文>
 #     スレッドに返信し、そのスレッドを resolve する。
-#   環境変数 GITHUB_API_URL: API の基点 (既定 https://api.github.com)。REST と GraphQL (<基点>/graphql) が同じ基点の下にある api.github.com の配置だけを扱い、GHES (REST は /api/v3、GraphQL は /api/graphql) は対象外。
+#   環境変数 GITHUB_API_URL: API の基点 (既定 https://api.github.com)。REST と GraphQL (<基点>/graphql) が同じ基点の下にある api.github.com の配置だけを扱い、GHES (REST は /api/v3、GraphQL は /api/graphql) は対象外。受け付ける形は https://<host> か http://<host>[:port] (末尾の / 無し) で、それ以外は起動時に exit 2 で止まる。
 # 出力 (watch、1 行 1 件): open・new・changed に続けてイベント文。説明の変更は "description changed" の行に unified diff が続く。
 #   auth で始まる行を出して終わったら、トークンが無いか無効 (401)。error で始まる行なら、PR 番号・リポジトリ・権限・問い合わせの誤り (3xx、401 以外の 4xx、レート制限でない GraphQL の errors、curl 自身の URL・プロトコルの誤り)。3xx はリポジトリの改名・移動で、新しい名前で起動し直す。
 # 失敗: 一時的な API の失敗 (ネットワーク・5xx・レート制限の 403・429) は、watch では出さずに間隔を倍にして (上限 900 秒) 再試行し、reply-resolve では止まる。curl 自身の失敗も同様に恒久・一時に分ける: URL の形やプロトコルが誤っている (curl(1) の EXIT CODES の 1・3・4) なら恒久、名前解決・接続・timeout など再試行で直りうるものはそれ以外の一時的として扱う。
@@ -32,6 +32,8 @@ cmd=$1 repo=$2 pr=$3
 # 無いと一時的な失敗と区別できずに再試行し続けるので、先に確かめる
 if ! command -v curl > /dev/null || ! command -v jq > /dev/null; then echo "pr.sh: curl と jq が要る" >&2; exit 2; fi
 api=${GITHUB_API_URL:-https://api.github.com}
+# スキームを省いた値は curl がホスト名として解釈して resolve の失敗 (一時的) になるので、形はここで閉じる
+[[ $api =~ ^https?://[^/]+$ ]] || { echo "pr.sh: GITHUB_API_URL は https://<host> か http://<host>[:port] (末尾の / 無し): $api" >&2; exit 2; }
 token=${GH_TOKEN:-$(gh auth token)}
 [ -n "$token" ] || { echo "auth GitHub のトークンが無い。GH_TOKEN を設定するか gh auth login する"; exit 1; }
 

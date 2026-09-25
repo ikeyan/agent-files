@@ -423,9 +423,9 @@ async function runCase(c: Case, root: string): Promise<void> {
     shas.set(id, await git(clone, "rev-parse", "HEAD"));
   }
   if (t.kind === "commit") targetArg = shas.get(rev!);
-  // clone は既定ブランチを手元に作るので、無いときだけ作る
-  if (localBranch && !(await run("git", ["rev-parse", "--verify", "-q", `refs/heads/${localBranch}`], clone)).ok) {
-    await git(clone, "branch", "-q", localBranch, `origin/${localBranch}`);
+  if (localBranch) {
+    const r = await run("git", ["branch", "-q", localBranch, `origin/${localBranch}`], clone);
+    if (!r.ok && !/already exists/.test(r.stderr)) throw new Error(`git branch ${localBranch}: ${r.stderr}`);
   }
   if (deletedBranch) await git(origin, "branch", "-q", "-D", deletedBranch);
   if (t.kind === "checkout" && t.detached) await git(clone, "checkout", "-q", "--detach");
