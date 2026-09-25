@@ -15,7 +15,7 @@
 #     以後: 前回との差 (コメント・review の追加と編集、タイトル、説明、CI の失敗、PR の close) を見つけたら、間隔と 10 秒の短いほうだけ待って取り直し、まとめて出して終わる。
 #     出さないもの: resolve 済みのスレッドのレビューコメント、本文の無い COMMENTED の review (返信で作られる)、Codex の summary コメントの、今の head の Completed 以外への編集。
 #     自分 (トークンの持ち主) の通常のコメントは出す (エージェントの返信とユーザー自身の指示を見分けられない)。
-#     Codex のレビューの利用上限のコメント (Codex の bot の、本文が "You have reached your Codex usage limits for code reviews." で始まるもの) は、状態に無く、Codex の summary の最後の編集より新しく、PR が open で head に Completed の summary が無いときに扱う (それ以外のものは、その後にレビューが動いたか、閉じた PR のもの)。Codex は窓が明けても自分ではレビューを再開せず、push か "@codex review" のコメントが要る (canon: facts/codex-github/usage-limit-auto-resume)。
+#     Codex のレビューの利用上限のコメント (Codex の bot の、本文が "You have reached your Codex usage limits for code reviews." で始まるもの) は、状態に無く、Codex の summary の最後の編集より新しいか等しく (updated_at は秒精度で、同じ秒は前後を判定できないので現在扱いとする)、PR が open で head に Completed の summary が無いときに扱う (それ以外のものは、その後にレビューが動いたか、閉じた PR のもの)。Codex は窓が明けても自分ではレビューを再開せず、push か "@codex review" のコメントが要る (canon: facts/codex-github/usage-limit-auto-resume)。
 #       扱うとは: PR_CODEX_LIMITS を 1 回回し、その周期に扱うコメントごとに codex-usage-limit の行を出す。usedPercent が 100 以上で resetsAt のある窓のうち、resetsAt が最も遅いもの (それが明けるまでレビューは止まる) を上限の窓とし、その resetsAt を reset とする。
 #       reset が分かれば、状態に codex-resume<TAB><head の sha><TAB><reset の epoch 秒> を残す。分からなければ消す (上限のコメントを扱うたびに置き換える)。分からないときは、push か手動の "@codex review" までレビューは来ないので、どうするかは監視側が決める。
 #       以後の周期で、codex-resume の head が今の head で、PR が open で head に Completed の summary が無く、reset を過ぎていれば、issue comment "@codex review" を 1 件 POST し、codex-review requested の行を出して codex-resume を消す。POST したコメントは comment の行として出さない。
@@ -216,7 +216,7 @@ codex_step() { # <現状> <open か new>: 利用上限のコメントと上限�
   fresh=$(printf '%s\n' "$1" | awk -F'\t' -v prev="$prev" 'BEGIN { while ((getline l < prev) > 0) { split(l, f, "\t"); seen[f[1]] } }
     $1 == "summary" && $2 > last { last = $2 }
     $1 ~ /^limit:/ && !($1 in seen) { split($2, v, " "); at[$1] = v[1]; url[$1] = v[2] }
-    END { for (k in at) if (at[k] > last) print url[k] }' "$prev" -)
+    END { for (k in at) if (at[k] >= last) print url[k] }' "$prev" -)
   if [ -n "$fresh" ]; then
     if out=$("$limits" 2>&1); then
       read -r reset window < <(awk -F'\t' '($1 == "primary" || $1 == "secondary") && $2 != "-" && $2 >= 100 && $3 != "-" && (r == "" || $3 > r) { r = $3; m = $4 }

@@ -268,8 +268,9 @@ function whenOf(out: string): string {
 function limitLines(w0: World | null, w1: World, when: string): string[] {
   if (w1.pr.state !== "open" || [...targets(w1).values()].some((t) => t.startsWith("codex-review completed "))) return [];
   const seen = new Set(w0?.issue.filter(isLimit).map((c) => c.id));
+  // updated_at は秒精度なので、summary の編集と同じ秒の上限は前後を判定できず、pr.sh は現在扱いとする (>=)
   const last = w1.issue.filter(isSummary).map((c) => c.updated_at).reduce((a, b) => a > b ? a : b, "");
-  return w1.issue.filter((c) => isLimit(c) && !seen.has(c.id) && c.updated_at > last)
+  return w1.issue.filter((c) => isLimit(c) && !seen.has(c.id) && c.updated_at >= last)
     .map((c) => `${w0 ? "new" : "open"} codex-usage-limit ${urls.issue(c.id)} ${when}`);
 }
 
@@ -1273,6 +1274,36 @@ async function checkLimitsLine(what: string, spec: string | null, want: string |
   });
 }
 
+/**
+ * summary の編集と上限のコメントの updated_at が同じ秒になっても、pr.sh は上限を見逃さず 1 回だけ announce し、reset を過ぎてから POST することを、
+ * API が返すコメント順 (作成順) の両方 (limitFirst) で確かめる。生成器の tick は呼ぶたびに違う秒を刻むので同じ秒には当たらず、ここで固定して確かめる。
+ */
+async function checkEqualSecondLimit(limitFirst: boolean) {
+  const w: World = { n: 0, pr: { state: "open", merged: false, title: "t", body: null, head: "" }, issue: [], rc: [], threads: [], reviews: [], checks: [], statuses: [] };
+  w.pr.head = shaOf(tick(w));
+  const t = timeOf(tick(w));
+  const summary: IssueComment = { id: idOf(tick(w)), login: BOT, body: summaryBody(false, null), updated_at: t };
+  const limit: IssueComment = { id: idOf(tick(w)), login: BOT, body: USAGE_LIMIT, updated_at: t };
+  w.issue.push(...(limitFirst ? [limit, summary] : [summary, limit]));
+  if (limitLines(null, w, "").length !== 1) throw new Error(`同じ秒の上限 (limitFirst=${limitFirst}): モデルが上限を 1 件と数えない`);
+  const limits = specOf([{ used: 100, reset: "+1", mins: 300 }, null]);
+  await withFake(w, { skip: 0, list: [] }, null, limits, async (fake, dir) => {
+    const deadline = Date.now() + CASE_SECONDS * 1000;
+    const proc = watch(fake, dir);
+    const code = await proc.exit(deadline);
+    if (code !== 0) throw new Error(`同じ秒の上限 (limitFirst=${limitFirst}): 初回 exit ${code}\n${proc.show()}`);
+    expectLines(proc.out.split("\n").slice(0, -1), expectInitial(w, await fake.when()), `同じ秒の上限 (limitFirst=${limitFirst})`, proc);
+    const reset = resetOf((await fake.lastLimits()) ?? "fail");
+    if (reset === null) throw new Error(`同じ秒の上限 (limitFirst=${limitFirst}): reset が分からない`);
+    await new Promise((r) => setTimeout(r, Math.max(0, (reset.at + 1) * 1000 - Date.now())));
+    const proc2 = watch(fake, dir);
+    const code2 = await proc2.exit(deadline);
+    if (code2 !== 0) throw new Error(`同じ秒の上限 (limitFirst=${limitFirst}): reset の後 exit ${code2}\n${proc2.show()}`);
+    if (fake.posts.length !== 1) throw new Error(`同じ秒の上限 (limitFirst=${limitFirst}): POST が ${fake.posts.length} 件\n${proc2.show()}`);
+    if (fake.posts[0].at < reset.at) throw new Error(`同じ秒の上限 (limitFirst=${limitFirst}): reset (${reset.at}) の前に POST した\n${proc2.show()}`);
+  });
+}
+
 // ---- 入口 ----
 
 const tmpRoot = await Deno.makeTempDir({ prefix: "pr-pbt." });
@@ -1331,6 +1362,8 @@ try {
     specOf([{ used: 100, reset: FAR[1], mins: 10080 }, { used: 150, reset: FAR[0], mins: 300 }]),
     `resets ${iso(FAR[1])} weekly`,
   );
+  await checkEqualSecondLimit(false);
+  await checkEqualSecondLimit(true);
   // 1 件に数秒かかるので、縮小せずに最初の反例で止める (FC_SEED と表示される path で再現する)
   const params = { numRuns, ...(seedEnv ? { seed: Number(seedEnv) } : {}), endOnFailure: true, verbose: fc.VerbosityLevel.Verbose };
   await fc.assert(p1, params);
