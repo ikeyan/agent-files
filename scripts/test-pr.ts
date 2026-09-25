@@ -685,6 +685,19 @@ class Fake {
 
 // ---- 実行 ----
 
+/**
+ * pr.sh の子プロセスに渡す環境を組み立てる (GH_TOKEN は既定で test、追加分は extra で上書き)。
+ * 継承した http_proxy 等があると 127.0.0.1 の fake への要求もそれ経由になり fake に届かず固まるので、
+ * NO_PROXY・no_proxy に 127.0.0.1 を足す (継承値があれば連結する)。
+ */
+function prEnv(extra: Record<string, string> = {}): Record<string, string> {
+  const withLoopback = (name: string) => {
+    const inherited = Deno.env.get(name);
+    return inherited ? `${inherited},127.0.0.1` : "127.0.0.1";
+  };
+  return { GH_TOKEN: "test", NO_PROXY: withLoopback("NO_PROXY"), no_proxy: withLoopback("no_proxy"), ...extra };
+}
+
 async function within<T>(p: Promise<T>, deadline: number): Promise<T | undefined> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const t = new Promise<undefined>((r) => timer = setTimeout(() => r(undefined), Math.max(0, deadline - Date.now())));
@@ -706,7 +719,7 @@ class Proc {
   constructor(args: string[], fake: Fake) {
     this.child = new Deno.Command("bash", {
       args: [script, ...args],
-      env: { GH_TOKEN: "test", GITHUB_API_URL: fake.url },
+      env: prEnv({ GITHUB_API_URL: fake.url }),
       stdin: "null",
       stdout: "piped",
       stderr: "piped",
@@ -971,7 +984,7 @@ const p3 = fc.asyncProperty(
 async function checkPermanentCurlFailure(what: string, args: string[], env: Record<string, string>) {
   const cmd = new Deno.Command("bash", {
     args: [script, ...args],
-    env: { GH_TOKEN: "test", ...env },
+    env: prEnv(env),
     stdout: "piped",
     stderr: "piped",
   });
@@ -988,7 +1001,7 @@ async function checkPermanentCurlFailure(what: string, args: string[], env: Reco
 async function checkGuardFailure(what: string, args: string[], env: Record<string, string>) {
   const cmd = new Deno.Command("bash", {
     args: [script, ...args],
-    env: { GH_TOKEN: "test", ...env },
+    env: prEnv(env),
     stdout: "piped",
     stderr: "piped",
   });
