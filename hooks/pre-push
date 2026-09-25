@@ -1,0 +1,10 @@
+#!/bin/sh
+# push を、$(git rev-parse --git-dir)/push-ok がある 1 回だけ通し、通したら消す。token は pr-workflow の push の手順で作る (レビュアーなどの push を止めるため)。
+# git は core.hooksPath=hooks でこれを呼ぶ (verify.sh が設定する)。githooks(5) の pre-push: push の前に呼ばれ、非 0 で終わると git push は何も push せずに止まる。
+set -eu
+token="$(git rev-parse --git-dir)/push-ok"
+if [ ! -e "$token" ]; then
+  echo "pre-push: .git/push-ok が無い。push は pr-workflow の手順で行う (touch \"\$(git rev-parse --git-dir)/push-ok\" してから push)" >&2
+  exit 1
+fi
+rm -- "$token"

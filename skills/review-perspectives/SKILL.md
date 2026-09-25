@@ -75,7 +75,7 @@ description: Use when reviewing a diff before commit or push, when asked to revi
    - `does not have a commit checked out` で止まったら、その入れ子のリポジトリに commit を作るか、外に動かすかをユーザーに確かめる。
    - `レビュー対象が空` で止まったら、レビューするものが無いことをユーザーに伝えて終わる。
 
-2. 表の各行について、そのモデルのエージェントを並列に起動し、次のプロンプトを渡す。リポのルートに `review-perspectives/<観点>.md` があれば、その観点の検索対象として一緒に渡す (書き方は [repo-supplement.md](repo-supplement.md))。観点の検出手順が列挙する対象が diff に無い担当 (文書だけの diff での 資源の解放 等) は起動しない。`<観点ファイル>` はこのスキルの `perspectives/<観点>.md` の絶対パス。
+2. 表の各行について、そのモデルのエージェントを Agent ツールの `isolation: "worktree"` で並列に起動し、次のプロンプトを渡す。エージェントの作業ディレクトリは使い捨ての worktree になり、そこで commit してもレビュー対象のブランチは動かない (読むのはプロンプトの絶対パス)。リポのルートに `review-perspectives/<観点>.md` があれば、その観点の検索対象として一緒に渡す (書き方は [repo-supplement.md](repo-supplement.md))。観点の検出手順が列挙する対象が diff に無い担当 (文書だけの diff での 資源の解放 等) は起動しない。`<観点ファイル>` はこのスキルの `perspectives/<観点>.md` の絶対パス。
 
    ```text
    あなたはコードレビュアーです。ファイルは Read・Grep・Glob で読み、書き換えないでください。
@@ -93,7 +93,7 @@ description: Use when reviewing a diff before commit or push, when asked to revi
    - 残りのコードの挙動についての指摘は、作業ディレクトリの `findings.md` (手順 5) に同じ箇所 (同じファイルの同じ関数か節) への過去の回の指摘があれば、その指摘に「同じ箇所への N 回目」(N は過去の回の数 + 1) と印を付ける。過去の回の指摘とは `tree=` が今回と違う行を指し、同じ `tree=` の行は今回と同じ回なので数えない。
    - 残りを確定・あり得る・反証のどれかに判定する。条件は下の検証プロンプトのとおり。
    - 文書と整理の指摘は自分で判定する。観点の規則と違反する行の両方を引用できれば確定 (書き換え案が誤っていても、観点の問いが成り立てば確定とする)、観点の判定規則が除外していれば反証。
-   - コードの挙動についての指摘は、候補を `run=` のディレクトリの `candidates.md` にまとめ、sonnet の検証エージェント 1 体に次のプロンプトで渡す。haiku は誤った候補の主張をそのまま確定にする。
+   - コードの挙動についての指摘は、候補を `run=` のディレクトリの `candidates.md` にまとめ、sonnet の検証エージェント 1 体を手順 2 と同じく `isolation: "worktree"` で起動して、次のプロンプトで渡す。haiku は誤った候補の主張をそのまま確定にする。
 
    ```text
    あなたはコードレビューの指摘を検証する役です。ファイルは Read・Grep・Glob で読み、書き換えないでください。
