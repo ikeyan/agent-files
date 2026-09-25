@@ -52,14 +52,14 @@ if git -C clone push origin main 2>/dev/null; then
 fi
 
 # verify.sh は、検査が落ちても core.hooksPath を hooks にしてから落ちる (hook が無い clone から push できる期間を作らない)。
-# 作業ツリーの verify.sh を clone に写し、shellcheck が落ちるファイルを置いて回す
+# 作業ツリーの verify.sh を clone に写し、shellcheck が落ちるファイルを置いて回す。VERIFY_READONLY は直さないモードなので、CI から継承した値を外す
 git clone -q "$here" repo
 cp "$here/verify.sh" repo/verify.sh
 cat > repo/bad.sh <<'BAD'
 #!/bin/bash
 if [ $x = y ]; then :; fi
 BAD
-if (cd repo && ./verify.sh) > /dev/null 2>&1; then
+if (cd repo && env -u VERIFY_READONLY ./verify.sh) > /dev/null 2>&1; then
   echo "shellcheck が落ちるファイルがあるのに verify.sh が通った" >&2
   status=1
 fi
