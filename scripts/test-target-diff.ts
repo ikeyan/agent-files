@@ -13,7 +13,7 @@
  * - path を付けたら、その path の内容がどの親とも違うコミットだけ (merge commit は、両側がその path のファイルを持ち込むときだけ)。絶対パス・ルートの外に出る `..`・空文字列の path は止まる。
  * - 対象のファイル集合: 上のコミットのファイル + (対象無しなら) 作業ツリーの変更と未追跡の項目 (.gitignore で無視されたものを除く)。
  * - ファイル集合が空なら止まる (merge commit だけの範囲を含む)。止まったら run ディレクトリと worktree を残さない。
- * - 同じ入力を同時に 2 つ走らせても、fetch の衝突 (cannot lock ref、shallow.lock の File exists) でやり直せば同じ結果になる。
+ * - 同じ入力を同時に 2 つ走らせても、fetch の衝突 (cannot lock ref、shallow.lock の File exists、または shallow file has changed since we read it) でやり直せば同じ結果になる。
  * - tree= は作業ツリーの内容 (未追跡を含む) と mode で変わり、rules= は規則の内容と名前で変わる。
  *
  * 環境: TARGET_DIFF_RUNS (試行数、既定 25。1 以上の整数。それ以外は止まる)、FC_SEED (再現する seed。指定するなら整数。それ以外は止まる)。
@@ -516,7 +516,7 @@ async function runCase(c: Case, root: string): Promise<void> {
   const results = c.concurrent ? await Promise.all([invoke(), invoke()]) : [await invoke()];
   const outputs: Output[] = [];
   for (let r of results) {
-    if (!r.ok && /cannot lock ref|\.lock': File exists/.test(r.stderr)) r = await invoke();
+    if (!r.ok && /cannot lock ref|\.lock': File exists|shallow file has changed/.test(r.stderr)) r = await invoke();
     if (!r.ok) throw new Error(`止まった: ${r.stderr}`);
     outputs.push(parseOutput(r.stdout));
   }
