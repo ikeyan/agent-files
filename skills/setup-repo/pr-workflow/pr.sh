@@ -44,7 +44,7 @@ else
 fi
 host=${api#*://} host=${host%%:*}
 [ "${#host}" -le 253 ] || { echo "$guard_msg" >&2; exit 2; }
-# --noproxy は NO_PROXY を置き換えるので、他のホスト宛てに渡すと利用者の NO_PROXY が効かなくなる
+# curl の --noproxy は NO_PROXY に足すのではなく置き換える (canon: facts/curl/environment-and-config-inputs)
 direct=()
 [ "$host" != 127.0.0.1 ] || direct=(--noproxy 127.0.0.1)
 if [[ $api =~ :([0-9]+)$ ]]; then port=${BASH_REMATCH[1]}; else port=; fi

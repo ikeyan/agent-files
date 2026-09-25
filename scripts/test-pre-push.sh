@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# hooks/pre-push を、token (<git-dir>/push-ok) の有無で push を通す・止めることを検査する。verify.sh から呼ぶ。
+# hooks/pre-push を、token (<git-dir>/push-ok) の有無で push を通す・止めることと、verify.sh が検査に落ちる clone でも core.hooksPath を hooks にすることを検査する。verify.sh から呼ぶ。
 # ネットワークは使わない (bare リポジトリを file システム上に作って push する)。
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -50,5 +50,19 @@ if git -C clone push origin main 2>/dev/null; then
   echo "手順の cleanup の後、token 無しで push が通った" >&2
   status=1
 fi
+
+# verify.sh は、検査が落ちても core.hooksPath を hooks にしてから落ちる (hook が無い clone から push できる期間を作らない)。
+# 作業ツリーの verify.sh を clone に写し、shellcheck が落ちるファイルを置いて回す
+git clone -q "$here" repo
+cp "$here/verify.sh" repo/verify.sh
+cat > repo/bad.sh <<'BAD'
+#!/bin/bash
+if [ $x = y ]; then :; fi
+BAD
+if (cd repo && ./verify.sh) > /dev/null 2>&1; then
+  echo "shellcheck が落ちるファイルがあるのに verify.sh が通った" >&2
+  status=1
+fi
+[ "$(git -C repo config --get core.hooksPath)" = hooks ] || { echo "検査に落ちた verify.sh が core.hooksPath を hooks にしていない" >&2; status=1; }
 
 exit "$status"
