@@ -489,7 +489,7 @@ async function runCase(c: Case, root: string): Promise<void> {
     await Deno.mkdir(`${root}/bin`);
     await Deno.writeTextFile(
       `${root}/bin/gh`,
-      `#!/bin/sh\nprintf '${prStub.name}\\t${shas.get(prStub.head)}\\t${shas.get(prStub.base)}\\npull request: T\\n\\nBODY\\n'\n`,
+      `#!/bin/sh\nprintf '${prStub.name}\\t${shas.get(prStub.head)}\\t${shas.get(prStub.base)}\\tfalse\\to\\npull request: T\\n\\nBODY\\n'\n`,
       { mode: 0o755 },
     );
     env.PATH = `${root}/bin:${Deno.env.get("PATH")}`;

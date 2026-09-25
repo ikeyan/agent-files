@@ -111,15 +111,25 @@ run . HEAD && expect "revision の HEAD (origin/HEAD でない)" "f1.txt" "f1.tx
 git checkout -q -b prhead origin/main && commit p1.txt
 git checkout -q -b prbase origin/main && commit b1.txt && git push -q origin prbase
 git checkout -q prhead && git merge -q -m M2 prbase && commit p2.txt && git push -q origin prhead:refs/pull/1/head
+prhead_sha=$(git rev-parse prhead) && prbase_sha=$(git rev-parse prbase)
 mkdir "$tmp/bin" && cat > "$tmp/bin/gh" <<EOF && chmod +x "$tmp/bin/gh"
 #!/bin/sh
-printf 'prhead\t%s\t%s\npull request: T\n\nPR-BODY\n' $(git rev-parse prhead) $(git rev-parse prbase)
+printf 'prhead\t%s\t%s\tfalse\to\npull request: T\n\nPR-BODY\n' $prhead_sha $prbase_sha
 EOF
 PATH=$tmp/bin:$PATH run . 1 && expect "base を取り込んだ PR" "p1.txt p2.txt" "M2 p1.txt p2.txt"
 grep -q '^PR-BODY$' "$diff" || { echo "PR 番号: PR の説明が target.diff に無い" >&2; status=1; }
+same_repo_work=$(sed -n 's/^work=//p' <<< "$out")
 git checkout -q prbase && git merge -q --no-ff -m M3 prhead && git push -q origin prbase
 PATH=$tmp/bin:$PATH run . 1 && expect "base を取り込んでからマージした PR (baseRefOid はマージの前の base)" "p1.txt p2.txt" "M2 p1.txt p2.txt"
 git checkout -q feature
+
+# fork からの PR (isCrossRepository) は head の owner を系列に加え、同じ head・base commit・同じブランチ名の同一リポジトリの PR と作業ディレクトリを分ける
+mkdir "$tmp/bin-fork" && cat > "$tmp/bin-fork/gh" <<EOF && chmod +x "$tmp/bin-fork/gh"
+#!/bin/sh
+printf 'prhead\t%s\t%s\ttrue\tfork\npull request: T\n\nPR-BODY\n' $prhead_sha $prbase_sha
+EOF
+PATH=$tmp/bin-fork:$PATH run . 1 && expect "fork からの PR" "p1.txt p2.txt" "M2 p1.txt p2.txt"
+[ "$(sed -n 's/^work=//p' <<< "$out")" != "$same_repo_work" ] || { echo "fork からの PR: 同じリポジトリの PR と作業ディレクトリを共有している" >&2; status=1; }
 
 # clone の形: --single-branch、shallow
 cd "$tmp"

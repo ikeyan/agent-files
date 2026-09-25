@@ -58,7 +58,7 @@ description: Use when reviewing a diff before commit or push, when asked to revi
 
    受け付ける入力と環境の形と、各々の扱いは、スクリプトの先頭に書いてある。出力は次のとおり。
 
-   - `work=`: レビュー対象の作業ディレクトリ。`.git/` の下にあり、diff に入らず、clone と同じ寿命で残る。対象が違えば `exclusions.md` と `findings.md` も別になる。PR 番号とその head のブランチ名は同じ系列 (作業ディレクトリは head で決まり、base は diff の範囲を変えるだけ)。detached HEAD で `<対象>` を省くと commit ごとに別になり、`exclusions.md` と `findings.md` は引き継がれない。レビューと修正の反復はブランチか `<対象>` で回す。
+   - `work=`: レビュー対象の作業ディレクトリ。`.git/` の下にあり、diff に入らず、clone と同じ寿命で残る。対象が違えば `exclusions.md` と `findings.md` も別になる。PR 番号とその head のブランチ名は同じ系列 (作業ディレクトリは head で決まり、base は diff の範囲を変えるだけ)。fork からの PR は `<owner>/<branch>` の系列。detached HEAD で `<対象>` を省くと commit ごとに別になり、`exclusions.md` と `findings.md` は引き継がれない。レビューと修正の反復はブランチか `<対象>` で回す。
    - `run=`: この実行の生成物のディレクトリ。`$TMPDIR` の下にあり、`candidates.md` もここに置く。
    - `repo=`: 手順 2 でレビュアーに渡すリポジトリ。
    - `diff=`: `target.diff`。
