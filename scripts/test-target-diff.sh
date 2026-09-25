@@ -131,6 +131,13 @@ EOF
 PATH=$tmp/bin-fork:$PATH run . 1 && expect "fork からの PR" "p1.txt p2.txt" "M2 p1.txt p2.txt"
 [ "$(sed -n 's/^work=//p' <<< "$out")" != "$same_repo_work" ] || { echo "fork からの PR: 同じリポジトリの PR と作業ディレクトリを共有している" >&2; status=1; }
 
+# owner:branch の区切りは : (ブランチ名に使えない。git-check-ref-format(1) の規則 4)。同じ owner/branch がそのままブランチ名 (/ 区切り) として存在しても系列は別
+# (base の解決がブランチと PR で違うので diff の中身までは揃わない。ここで見るのは work= が分かれることだけ)
+fork_pr_work=$(sed -n 's/^work=//p' <<< "$out")
+git branch -q fork/prhead prhead
+run . fork/prhead
+[ "$(sed -n 's/^work=//p' <<< "$out")" != "$fork_pr_work" ] || { echo "owner/branch と同名のブランチ: fork からの PR と作業ディレクトリを共有している" >&2; status=1; }
+
 # fork を削除した PR (isCrossRepository は true のまま、headRepositoryOwner が null で owner の列が空) は止まる
 mkdir "$tmp/bin-gone" && cat > "$tmp/bin-gone/gh" <<EOF && chmod +x "$tmp/bin-gone/gh"
 #!/bin/sh
