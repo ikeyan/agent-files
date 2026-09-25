@@ -17,10 +17,10 @@
 #     自分 (トークンの持ち主) の通常のコメントは出す (エージェントの返信とユーザー自身の指示を見分けられない)。
 #   pr.sh reply-resolve <owner>/<repo> <PR 番号> <スレッド先頭のレビューコメントの id (整数)> <本文>
 #     スレッドに返信し、そのスレッドを resolve する。
-#   環境変数 GITHUB_API_URL: API の基点 (既定 https://api.github.com)。`https://<host>` か `http://<host>[:port]` (末尾の / 無し) の形に限り、それ以外は exit 2 で止まる。REST と GraphQL (<基点>/graphql) が同じ基点の下にある api.github.com の配置だけを扱い、GHES (REST は /api/v3、GraphQL は /api/graphql) は対象外。
+#   環境変数 GITHUB_API_URL: API の基点 (既定 https://api.github.com)。REST と GraphQL (<基点>/graphql) が同じ基点の下にある api.github.com の配置だけを扱い、GHES (REST は /api/v3、GraphQL は /api/graphql) は対象外。
 # 出力 (watch、1 行 1 件): open・new・changed に続けてイベント文。説明の変更は "description changed" の行に unified diff が続く。
-#   auth で始まる行を出して終わったら、トークンが無いか無効 (401)。error で始まる行なら、PR 番号・リポジトリ・権限・問い合わせの誤り (3xx、401 以外の 4xx、レート制限でない GraphQL の errors)。3xx はリポジトリの改名・移動で、新しい名前で起動し直す。
-# 失敗: 一時的な API の失敗 (ネットワーク・5xx・レート制限の 403・429) は、watch では出さずに間隔を倍にして (上限 900 秒) 再試行し、reply-resolve では止まる。
+#   auth で始まる行を出して終わったら、トークンが無いか無効 (401)。error で始まる行なら、PR 番号・リポジトリ・権限・問い合わせの誤り (3xx、401 以外の 4xx、レート制限でない GraphQL の errors、curl 自身の URL・プロトコルの誤り)。3xx はリポジトリの改名・移動で、新しい名前で起動し直す。
+# 失敗: 一時的な API の失敗 (ネットワーク・5xx・レート制限の 403・429) は、watch では出さずに間隔を倍にして (上限 900 秒) 再試行し、reply-resolve では止まる。curl 自身の失敗も同様に恒久・一時に分ける: URL の形やプロトコルが誤っている (curl(1) の EXIT CODES の 1・3・4) なら恒久、名前解決・接続・timeout など再試行で直りうるものはそれ以外の一時的として扱う。
 #   reply-resolve は、止まった後にそのままやり直してよい (スレッドに自分の同じ本文の返信があれば返信を重ねない)。同じスレッドに並行に起動しない (返信の有無を見てから返信するまでに割り込まれると、返信が重なる)。
 # 事前条件: curl と jq。トークンは GH_TOKEN か gh auth token。
 # GraphQL の $cursor と jq の式は、単一引用符で展開させずに渡す
@@ -32,15 +32,22 @@ cmd=$1 repo=$2 pr=$3
 # 無いと一時的な失敗と区別できずに再試行し続けるので、先に確かめる
 if ! command -v curl > /dev/null || ! command -v jq > /dev/null; then echo "pr.sh: curl と jq が要る" >&2; exit 2; fi
 api=${GITHUB_API_URL:-https://api.github.com}
-[[ $api =~ ^https?://[^/]+$ ]] || { echo "pr.sh: GITHUB_API_URL は https://<host> か http://<host>[:port] (末尾の / 無し): $api" >&2; exit 2; }
 token=${GH_TOKEN:-$(gh auth token)}
 [ -n "$token" ] || { echo "auth GitHub のトークンが無い。GH_TOKEN を設定するか gh auth login する"; exit 1; }
 
-req() { # <メソッド> <URL> [<JSON の本文>]: 応答の本文を出す。失敗は、一時的 (ネットワーク・5xx・レート制限。GraphQL の 200 の errors がレート制限を示すものを含む) なら 1、401 なら 2、3xx (リダイレクト。リポジトリの改名・移動) とそれ以外の 4xx とレート制限でない GraphQL の errors なら error の行を出して 3 を返す
-  local res tail code remaining retry limited body data=()
+req() { # <メソッド> <URL> [<JSON の本文>]: 応答の本文を出す。失敗は、一時的 (ネットワーク・5xx・レート制限。GraphQL の 200 の errors がレート制限を示すものを含む) なら 1、401 なら 2、3xx (リダイレクト。リポジトリの改名・移動) とそれ以外の 4xx とレート制限でない GraphQL の errors と curl 自身の URL・プロトコルの誤りなら error の行を出して 3 を返す
+  local res tail code remaining retry limited body data=() cc
   [ $# -lt 3 ] || data=(--data "$3")
   res=$(printf 'Authorization: Bearer %s\n' "$token" | curl -sS --max-time 30 -X "$1" -H @- -H "Accept: application/vnd.github+json" "${data[@]}" \
-    -w '\n%{http_code}\t%header{x-ratelimit-remaining}\t%header{retry-after}' "$2") || return 1
+    -w '\n%{http_code}\t%header{x-ratelimit-remaining}\t%header{retry-after}' "$2")
+  cc=$?
+  if [ "$cc" != 0 ]; then
+    # curl(1) の EXIT CODES: 1 (unsupported protocol)・3 (URL malformed)・4 (build 時に無効化された機能・オプション) は、渡した URL やプロトコルそのものが誤っていて再試行しても直らないので恒久。6 (resolve)・7 (connect)・28 (timeout)・35 (TLS)・52/56 など残りは、ネットワークの状態次第で直りうるので一時的として上の分類に合わせる。curl の stderr (-sS) はここでは捕らえず、素通しでこのスクリプトの stderr に出ているので、error の行には code と URL だけ出す
+    case $cc in
+      1 | 3 | 4) echo "error curl $cc: $2" >&2; return 3 ;;
+      *) return 1 ;;
+    esac
+  fi
   tail=${res##*$'\n'} body=${res%$'\n'*}
   IFS=$'\t' read -r code remaining retry <<<"$tail"
   # レート制限は、primary なら x-ratelimit-remaining が 0、secondary なら retry-after があるか remaining が 0、無ければ本文が示す (canon: facts/github/rest-rate-limit-responses)

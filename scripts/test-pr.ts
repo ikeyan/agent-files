@@ -520,8 +520,8 @@ function transient(kind: Transient["kind"], graphql: boolean): Response {
 }
 
 function page<T>(items: T[], q: URLSearchParams): T[] {
-  const per = Math.min(Number(q.get("per_page") ?? 30), 100);
-  const p = Number(q.get("page") ?? 1);
+  const per = Math.min(Number(q.get("per_page") || "30"), 100);
+  const p = Number(q.get("page") || "1");
   return items.slice((p - 1) * per, p * per);
 }
 
@@ -628,7 +628,7 @@ class Fake {
     }
     if (method === "GET" && (m = rest.match(/^commits\/([0-9a-f]{40})\/statuses$/))) {
       const p = page(w.statuses.filter((s) => s.sha === m![1]).reverse(), q);
-      if (p.length < Math.min(Number(q.get("per_page") ?? 30), 100)) lastPage();
+      if (p.length < Math.min(Number(q.get("per_page") || "30"), 100)) lastPage();
       return json(200, p.map((s) => ({ id: s.id, context: s.context, state: s.state, target_url: urls.status(s.id), description: null })));
     }
     return notFound;
@@ -729,6 +729,7 @@ class Proc {
     const s = await within(this.child.status, deadline);
     if (s === undefined) {
       this.kill();
+      await within(Promise.allSettled(this.pumps), deadline);
       throw new Error(`${CASE_SECONDS} 秒で終わらない\n${this.show()}`);
     }
     await within(Promise.all(this.pumps), deadline);
@@ -965,20 +966,19 @@ const p3 = fc.asyncProperty(
 
 // ---- 固定の検査 ----
 
-/** GITHUB_API_URL が https?://<host> の形でなければ、恒久的な失敗として exit 2 で止まることを確かめる。生成器は GITHUB_API_URL を変えないので、ここで固定して確かめる */
-async function checkInvalidApiUrl() {
+/** <args> と <env> の組が curl 自身に恒久的な失敗 (URL・プロトコルの誤り) として扱われ、exit 3 と error の行 (stdout、fail 3 から) で止まることを確かめる。生成器は GITHUB_API_URL と repo の形を変えないので、ここで固定して確かめる */
+async function checkPermanentCurlFailure(what: string, args: string[], env: Record<string, string>) {
   const cmd = new Deno.Command("bash", {
-    args: [script, "reply-resolve", REPO, String(PR), "1", "x"],
-    env: { GH_TOKEN: "test", GITHUB_API_URL: "not-a-url" },
+    args: [script, ...args],
+    env: { GH_TOKEN: "test", ...env },
     stdout: "piped",
     stderr: "piped",
   });
   const { code, stdout, stderr } = await cmd.output();
-  const want = "pr.sh: GITHUB_API_URL は https://<host> か http://<host>[:port] (末尾の / 無し): not-a-url";
-  const err = new TextDecoder().decode(stderr);
-  if (code !== 2 || !err.includes(want)) {
+  const out = new TextDecoder().decode(stdout);
+  if (code !== 3 || !out.split("\n").some((l) => l.startsWith("error"))) {
     throw new Error(
-      `GITHUB_API_URL の検査: exit 2 と "${want}" のはず (exit ${code})\nstdout:\n${new TextDecoder().decode(stdout)}\nstderr:\n${err}`,
+      `${what}: exit 3 と error の行 (stdout) のはず (exit ${code})\nstdout:\n${out}\nstderr:\n${new TextDecoder().decode(stderr)}`,
     );
   }
 }
@@ -987,7 +987,12 @@ async function checkInvalidApiUrl() {
 
 const tmpRoot = await Deno.makeTempDir({ prefix: "pr-pbt." });
 try {
-  await checkInvalidApiUrl();
+  await checkPermanentCurlFailure("GITHUB_API_URL の検査", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "not a url" });
+  await checkPermanentCurlFailure(
+    "owner/repo にスペースが入る検査",
+    ["watch", "o r/x", String(PR), await Deno.makeTempDir({ dir: tmpRoot }), "1"],
+    {},
+  );
   // 1 件に数秒かかるので、縮小せずに最初の反例で止める (FC_SEED と表示される path で再現する)
   const params = { numRuns, ...(seedEnv ? { seed: Number(seedEnv) } : {}), endOnFailure: true, verbose: fc.VerbosityLevel.Verbose };
   await fc.assert(p1, params);

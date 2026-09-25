@@ -165,6 +165,7 @@ const caseArb = fc.record({
   clone: fc.constantFrom("full", "single-branch", "shallow"),
   hooks: fc.boolean(),
   config: fc.boolean(),
+  externalViaConfig: fc.boolean(),
   where: fc.constantFrom("root", "subdir", "worktree"),
   concurrent: fc.boolean(),
   mutation: fc.constantFrom("untracked", "edit", "chmod", "rule", "rename-rule"),
@@ -453,14 +454,14 @@ async function runCase(c: Case, root: string): Promise<void> {
     const attrs = await git(wt, "rev-parse", "--path-format=absolute", "--git-path", "info/attributes");
     await Deno.writeTextFile(attrs, "*.txt diff=x\n");
     Object.assign(env, {
-      GIT_EXTERNAL_DIFF: "true",
-      GIT_CONFIG_COUNT: "3",
+      GIT_CONFIG_COUNT: c.externalViaConfig ? "4" : "3",
       GIT_CONFIG_KEY_0: "diff.noprefix",
       GIT_CONFIG_VALUE_0: "true",
       GIT_CONFIG_KEY_1: "color.diff",
       GIT_CONFIG_VALUE_1: "always",
       GIT_CONFIG_KEY_2: "diff.x.textconv",
       GIT_CONFIG_VALUE_2: "echo textconv-output #",
+      ...(c.externalViaConfig ? { GIT_CONFIG_KEY_3: "diff.external", GIT_CONFIG_VALUE_3: "true" } : { GIT_EXTERNAL_DIFF: "true" }),
     });
   }
   if (prStub) {
