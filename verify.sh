@@ -1,34 +1,44 @@
 #!/usr/bin/env bash
 # このリポの単一検証コマンド。引数なしで全部を検査する。
-# 既定では .claude/skills の symlink のずれ (作り忘れ・残骸) を直す。VERIFY_READONLY=1 では直さず違反にする (CI 用)。
-# 事前条件: shellcheck と deno が PATH にあること。ネットワーク (www.schemastore.org) に出られること。
+# 段は 2 種類で、その場で直す状態 (hooks/pre-push の写し、.claude/skills の symlink のずれ) を先に揃え、検査を後に回す。検査が落ちても状態は揃っているようにするため。VERIFY_READONLY=1 では直さず違反にする (CI 用)。
+# 事前条件: shellcheck・deno・curl (7.84 以降)・jq が PATH にあること。ネットワーク (www.schemastore.org) に出られること。
+# git は hook を $GIT_COMMON_DIR/hooks (linked worktree も共有し、checkout で変わらない) から呼ぶので、hooks/pre-push をそこへ写す。core.hooksPath (どの scope でも) が hook をよそへ向けていれば違反にし、設定は書かない。
+# 判定は verify.sh を走らせた環境 (GIT_CONFIG_GLOBAL・GIT_CONFIG_COUNT などの設定の差し替えを含む) についてのものなので、push する環境で走らせる。
 set -euo pipefail
 # nullglob: 空のディレクトリで glob がパターン文字列そのものに化け、存在しないパスを検査してしまうのを防ぐ。
 shopt -s nullglob
 cd "$(dirname "$0")"
 
-check_files() { # <コマンド…> -- <パターン>: git が知っているファイルが 1 件以上あるときだけコマンドを回す
-  local cmd=() files=()
-  while [ "$1" != "--" ]; do cmd+=("$1"); shift; done
-  shift
-  while IFS= read -r file; do files+=("$file"); done < <(git ls-files --cached --others --exclude-standard "$1")
-  if [ ${#files[@]} -gt 0 ]; then "${cmd[@]}" "${files[@]}"; fi
-}
-check_files shellcheck -- '*.sh'
-check_files deno check -- '*.ts'
-scripts/test-target-diff.sh
+readonly_mode=${VERIFY_READONLY:-}
+status=0
+common=$(git rev-parse --path-format=absolute --git-common-dir)
+hooks_dir=$(git rev-parse --path-format=absolute --git-path hooks)
+if [ "$hooks_dir" != "$common/hooks" ]; then
+  echo "hook の置き場が $hooks_dir で、$common/hooks でない ($(git config --show-origin --show-scope --get core.hooksPath | tr '\t' ' '))。 Execute: git config --file <その file> --unset core.hooksPath" >&2
+  status=1
+fi
+hook=$common/hooks/pre-push
+if [ ! -x "$hook" ] || ! cmp -s hooks/pre-push "$hook"; then
+  if [ -n "$readonly_mode" ]; then
+    echo "$hook: hooks/pre-push と同じ実行可能なファイルでない。 Execute: install -m 755 hooks/pre-push '$hook'" >&2
+    status=1
+  elif mkdir -p "$common/hooks" && install -m 755 hooks/pre-push "$hook"; then
+    echo "$hook: hooks/pre-push を写した"
+  else
+    echo "$hook: hooks/pre-push を写せない。 Execute: install -m 755 hooks/pre-push '$hook'" >&2
+    status=1
+  fi
+fi
 
 # .claude/skills と skills/ の対応 (構造は README)。symlink の作成は deno だと無制限の
 # --allow-write/--allow-read が要るので shell 側で扱う。Claude Code のサンドボックス内では
 # .claude/skills が保護パスで書けないので、直せなければ違反として報告して検査を続ける。
-readonly_mode=${VERIFY_READONLY:-}
-skills_status=0
 if [ -L .claude/skills ]; then
   echo ".claude/skills: symlink になっている (実体のディレクトリであるべき。構造は README)" >&2
-  skills_status=1
+  status=1
 elif [ ! -d .claude/skills ]; then
   echo ".claude/skills/: 無い" >&2
-  skills_status=1
+  status=1
 else
   for path in .claude/skills/*; do
     name=${path##*/}
@@ -36,28 +46,28 @@ else
       target=$(readlink "$path")
       if [ "$target" != "../../skills/$name" ]; then
         echo "$path (-> $target): 飛び先 != ../../skills/$name" >&2
-        skills_status=1
+        status=1
       elif [ ! -e "$path" ]; then
         if [ -n "$readonly_mode" ]; then
           echo "$path: 切れた symlink" >&2
-          skills_status=1
+          status=1
         else
           if unlink "$path"; then
             echo "$path: 切れた symlink を削除した"
           else
             echo "$path: 切れた symlink を削除できない。 Execute: unlink $path" >&2
-            skills_status=1
+            status=1
           fi
         fi
         continue
       fi
     elif [ ! -d "$path" ]; then
       echo "$path: ディレクトリでも symlink でもない" >&2
-      skills_status=1
+      status=1
       continue
     fi
     # symlink 経由でも実体でも、SKILL.md が無ければスキルとして読まれない。
-    [ -f "$path/SKILL.md" ] || { echo "$path/SKILL.md: 無い" >&2; skills_status=1; }
+    [ -f "$path/SKILL.md" ] || { echo "$path/SKILL.md: 無い" >&2; status=1; }
   done
   for path in skills/*/; do
     name=$(basename "$path")
@@ -67,23 +77,39 @@ else
     fi
     if [ ! -f "$path/SKILL.md" ]; then
       echo "$path/SKILL.md: 無い" >&2
-      skills_status=1
+      status=1
     elif [ -e "$link" ]; then
       continue # 同名の実体で差し替えている
     elif [ -n "$readonly_mode" ]; then
       echo "$link: 配布スキルへの symlink が無い。 Execute: ln -s ../../skills/$name $link" >&2
-      skills_status=1
+      status=1
     else
       if ln -s "../../skills/$name" "$link"; then
         echo "$link: 配布スキルへの symlink を作った"
       else
         echo "$link: 配布スキルへの symlink を作れない。 Execute: ln -s ../../skills/$name $link" >&2
-        skills_status=1
+        status=1
       fi
     fi
   done
 fi
 
+check_files() { # <コマンド…> -- <パターン…>: git が知っているファイルが 1 件以上あるときだけコマンドを回す
+  local cmd=() files=()
+  while [ "$1" != "--" ]; do cmd+=("$1"); shift; done
+  shift
+  while IFS= read -r file; do files+=("$file"); done < <(git ls-files --cached --others --exclude-standard "$@")
+  if [ ${#files[@]} -gt 0 ]; then "${cmd[@]}" "${files[@]}"; fi
+}
+check_files shellcheck -- '*.sh' hooks/pre-push
+check_files deno check -- '*.ts'
+scripts/test-target-diff.sh
+scripts/test-pre-push.sh
+scripts/test-codex-limits.sh
+# 書き込みは $TMPDIR の下だけだが、シンボリックリンクを作るので Deno はパスを絞った許可を受け付けない
+deno run --allow-run=git,bash --allow-env --allow-read --allow-write scripts/test-target-diff.ts
+deno run --allow-run=bash --allow-net=127.0.0.1 --allow-env=PR_RUNS,FC_SEED,PATH --allow-read="${TMPDIR:-/tmp}" --allow-write="${TMPDIR:-/tmp}" scripts/test-pr.ts
+
 git ls-files --cached --others --exclude-standard |
   deno run --allow-read=. --allow-net=www.schemastore.org scripts/verify.ts
-exit "$skills_status"
+exit "$status"

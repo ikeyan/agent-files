@@ -49,8 +49,13 @@ description: Use when creating a new repository, bringing an existing repository
 ## 3. 検証
 
 - フォーマッター・リンター・静的解析器を入れる (oxfmt, oxlint, typescript 等、言語や目的に応じて)。
-- テストの仕組みを用意する (外部依存の挙動も内部ロジックも)。property testing・table driven test を活用する。
+- テストの仕組みを用意する (外部依存の挙動も内部ロジックも)。入力の定義域で書き方を分ける:
+  - 有限集合に閉じた入力: table driven test で列挙する。
+  - 定義域が開いた入力と外部システムの状態: canon の目録 (`facts/<topic>/`) の次元ごとに値を生成する property based / model based test (fast-check 等) で回す。生成器は最初は使うリポの `scripts/` に置き、2 つ目のリポが使うときに canon へ移す。テストが相手にする外部システム:
+    - 手元で動く (git 等): 実物
+    - 手元で動かない (GitHub API 等): 状態機械の fake
 - 単一検証コマンドを用意する (AGENTS.md 設計指針)。上記すべてを 1 つの入口に集約する。
+- push は `hooks/pre-push` の token 方式で止める (token を作る手順は [pr-workflow/gh.md](pr-workflow/gh.md) の push)。単一検証コマンドで `hooks/pre-push` を common git dir (`git rev-parse --git-common-dir`) の `hooks` へ写し、`core.hooksPath` が hook をよそへ向けていれば落とす。common git dir の `hooks` は linked worktree も共有し、checkout で消えない。`core.hooksPath` で作業ツリーの `hooks/` を指すと、`hooks/` の無い commit を checkout した worktree から hook 無しで push が通る。
 - レビューは review-perspectives skill で行う。観点は plugin で配られる。
   - テストフレームワーク・ランタイム・リポ自身の終了ハンドラや資源の型の名前を、ルートの `review-perspectives/<観点>.md` に書く (review-perspectives の [repo-supplement.md](../review-perspectives/repo-supplement.md))。
   - managed Code Review (Claude GitHub App) を使うリポでは、効かせたい観点をルートの `REVIEW.md` に書く。managed Code Review はルートの `REVIEW.md` しか読まない (`canon: facts/claude-code/review-md-consumers`)。

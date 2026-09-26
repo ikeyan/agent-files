@@ -2,7 +2,7 @@
 
 gh 2.98.0 で `--help` と実行を確認したもの。「未実測」と書いたものだけ確認していない。
 
-- **ブランチの push**: `git push -u <remote> <branch>`。作り直したブランチの上書きは pr-workflow の「ブランチの更新」。
+- **ブランチの push**: `t=$(git rev-parse --git-dir)/push-ok; touch "$t"; git push -u <remote> <branch>; s=$?; rm -f "$t"; (exit $s)`。リポの `hooks/pre-push` がこの token を消費するので、push は毎回意図して token を作ったときだけ通る。`rm -f` は push が hook より前 (存在しない remote 名・到達不能・認証エラー) で失敗しても token を消す (`pre-push` は remote に問い合わせた後に呼ばれるので、それより前の失敗では消費されない。残ると後の無関係な push が通ってしまう)。作り直したブランチの上書きは pr-workflow の「ブランチの更新」。
 - **PR の作成**: `gh pr create --base <既定ブランチ> --title <title> --body-file <file>`。下書きは `--draft`、作らずに内容を確かめるなら `--dry-run`。
 - **PR の説明の更新**: `gh pr edit <n> --body-file <file>`。draft の切り替えは `gh pr edit` でなく `gh pr ready` (`--undo` で draft へ戻す)。
 - **コメントの読み取り**:
@@ -39,6 +39,11 @@ gh 2.98.0 で `--help` と実行を確認したもの。「未実測」と書い
   - `<dir>` は PR ごとに 1 つ作り、その PR の間は使い続ける: `mktemp -d -p "${TMPDIR:-/tmp}" watch-pr.XXXXXX`。共有の `/tmp` に固定名で置かない (`canon: facts/shell/mktemp-tmpdir-handling-bsd-vs-gnu`)。
   - 出力は終わったときにまとめて届く。終わったら次のとおりにする。
     - `open`・`new`・`changed` の行: 対応してから、同じ `<dir>` で起動し直す。止まっていた間の変化は、起動し直した最初の周期で出る。
+    - `codex-usage-limit` の行 (Codex のレビューの利用上限。行の形は `pr.sh` の先頭): 次のとおりにしてから起動し直す。reset が分かっていれば、それを過ぎると watch が `@codex review` を出す。
+      - `resets <時刻> 5h`: 何もしない。
+      - `resets <時刻>` でほかの窓 (`weekly` など): PushNotification で reset の時刻をユーザーに知らせる。
+      - `reset unknown: <理由>`: PushNotification で理由をユーザーに知らせる (push か手動の `@codex review` までレビューは来ない)。
+    - `codex-review requested` の行 (watch が `@codex review` を出した): 起動し直すだけ。
     - PR の close: 起動し直さない。
     - `auth` の行 (トークンが無いか無効): PushNotification でユーザーに gh auth login を頼み、済んだら起動し直す。
   - 起動した shell は Bash ツールの時間の上限に縛られない (900 秒の sleep が最後まで走ることを実測)。

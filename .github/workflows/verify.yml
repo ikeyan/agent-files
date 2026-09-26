@@ -16,6 +16,8 @@ jobs:
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: v2.x
+      # .git/hooks は checkout に入らない。verify.sh が写すのと同じ写しを置いてから、直さないモードで検査する。
+      - run: hooks=$(git rev-parse --path-format=absolute --git-common-dir)/hooks && mkdir -p "$hooks" && install -m 755 hooks/pre-push "$hooks/pre-push"
       - run: ./verify.sh
         env:
           # CI は作業ツリーを直さない。symlink のずれは違反として落とす。

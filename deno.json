@@ -4,6 +4,7 @@
     "ajv": "npm:ajv@8.17.1",
     "ajv/2020": "npm:ajv@8.17.1/dist/2020.js",
     "github-slugger": "npm:github-slugger@2.0.0",
-    "markdown-it": "npm:markdown-it@15.0.2"
+    "markdown-it": "npm:markdown-it@15.0.2",
+    "fast-check": "npm:fast-check@4.10.2"
   }
 }

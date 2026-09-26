@@ -111,14 +111,54 @@ run . HEAD && expect "revision の HEAD (origin/HEAD でない)" "f1.txt" "f1.tx
 git checkout -q -b prhead origin/main && commit p1.txt
 git checkout -q -b prbase origin/main && commit b1.txt && git push -q origin prbase
 git checkout -q prhead && git merge -q -m M2 prbase && commit p2.txt && git push -q origin prhead:refs/pull/1/head
+prhead_sha=$(git rev-parse prhead) && prbase_sha=$(git rev-parse prbase)
 mkdir "$tmp/bin" && cat > "$tmp/bin/gh" <<EOF && chmod +x "$tmp/bin/gh"
 #!/bin/sh
-printf 'prhead\t%s\t%s\npull request: T\n\nPR-BODY\n' $(git rev-parse prhead) $(git rev-parse prbase)
+printf 'prhead\t%s\t%s\tprbase\tfalse\to\npull request: T\n\nPR-BODY\n' $prhead_sha $prbase_sha
 EOF
 PATH=$tmp/bin:$PATH run . 1 && expect "base を取り込んだ PR" "p1.txt p2.txt" "M2 p1.txt p2.txt"
 grep -q '^PR-BODY$' "$diff" || { echo "PR 番号: PR の説明が target.diff に無い" >&2; status=1; }
+same_repo_work=$(sed -n 's/^work=//p' <<< "$out")
 git checkout -q prbase && git merge -q --no-ff -m M3 prhead && git push -q origin prbase
 PATH=$tmp/bin:$PATH run . 1 && expect "base を取り込んでからマージした PR (baseRefOid はマージの前の base)" "p1.txt p2.txt" "M2 p1.txt p2.txt"
+git checkout -q feature
+
+# fork からの PR (isCrossRepository) は head の owner を系列に加え、同じ head・base commit・同じブランチ名の同一リポジトリの PR と作業ディレクトリを分ける
+mkdir "$tmp/bin-fork" && cat > "$tmp/bin-fork/gh" <<EOF && chmod +x "$tmp/bin-fork/gh"
+#!/bin/sh
+printf 'prhead\t%s\t%s\tprbase\ttrue\tfork\npull request: T\n\nPR-BODY\n' $prhead_sha $prbase_sha
+EOF
+PATH=$tmp/bin-fork:$PATH run . 1 && expect "fork からの PR" "p1.txt p2.txt" "M2 p1.txt p2.txt"
+[ "$(sed -n 's/^work=//p' <<< "$out")" != "$same_repo_work" ] || { echo "fork からの PR: 同じリポジトリの PR と作業ディレクトリを共有している" >&2; status=1; }
+
+# owner:branch の区切りは : (ブランチ名に使えない。git-check-ref-format(1) の規則 4)。同じ owner/branch がそのままブランチ名 (/ 区切り) として存在しても系列は別
+# (base の解決がブランチと PR で違うので diff の中身までは揃わない。ここで見るのは work= が分かれることだけ)
+fork_pr_work=$(sed -n 's/^work=//p' <<< "$out")
+git branch -q fork/prhead prhead
+run . fork/prhead
+[ "$(sed -n 's/^work=//p' <<< "$out")" != "$fork_pr_work" ] || { echo "owner/branch と同名のブランチ: fork からの PR と作業ディレクトリを共有している" >&2; status=1; }
+
+# fork を削除した PR (isCrossRepository は true のまま、headRepositoryOwner が null で owner の列が空) は止まる
+mkdir "$tmp/bin-gone" && cat > "$tmp/bin-gone/gh" <<EOF && chmod +x "$tmp/bin-gone/gh"
+#!/bin/sh
+printf 'prhead\t%s\t%s\tprbase\ttrue\t\npull request: T\n\nPR-BODY\n' $prhead_sha $prbase_sha
+EOF
+PATH=$tmp/bin-gone:$PATH fails "fork を削除した PR" . 1
+
+# base ブランチが、clone の最初の fetch と gh の応答の間に進む競合。応答の baseRefOid は clone にまだ無いが、
+# 応答の後の明示的な fetch で取れて merge-base が引ける (gh の stub 自身が呼ばれた時点で origin を進め、進めた後の commit を報告する)
+git checkout -q -b prhead3 origin/main && commit p3.txt && git push -q origin prhead3:refs/pull/2/head
+git checkout -q -b prbase3 origin/main && commit b3.txt && git push -q origin prbase3
+prhead3_sha=$(git rev-parse prhead3)
+git clone -q "$tmp/origin.git" "$tmp/advance" && git -C "$tmp/advance" checkout -q prbase3
+echo b3adv.txt > "$tmp/advance/b3adv.txt" && git -C "$tmp/advance" add -- b3adv.txt && git -C "$tmp/advance" commit -q -m b3adv.txt
+prbase3_adv_sha=$(git -C "$tmp/advance" rev-parse HEAD)
+mkdir "$tmp/bin-advance" && cat > "$tmp/bin-advance/gh" <<EOF && chmod +x "$tmp/bin-advance/gh"
+#!/bin/sh
+git -C "$tmp/advance" push -q "$tmp/origin.git" prbase3:refs/heads/prbase3
+printf 'prhead3\t%s\t%s\tprbase3\tfalse\to\npull request: T\n\nPR-BODY\n' $prhead3_sha $prbase3_adv_sha
+EOF
+PATH=$tmp/bin-advance:$PATH run . 2 && expect "base が最初の fetch の後、gh の応答までに進んだ PR" "p3.txt" "p3.txt"
 git checkout -q feature
 
 # clone の形: --single-branch、shallow
@@ -166,32 +206,12 @@ fails "打ち消し合うコミット" clone cancel
 git clone -q --bare src badhead.git && git -C badhead.git symbolic-ref HEAD refs/heads/gone && git clone -q -b main badhead.git badhead
 fails "origin の HEAD が無い" badhead
 
-# サブディレクトリから相対パスを指定する (対象の有無で基点が変わらない)
+# path はリポジトリのルートからの相対で、cwd と対象の有無によらない (絶対パス・ルートの外に出る .. ・空文字列が止まることは test-target-diff.ts の生成器で検査する)
 git -C clone checkout -q -b subch origin/main && echo s > clone/sub/s.txt && git -C clone add sub/s.txt && git -C clone commit -qm "sub/s.txt"
-run clone/sub subch -- s.txt && expect "サブディレクトリからの path (対象あり)" "sub/s.txt" "sub/s.txt"
-run clone/sub -- u.txt && expect "サブディレクトリからの path (対象なし)" "sub/u.txt" ""
-run clone/sub subch -- "$tmp/clone/sub/s.txt" && expect "絶対パスの path (対象あり)" "sub/s.txt" "sub/s.txt"
-run clone/sub -- "$tmp/clone/sub/u.txt" && expect "絶対パスの path (対象なし)" "sub/u.txt" ""
-run clone/sub subch -- "$tmp/clone" && expect "絶対パスの path (リポのルート)" "sub/s.txt" "sub/s.txt"
-run clone/sub subch -- "$tmp/clone/" && expect "絶対パスの path (リポのルート、末尾 /)" "sub/s.txt" "sub/s.txt"
-run clone/sub subch -- "/$tmp/clone//sub/s.txt" && expect "絶対パスの path (重なった区切り)" "sub/s.txt" "sub/s.txt"
-run clone/sub subch -- "$tmp/clone//" && expect "絶対パスの path (リポのルート、重なった区切り)" "sub/s.txt" "sub/s.txt"
-before=$(find "$tmp" -maxdepth 1 -name 'review-perspectives.*' | wc -l)
-fails "リポジトリの外の path" clone -- "$tmp/src/a.txt"
-[ "$(find "$tmp" -maxdepth 1 -name 'review-perspectives.*' | wc -l)" = "$before" ] || { echo "リポジトリの外の path: run が残る" >&2; status=1; }
-run clone/sub subch -- "$tmp/clone/../clone/sub/s.txt" && expect "ルートより上を通る .." "sub/s.txt" "sub/s.txt"
-ln -s clone link
-run link/sub subch -- "$tmp/link/sub/s.txt" && expect "シンボリックリンク経由の絶対パス" "sub/s.txt" "sub/s.txt"
-run link/sub subch -- "$tmp/link" && expect "シンボリックリンク経由のルート" "sub/s.txt" "sub/s.txt"
-ln -s clone/sub linksub
-run linksub subch -- "$tmp/linksub/s.txt" && expect "サブディレクトリへのシンボリックリンク経由の絶対パス" "sub/s.txt" "sub/s.txt"
-run linksub subch -- "$tmp/linksub" && expect "サブディレクトリへのシンボリックリンク自身" "sub/s.txt" "sub/s.txt"
-mkdir links && ln -s "$tmp/clone/sub" links/sub && echo o > clone/outside.txt
-fails "物理パスの prefix と同じ名前のリンクから、リポジトリの外の絶対パス" links/sub -- "$tmp/links/outside.txt"
-rm clone/outside.txt
+run clone/sub subch -- sub/s.txt && expect "サブディレクトリからの path (対象あり)" "sub/s.txt" "sub/s.txt"
+run clone/sub -- sub/u.txt && expect "サブディレクトリからの path (対象なし)" "sub/u.txt" ""
+run clone subch -- sub/../sub/s.txt && expect "ルートの中に戻る .." "sub/s.txt" "sub/s.txt"
 run clone -- linkdir && expect "リポジトリの中のディレクトリへのリンク" "linkdir" ""
-ln -s "$tmp/clone/a.txt" filelink
-fails "リポジトリの外に置いた、中のファイルへのリンク" clone -- "$tmp/filelink"
 
 # revision の式に .. が入っても作業ディレクトリは .git/ の下
 git -C clone commit -q --allow-empty -m "aa/bb/cc/escape"
