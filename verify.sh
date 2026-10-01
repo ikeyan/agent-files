@@ -3,7 +3,12 @@
 # 段は 2 種類で、その場で直す状態 (hooks/pre-push の写し、.claude/skills の symlink のずれ) を先に揃え、検査を後に回す。検査が落ちても状態は揃っているようにするため。VERIFY_READONLY=1 では直さず違反にする (CI 用)。
 # 事前条件: shellcheck・deno・curl (7.84 以降)・jq が PATH にあること。ネットワーク (www.schemastore.org) に出られること。
 # git は hook を $GIT_COMMON_DIR/hooks (linked worktree も共有し、checkout で変わらない) から呼ぶので、hooks/pre-push をそこへ写す。core.hooksPath (どの scope でも) が hook をよそへ向けていれば違反にし、設定は書かない。
-# 写す先は hooks/pre-push の履歴のどれかの版 (blob) と一致するときだけ書き換える。それ以外 (利用者が置いた別の hook、手を入れた写し) は上書きせず落とす。CI は現行の hook を置いてから verify.sh を回すので、depth 1 の clone でも履歴は要らない。
+# 写す先の pre-push の状態ごとの扱い。版は全ての ref の履歴 (単純化しない) にある hooks/pre-push の blob。
+# - 無い (壊れた symlink を含む。git が実行できないので検査として働いていない): 写す
+# - hooks/pre-push と同じ実行可能なファイル: 何もしない
+# - いずれかの版と同じ: 写し直す
+# - それ以外 (利用者が置いた別の hook、手を入れた写し、hooks/pre-push の未コミットの編集を写したもの、ディレクトリなど hash できないもの): 上書きせず落とす
+# CI は現行の hook を置いてから verify.sh を回すので、depth 1 の clone でも履歴は要らない。
 # 判定は verify.sh を走らせた環境 (GIT_CONFIG_GLOBAL・GIT_CONFIG_COUNT などの設定の差し替えを含む) についてのものなので、push する環境で走らせる。
 set -euo pipefail
 # nullglob: 空のディレクトリで glob がパターン文字列そのものに化け、存在しないパスを検査してしまうのを防ぐ。
@@ -19,12 +24,12 @@ if [ "$hooks_dir" != "$common/hooks" ]; then
   status=1
 fi
 hook=$common/hooks/pre-push
-# hooks/pre-push の過去と現在の版 (blob id)。--raw の行は ":<旧 mode> <新 mode> <旧 blob> <新 blob> <状態>\t<path>"。
-versions=$(git log --format= --raw --no-abbrev -- hooks/pre-push | awk '/^:/ { print $3; print $4 }')
-ours() { grep -qxF "$(git hash-object --no-filters -- "$1")" <<<"$versions"; }
+# --raw の行は ":<旧 mode> <新 mode> <旧 blob> <新 blob> <状態>\t<path>"。
+versions=$(git log --all --full-history --format= --raw --no-abbrev -- hooks/pre-push | awk '/^:/ { print $3; print $4 }')
+ours() { local blob; blob=$(git hash-object --no-filters -- "$1") && grep -qxF "$blob" <<<"$versions"; }
 if [ ! -x "$hook" ] || ! cmp -s hooks/pre-push "$hook"; then
   if [ -e "$hook" ] && ! ours "$hook"; then
-    echo "$hook: hooks/pre-push のどの版とも違う pre-push がある (上書きしない)。中身を確かめ、退避してから再実行" >&2
+    echo "$hook: hooks/pre-push のどの版とも違う pre-push がある (上書きしない)。中身を確かめ、退避するか、hooks/pre-push の未コミットの編集を写したものなら消してから再実行" >&2
     status=1
   elif [ -n "$readonly_mode" ]; then
     echo "$hook: hooks/pre-push と同じ実行可能なファイルでない。 Execute: install -m 755 hooks/pre-push '$hook'" >&2

@@ -2,8 +2,11 @@
 # hooks/pre-push と verify.sh を検査する。
 # - push のコマンドの PUSH_OK=1 の有無で、push を通す・止める
 # - verify.sh は hooks/pre-push を common git dir の hooks へ写す (検査に落ちる clone でも)
-# - 履歴にある旧版の写しは写し直す (VERIFY_READONLY=1 では直さず示す)
-# - どの版とも一致しない pre-push (別の hook、PUSH_OK の判定を足した hook、手を入れた写し) は、触らずに落とす
+# - 写す先の pre-push の状態ごとに、写す・何もしない・写し直す・触らずに落とすのどれかになる
+#   - 無い・壊れた symlink: 写す
+#   - 現行と同じ実行可能なファイル: 何もしない (この test の最初の push と verify.sh の通常の実行)
+#   - 全ての ref の履歴のどれかの版 (旧版、別ブランチだけにある版): 写し直す (VERIFY_READONLY=1 では直さず示す)
+#   - それ以外 (別の hook、PUSH_OK の判定を足した hook、手を入れた写し、未コミットの編集を写したもの、ディレクトリ): 触らずに落とす
 # - 写しは main worktree の checkout によらず linked worktree の push も止める
 # - core.hooksPath が hook をよそへ向けていれば、verify.sh は設定を書かずに落ちる
 # verify.sh から呼ぶ。
@@ -111,7 +114,34 @@ USER
 check_foreign 'PUSH_OK の判定を足した利用者の hook' normal
 cp repo/hooks/pre-push "$hook"
 printf 'echo extra\n' >> "$hook"
-check_foreign '現行版に手を入れた写し' normal
+check_foreign '現行版に手を入れた写し (未コミットの編集を写したものも同じ)' normal
+rm -f "$hook"
+mkdir "$hook"
+(cd repo && env -u VERIFY_READONLY ./verify.sh) > /dev/null 2> err9.txt && { echo "ディレクトリの pre-push があるのに verify.sh が通った" >&2; status=1; }
+grep -q "どの版とも違う pre-push がある" err9.txt || { echo "ディレクトリの pre-push を verify.sh が示さない — $(cat err9.txt)" >&2; status=1; }
+[ -d "$hook" ] && [ ! -e "$hook/pre-push" ] || { echo "ディレクトリの pre-push を verify.sh が置き換えた、または中に書いた" >&2; status=1; }
+rmdir "$hook"
+
+# 別ブランチだけにある版 (別 worktree の verify.sh が写したもの) は、この worktree の HEAD の履歴に無くても写し直す
+git -C repo worktree add -q -b side "$tmp/side"
+cat > side/hooks/pre-push <<'SIDE'
+#!/bin/sh
+# 別ブランチの版
+[ "${PUSH_OK:-}" = 1 ]
+SIDE
+git -C side commit -q -am '別ブランチの hooks/pre-push'
+git -C repo worktree remove side
+git -C repo show side:hooks/pre-push > "$hook"
+chmod 755 "$hook"
+(cd repo && env -u VERIFY_READONLY ./verify.sh) > /dev/null 2>&1 || true
+cmp -s repo/hooks/pre-push "$hook" || { echo "別ブランチだけにある版の写しを verify.sh が写し直さない" >&2; status=1; }
+
+# 壊れた symlink は無いものとして扱う。置き換えか書き通しかでなく、実行可能な写しが残ることを見る
+rm -f "$hook"
+ln -s "$tmp/nowhere" "$hook"
+(cd repo && env -u VERIFY_READONLY ./verify.sh) > /dev/null 2>&1 || true
+{ [ -x "$hook" ] && cmp -s repo/hooks/pre-push "$hook"; } || { echo "壊れた symlink の pre-push を verify.sh が実行可能な写しにしない" >&2; status=1; }
+rm -f "$hook" "$tmp/nowhere"
 cp repo/hooks/pre-push "$hook"
 
 # hooks/ の無い linked worktree (hooks/pre-push の無い commit と同じ) からも、PUSH_OK 無しの push は止まる
