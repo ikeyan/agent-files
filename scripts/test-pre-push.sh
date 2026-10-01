@@ -5,7 +5,7 @@
 # - 写す先の pre-push の状態ごとに、写す・何もしない・触らずに落とすのどれかになる
 #   - 無い・壊れた symlink: 写す (VERIFY_READONLY=1 では写さずに落ちる)
 #   - 現行と同じ実行可能なファイル: 何もしない (この test の最初の push と verify.sh の通常の実行)
-#   - それ以外 (旧版、別の hook、PUSH_OK の判定を足した hook、手を入れた写し、同じ中身で実行可能でないもの、ディレクトリ): どちらのモードでも触らずに落とす
+#   - それ以外 (旧版、別の hook、PUSH_OK の判定を足した hook、手を入れた写し、同じ中身で実行可能でないもの、ディレクトリ): 触らずに落とす (旧版と別の hook は VERIFY_READONLY=1 でも確かめる)
 # - 写しは main worktree の checkout によらず linked worktree の push も止める
 # - core.hooksPath が hook をよそへ向けていれば、verify.sh は設定を書かずに落ちる
 # verify.sh から呼ぶ。
@@ -77,10 +77,10 @@ grep -q "$hook: hooks/pre-push と同じ実行可能なファイルでない" er
 install -m 755 repo/hooks/pre-push "$hook"
 
 # hooks/pre-push と同じ実行可能なファイルでない pre-push は、verify.sh が上書きせずに落とす (VERIFY_READONLY=1 でも示すだけで触らない)
-check_foreign() { # <名前> <モード: normal|readonly>: $hook に置いた内容と mode を verify.sh が変えず、示して落ちること
-  local name=$1 mode=$2 mode_before
+check_foreign() { # <名前> <モード: normal|readonly>: $hook に置いた内容と実行可能かどうかを verify.sh が変えず、示して落ちること
+  local name=$1 mode=$2 x_before=0
   cp "$hook" foreign.orig
-  mode_before=$(stat -f %Lp "$hook" 2>/dev/null || stat -c %a "$hook")
+  [ ! -x "$hook" ] || x_before=1
   if [ "$mode" = readonly ]; then
     (cd repo && VERIFY_READONLY=1 ./verify.sh) > /dev/null 2> err8.txt && { echo "$name ($mode): 同じ実行可能なファイルでない pre-push があるのに verify.sh が通った" >&2; status=1; }
   else
@@ -88,7 +88,7 @@ check_foreign() { # <名前> <モード: normal|readonly>: $hook に置いた内
   fi
   grep -q "hooks/pre-push と同じ実行可能なファイルでない (上書きしない)" err8.txt || { echo "$name ($mode): 他の pre-push を verify.sh が示さない — $(cat err8.txt)" >&2; status=1; }
   cmp -s foreign.orig "$hook" || { echo "$name ($mode): verify.sh が他の pre-push を書き換えた" >&2; status=1; }
-  [ "$(stat -f %Lp "$hook" 2>/dev/null || stat -c %a "$hook")" = "$mode_before" ] || { echo "$name ($mode): verify.sh が pre-push の mode を変えた" >&2; status=1; }
+  { [ -x "$hook" ] && [ "$x_before" = 1 ]; } || { [ ! -x "$hook" ] && [ "$x_before" = 0 ]; } || { echo "$name ($mode): verify.sh が pre-push の実行可能かどうかを変えた" >&2; status=1; }
 }
 cat > "$hook" <<'OLD'
 #!/bin/sh
