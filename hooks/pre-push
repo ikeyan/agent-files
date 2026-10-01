@@ -1,9 +1,9 @@
 #!/bin/sh
-# push を、$(git rev-parse --git-dir)/push-ok がある 1 回だけ通し、通したら消す。token は pr-workflow の push の手順で作る (レビュアーなどの push を止めるため)。token は worktree ごと (git rev-parse --git-dir の下) で、main checkout の token では linked worktree の push は通らない。
+# push を、git push のコマンドに PUSH_OK=1 を付けたときだけ通す。付け方は pr-workflow の push の手順 (レビュアーなどの push を止めるため)。
+# 許可を push のコマンドの環境変数で受け取るので、push が中断されても許可が残らない (canon: facts/git/pre-push-hook-inherits-push-env)。export すると以後の全ての push が通る。
 # git が呼ぶのは verify.sh が $GIT_COMMON_DIR/hooks (全 worktree で共有) に写した写しで、このファイルではない。githooks(5) の pre-push: push の前に呼ばれ、非 0 で終わると git push は何も push せずに止まる。
 set -eu
-token="$(git rev-parse --git-dir)/push-ok"
-rm -- "$token" 2>/dev/null || {
-  echo "pre-push: $token が無い。push は pr-workflow の手順で行う (touch \"$token\" してから push)" >&2
+[ "${PUSH_OK:-}" = 1 ] || {
+  echo "pre-push: PUSH_OK=1 が無い。push は pr-workflow の手順で行う (PUSH_OK=1 git push ...)" >&2
   exit 1
 }

@@ -2,7 +2,7 @@
 
 Claude Code on the web に組み込まれた GitHub MCP (`mcp__github__`)。github-mcp-server とは別の実装で、セッションに紐づいたリポ以外は、`add_repo` で足すまで読めない。2026-09-16 に cc-web のセッションで schema を確認した (`canon: facts/claude-code/cc-web-mcp-servers-and-pr-tools`、`canon: facts/claude-code/cc-web-session-repo-scope`)。
 
-- **ブランチの push**: 作業ツリーの git で行う (`git push -u <remote> <branch>`。保護された ref への push は未検証)。`create_or_update_file` / `push_files` は使わない (GitHub 側でコミットを作り、ローカルの履歴とずれる)。作り直したブランチの上書きは pr-workflow の「ブランチの更新」。
+- **ブランチの push**: 作業ツリーの git で、pr-workflow の「push の手順」で行う (保護された ref への push は未検証)。`create_or_update_file` / `push_files` は使わない (GitHub 側でコミットを作り、ローカルの履歴とずれる)。作り直したブランチの上書きは pr-workflow の「ブランチの更新」。
 - **PR の作成**: `create_pull_request`
 - **PR の説明の更新**: `update_pull_request`
 - **コメントの読み取り**: `pull_request_read` の `get_comments` (通常コメント) / `get_review_comments` (スレッド単位。スレッド id `PRRT_…` を含む) / `get_reviews` (approve / request changes の本文)。最後のページまで読む。
