@@ -125,7 +125,7 @@ rm -f "$hook"
 mkdir "$hook"
 (cd repo && env -u VERIFY_READONLY ./verify.sh) > /dev/null 2> err9.txt && { echo "ディレクトリの pre-push があるのに verify.sh が通った" >&2; status=1; }
 grep -q "hooks/pre-push と同じ実行可能なファイルでない (上書きしない)" err9.txt || { echo "ディレクトリの pre-push を verify.sh が示さない — $(cat err9.txt)" >&2; status=1; }
-[ -d "$hook" ] && [ ! -e "$hook/pre-push" ] || { echo "ディレクトリの pre-push を verify.sh が置き換えた、または中に書いた" >&2; status=1; }
+{ [ -d "$hook" ] && [ ! -e "$hook/pre-push" ]; } || { echo "ディレクトリの pre-push を verify.sh が置き換えた、または中に書いた" >&2; status=1; }
 rmdir "$hook"
 
 # 壊れた symlink は無いものとして扱う。置き換えか書き通しかでなく、実行可能な写しが残ることを見る
