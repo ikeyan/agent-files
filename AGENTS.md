@@ -34,7 +34,12 @@
   - JSON の構文と schema
   - Markdown のリポ内リンク
   - `.claude/skills` と `skills/` の対応
-- `./verify.sh` は `.claude/skills` の symlink のずれと、common git dir の `hooks` に置く `hooks/pre-push` の写しをその場で直す。`core.hooksPath` が hook をよそへ向けていれば落ちる (設定は書かない)。CI は `VERIFY_READONLY=1` で直さず落とす。
+- `./verify.sh` は次をその場で揃える。CI は `VERIFY_READONLY=1` で直さず落とす。
+  - `.claude/skills` の symlink のずれを直す。
+  - common git dir の `hooks` の pre-push:
+    - 無ければ `hooks/pre-push` を写す。
+    - `hooks/pre-push` と違えば、上書きせず落ちて置き換えのコマンドを示す。
+- `./verify.sh` は `core.hooksPath` が hook をよそへ向けていれば落ちる (設定は書かない)。
 - 必要なもの: `shellcheck`、`deno`、`curl` (7.84 以降)、`jq`、`www.schemastore.org` への到達。
 
 ## コメントの書き方

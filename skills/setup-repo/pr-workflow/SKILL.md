@@ -22,8 +22,9 @@ description: Use when pushing a branch, creating a pull request or editing its d
 
 - **作業の開始**: 既定ブランチの最新を取得し、差分がない状態でこのリポの単一検証コマンド (AGENTS.md) を通す。成功を確認してから作業を始める。
 - **ブランチの作成**: 既定ブランチの最新から切る。命名は寄稿規約に従う。既定ブランチに直接コミットしない。
+- **push の手順**: どの手段でも、作業ツリーの git で、コマンドに `PUSH_OK=1` を前置して push する: `PUSH_OK=1 git push <push の引数>`。リポの `hooks/pre-push` は `PUSH_OK=1` の無い push を止めるので、push は毎回意図して付けたときだけ通る。許可はそのコマンドの環境変数なので、push が中断されても残らない。`export PUSH_OK=1` はしない (以後の全ての push が通る)。
 - **ブランチの更新**: push 先の作業ブランチへ push する。他人のブランチの履歴は書き換えない (base の取り込みは merge)。マージ済み PR のブランチには積まず、既定ブランチから同名で作り直す。
-  - 作り直したブランチは remote に残る旧ブランチと衝突し、push が non-fast-forward で拒否される。`git fetch <remote> <branch>` した oid が、そのブランチを head とするマージ済み PR の head SHA と一致する (= マージ後に何も積まれていない) ことを PR 情報で確認してから、`git push --force-with-lease=<branch>:<fetch した oid> <remote> <branch>` で上書きする。値を省いた `--force-with-lease` は拒否される。
+  - 作り直したブランチは remote に残る旧ブランチと衝突し、push が non-fast-forward で拒否される。`git fetch <remote> <branch>` した oid が、そのブランチを head とするマージ済み PR の head SHA と一致する (= マージ後に何も積まれていない) ことを PR 情報で確認してから、「push の手順」の push の引数を `--force-with-lease=<branch>:<fetch した oid> <remote> <branch>` にして上書きする。値を省いた `--force-with-lease` は拒否される。
   - コミットの祖先関係 (`merge-base --is-ancestor`) はマージ済みの判定に使えない (squash / rebase マージでは旧 tip が既定ブランチの祖先にならない)。
   - 根拠と実測: `canon: facts/git/force-with-lease-recreated-branch`
 - **push の単位**: コミットごとには push しない。作業の区切り (レビュー依頼・指示された時点) でまとめる。

@@ -3,7 +3,7 @@
 GitHub 公式の MCP サーバ (github/github-mcp-server)。リモート版は `https://api.githubcopilot.com/mcp/`。2026-09-16 に local CLI から接続して schema を確認した。
 
 - **ツールセット**: CI のログ (`get_job_logs`) やワークフローの操作 (`actions_*`) を使うなら、`https://api.githubcopilot.com/mcp/x/actions` (全部入りは `/x/all`) も MCP サーバとして追加する。既定の URL には無い (`canon: facts/claude-code/cc-web-mcp-servers-and-pr-tools`)。
-- **ブランチの push**: 作業ツリーの git で行う (`git push -u <remote> <branch>`)。`create_or_update_file` / `push_files` は使わない (GitHub 側でコミットを作り、ローカルの履歴とずれる)。作り直したブランチの上書きは pr-workflow の「ブランチの更新」。
+- **ブランチの push**: 作業ツリーの git で、pr-workflow の「push の手順」で行う。`create_or_update_file` / `push_files` は使わない (GitHub 側でコミットを作り、ローカルの履歴とずれる)。作り直したブランチの上書きは pr-workflow の「ブランチの更新」。
 - **PR の作成**: `create_pull_request`
 - **PR の説明の更新**: `update_pull_request`
 - **コメントの読み取り**: `pull_request_read` の `get_comments` (通常コメント) / `get_review_comments` (スレッド単位。スレッド id `PRRT_…` を含む) / `get_reviews` (approve / request changes の本文)。最後のページまで読む (`get_review_comments` は `after`、他は `page` / `perPage`)。

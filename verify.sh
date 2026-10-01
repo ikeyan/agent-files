@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # このリポの単一検証コマンド。引数なしで全部を検査する。
-# 段は 2 種類で、その場で直す状態 (hooks/pre-push の写し、.claude/skills の symlink のずれ) を先に揃え、検査を後に回す。検査が落ちても状態は揃っているようにするため。VERIFY_READONLY=1 では直さず違反にする (CI 用)。
+# 段は 2 種類で、その場で直す状態 (hooks/pre-push の写し (無いときだけ置く)、.claude/skills の symlink のずれ) を先に揃え、検査を後に回す。検査が落ちても状態は揃っているようにするため。VERIFY_READONLY=1 では直さず違反にする (CI 用)。
 # 事前条件: shellcheck・deno・curl (7.84 以降)・jq が PATH にあること。ネットワーク (www.schemastore.org) に出られること。
 # git は hook を $GIT_COMMON_DIR/hooks (linked worktree も共有し、checkout で変わらない) から呼ぶので、hooks/pre-push をそこへ写す。core.hooksPath (どの scope でも) が hook をよそへ向けていれば違反にし、設定は書かない。
+# 写す先の pre-push の状態ごとの扱い:
+# - 無い (壊れた symlink を含む。git が実行できない): 写す
+# - hooks/pre-push と同じ実行可能なファイル: 何もしない
+# - それ以外 (旧版、利用者が置いた別の hook、手を入れた写し): このリポのものかを中身から決められないので、上書きせず落として置き換えのコマンドを示す
 # 判定は verify.sh を走らせた環境 (GIT_CONFIG_GLOBAL・GIT_CONFIG_COUNT などの設定の差し替えを含む) についてのものなので、push する環境で走らせる。
 set -euo pipefail
 # nullglob: 空のディレクトリで glob がパターン文字列そのものに化け、存在しないパスを検査してしまうのを防ぐ。
@@ -19,8 +23,8 @@ if [ "$hooks_dir" != "$common/hooks" ]; then
 fi
 hook=$common/hooks/pre-push
 if [ ! -x "$hook" ] || ! cmp -s hooks/pre-push "$hook"; then
-  if [ -n "$readonly_mode" ]; then
-    echo "$hook: hooks/pre-push と同じ実行可能なファイルでない。 Execute: install -m 755 hooks/pre-push '$hook'" >&2
+  if [ -e "$hook" ] || [ -n "$readonly_mode" ]; then
+    echo "$hook: hooks/pre-push と同じ実行可能なファイルでない (上書きしない)。中身を確かめ、置き換えてよければ Execute: install -m 755 hooks/pre-push '$hook'" >&2
     status=1
   elif mkdir -p "$common/hooks" && install -m 755 hooks/pre-push "$hook"; then
     echo "$hook: hooks/pre-push を写した"
