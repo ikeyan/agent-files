@@ -2,11 +2,10 @@
 # hooks/pre-push と verify.sh を検査する。
 # - push のコマンドの PUSH_OK=1 の有無で、push を通す・止める
 # - verify.sh は hooks/pre-push を common git dir の hooks へ写す (検査に落ちる clone でも)
-# - 写す先の pre-push の状態ごとに、写す・何もしない・写し直す・触らずに落とすのどれかになる
-#   - 無い・壊れた symlink: 写す
+# - 写す先の pre-push の状態ごとに、写す・何もしない・触らずに落とすのどれかになる
+#   - 無い・壊れた symlink: 写す (VERIFY_READONLY=1 では写さずに落ちる)
 #   - 現行と同じ実行可能なファイル: 何もしない (この test の最初の push と verify.sh の通常の実行)
-#   - 全ての ref の履歴のどれかの版 (旧版、別ブランチだけにある版): 写し直す (VERIFY_READONLY=1 では直さず示す)
-#   - それ以外 (別の hook、PUSH_OK の判定を足した hook、手を入れた写し、未コミットの編集を写したもの、ディレクトリ): 触らずに落とす
+#   - それ以外 (旧版、別の hook、PUSH_OK の判定を足した hook、手を入れた写し、同じ中身で実行可能でないもの、ディレクトリ): どちらのモードでも触らずに落とす
 # - 写しは main worktree の checkout によらず linked worktree の push も止める
 # - core.hooksPath が hook をよそへ向けていれば、verify.sh は設定を書かずに落ちる
 # verify.sh から呼ぶ。
@@ -50,11 +49,48 @@ if git -C clone push origin main 2>/dev/null; then
 fi
 
 # verify.sh は、検査が落ちても hooks/pre-push を common git dir の hooks に写してから落ちる (hook が無い clone から push できる期間を作らない)。
-# 作業ツリーの verify.sh と hooks/pre-push を clone に写す。CI の clone は depth 1 なので、旧版は clone の中で commit して履歴に作る。
+# 作業ツリーの verify.sh と hooks/pre-push を clone に写す。
 # どの clone も shellcheck が落ちるファイルを置く: verify.sh は hook の段の後に shellcheck で落ち、後ろの検査 (この test の再帰) を回さない。VERIFY_READONLY は直さないモードなので、CI から継承した値を外す
 git clone -q "$here" repo
 cp "$here/verify.sh" repo/verify.sh
-cat > repo/hooks/pre-push <<'OLD'
+cp "$here/hooks/pre-push" repo/hooks/pre-push
+cat > repo/bad.sh <<'BAD'
+#!/bin/bash
+if [ $x = y ]; then :; fi
+BAD
+hook=$tmp/repo/.git/hooks/pre-push
+rm -f "$hook"
+if (cd repo && env -u VERIFY_READONLY ./verify.sh) > /dev/null 2>&1; then
+  echo "shellcheck が落ちるファイルがあるのに verify.sh が通った" >&2
+  status=1
+fi
+if [ ! -x "$hook" ] || ! cmp -s repo/hooks/pre-push "$hook"; then
+  echo "検査に落ちた verify.sh が $hook に hooks/pre-push の実行可能な写しを置いていない" >&2
+  status=1
+fi
+
+# 無いときに VERIFY_READONLY=1 なら、写さずに落として示す
+rm -f "$hook"
+(cd repo && VERIFY_READONLY=1 ./verify.sh) > /dev/null 2> err4.txt && { echo "VERIFY_READONLY=1 で pre-push が無いのに verify.sh が通った" >&2; status=1; }
+grep -q "$hook: hooks/pre-push と同じ実行可能なファイルでない" err4.txt || { echo "VERIFY_READONLY=1 の verify.sh が pre-push が無いことを示さない — $(cat err4.txt)" >&2; status=1; }
+[ ! -e "$hook" ] || { echo "VERIFY_READONLY=1 の verify.sh が pre-push を作った" >&2; status=1; }
+install -m 755 repo/hooks/pre-push "$hook"
+
+# hooks/pre-push と同じ実行可能なファイルでない pre-push は、verify.sh が上書きせずに落とす (VERIFY_READONLY=1 でも示すだけで触らない)
+check_foreign() { # <名前> <モード: normal|readonly>: $hook に置いた内容と mode を verify.sh が変えず、示して落ちること
+  local name=$1 mode=$2 mode_before
+  cp "$hook" foreign.orig
+  mode_before=$(stat -f %Lp "$hook" 2>/dev/null || stat -c %a "$hook")
+  if [ "$mode" = readonly ]; then
+    (cd repo && VERIFY_READONLY=1 ./verify.sh) > /dev/null 2> err8.txt && { echo "$name ($mode): 同じ実行可能なファイルでない pre-push があるのに verify.sh が通った" >&2; status=1; }
+  else
+    (cd repo && env -u VERIFY_READONLY ./verify.sh) > /dev/null 2> err8.txt && { echo "$name ($mode): 同じ実行可能なファイルでない pre-push があるのに verify.sh が通った" >&2; status=1; }
+  fi
+  grep -q "hooks/pre-push と同じ実行可能なファイルでない (上書きしない)" err8.txt || { echo "$name ($mode): 他の pre-push を verify.sh が示さない — $(cat err8.txt)" >&2; status=1; }
+  cmp -s foreign.orig "$hook" || { echo "$name ($mode): verify.sh が他の pre-push を書き換えた" >&2; status=1; }
+  [ "$(stat -f %Lp "$hook" 2>/dev/null || stat -c %a "$hook")" = "$mode_before" ] || { echo "$name ($mode): verify.sh が pre-push の mode を変えた" >&2; status=1; }
+}
+cat > "$hook" <<'OLD'
 #!/bin/sh
 # push を、$(git rev-parse --git-dir)/push-ok がある 1 回だけ通し、通したら消す。token は pr-workflow の push の手順で作る (レビュアーなどの push を止めるため)。token は worktree ごと (git rev-parse --git-dir の下) で、main checkout の token では linked worktree の push は通らない。
 # git が呼ぶのは verify.sh が $GIT_COMMON_DIR/hooks (全 worktree で共有) に写した写しで、このファイルではない。githooks(5) の pre-push: push の前に呼ばれ、非 0 で終わると git push は何も push せずに止まる。
@@ -65,43 +101,9 @@ rm -- "$token" 2>/dev/null || {
   exit 1
 }
 OLD
-git -C repo commit -q -am '旧版の hooks/pre-push'
-cp "$here/hooks/pre-push" repo/hooks/pre-push
-git -C repo show HEAD:hooks/pre-push > old.txt
-cat > repo/bad.sh <<'BAD'
-#!/bin/bash
-if [ $x = y ]; then :; fi
-BAD
-hook=$tmp/repo/.git/hooks/pre-push
-if (cd repo && env -u VERIFY_READONLY ./verify.sh) > /dev/null 2>&1; then
-  echo "shellcheck が落ちるファイルがあるのに verify.sh が通った" >&2
-  status=1
-fi
-if [ ! -x "$hook" ] || ! cmp -s repo/hooks/pre-push "$hook"; then
-  echo "検査に落ちた verify.sh が $hook に hooks/pre-push の実行可能な写しを置いていない" >&2
-  status=1
-fi
-
-# 履歴にある旧版は写し直す。VERIFY_READONLY=1 では写さずに落として示す
-cp old.txt "$hook"
-(cd repo && VERIFY_READONLY=1 ./verify.sh) > /dev/null 2> err4.txt || true
-grep -q "$hook: hooks/pre-push と同じ実行可能なファイルでない" err4.txt || { echo "VERIFY_READONLY=1 の verify.sh が旧版の写しを示さない — $(cat err4.txt)" >&2; status=1; }
-cmp -s old.txt "$hook" || { echo "VERIFY_READONLY=1 の verify.sh が写しを直した" >&2; status=1; }
-(cd repo && env -u VERIFY_READONLY ./verify.sh) > /dev/null 2>&1 || true
-cmp -s repo/hooks/pre-push "$hook" || { echo "旧版の写しを verify.sh が写し直さない" >&2; status=1; }
-
-# どの版とも違う pre-push は、verify.sh が上書きせずに落とす (VERIFY_READONLY=1 でも示すだけで触らない)
-check_foreign() { # <名前> <モード: normal|readonly>: $hook に置いた内容を verify.sh が変えず、示して落ちること
-  local name=$1 mode=$2
-  cp "$hook" foreign.orig
-  if [ "$mode" = readonly ]; then
-    (cd repo && VERIFY_READONLY=1 ./verify.sh) > /dev/null 2> err8.txt && { echo "$name ($mode): どの版とも違う pre-push があるのに verify.sh が通った" >&2; status=1; }
-  else
-    (cd repo && env -u VERIFY_READONLY ./verify.sh) > /dev/null 2> err8.txt && { echo "$name ($mode): どの版とも違う pre-push があるのに verify.sh が通った" >&2; status=1; }
-  fi
-  grep -q "どの版とも違う pre-push がある" err8.txt || { echo "$name ($mode): 他の pre-push を verify.sh が示さない — $(cat err8.txt)" >&2; status=1; }
-  cmp -s foreign.orig "$hook" || { echo "$name ($mode): verify.sh が他の pre-push を書き換えた" >&2; status=1; }
-}
+chmod 755 "$hook"
+check_foreign '旧版の hook' normal
+check_foreign '旧版の hook' readonly
 printf '#!/bin/sh\nexec ./scripts/lint\n' > "$hook"
 chmod 755 "$hook"
 check_foreign '別の hook' normal
@@ -114,35 +116,24 @@ USER
 check_foreign 'PUSH_OK の判定を足した利用者の hook' normal
 cp repo/hooks/pre-push "$hook"
 printf 'echo extra\n' >> "$hook"
-check_foreign '現行版に手を入れた写し (未コミットの編集を写したものも同じ)' normal
+check_foreign '現行版に手を入れた写し' normal
+cp repo/hooks/pre-push "$hook"
+chmod 644 "$hook"
+check_foreign '現行版と同じ中身で実行可能でない写し' normal
+[ ! -x "$hook" ] || { echo "実行可能でない写しを verify.sh が実行可能にした" >&2; status=1; }
 rm -f "$hook"
 mkdir "$hook"
 (cd repo && env -u VERIFY_READONLY ./verify.sh) > /dev/null 2> err9.txt && { echo "ディレクトリの pre-push があるのに verify.sh が通った" >&2; status=1; }
-grep -q "どの版とも違う pre-push がある" err9.txt || { echo "ディレクトリの pre-push を verify.sh が示さない — $(cat err9.txt)" >&2; status=1; }
+grep -q "hooks/pre-push と同じ実行可能なファイルでない (上書きしない)" err9.txt || { echo "ディレクトリの pre-push を verify.sh が示さない — $(cat err9.txt)" >&2; status=1; }
 [ -d "$hook" ] && [ ! -e "$hook/pre-push" ] || { echo "ディレクトリの pre-push を verify.sh が置き換えた、または中に書いた" >&2; status=1; }
 rmdir "$hook"
 
-# 別ブランチだけにある版 (別 worktree の verify.sh が写したもの) は、この worktree の HEAD の履歴に無くても写し直す
-git -C repo worktree add -q -b side "$tmp/side"
-cat > side/hooks/pre-push <<'SIDE'
-#!/bin/sh
-# 別ブランチの版
-[ "${PUSH_OK:-}" = 1 ]
-SIDE
-git -C side commit -q -am '別ブランチの hooks/pre-push'
-git -C repo worktree remove side
-git -C repo show side:hooks/pre-push > "$hook"
-chmod 755 "$hook"
-(cd repo && env -u VERIFY_READONLY ./verify.sh) > /dev/null 2>&1 || true
-cmp -s repo/hooks/pre-push "$hook" || { echo "別ブランチだけにある版の写しを verify.sh が写し直さない" >&2; status=1; }
-
 # 壊れた symlink は無いものとして扱う。置き換えか書き通しかでなく、実行可能な写しが残ることを見る
-rm -f "$hook"
 ln -s "$tmp/nowhere" "$hook"
 (cd repo && env -u VERIFY_READONLY ./verify.sh) > /dev/null 2>&1 || true
 { [ -x "$hook" ] && cmp -s repo/hooks/pre-push "$hook"; } || { echo "壊れた symlink の pre-push を verify.sh が実行可能な写しにしない" >&2; status=1; }
 rm -f "$hook" "$tmp/nowhere"
-cp repo/hooks/pre-push "$hook"
+install -m 755 repo/hooks/pre-push "$hook"
 
 # hooks/ の無い linked worktree (hooks/pre-push の無い commit と同じ) からも、PUSH_OK 無しの push は止まる
 git -C repo worktree add -q --detach ../wt

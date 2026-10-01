@@ -55,7 +55,7 @@ description: Use when creating a new repository, bringing an existing repository
     - 手元で動く (git 等): 実物
     - 手元で動かない (GitHub API 等): 状態機械の fake
 - 単一検証コマンドを用意する (AGENTS.md 設計指針)。上記すべてを 1 つの入口に集約する。
-- push は `hooks/pre-push` で、push のコマンドに `PUSH_OK=1` が付いていないものを止める (付け方は [pr-workflow/SKILL.md](pr-workflow/SKILL.md) の「push の手順」)。単一検証コマンドで `hooks/pre-push` を common git dir (`git rev-parse --git-common-dir`) の `hooks` へ写す。写す先の pre-push が、全ての ref の履歴にある `hooks/pre-push` のどの版 (blob) とも違えば、利用者が置いた別の hook か手を入れた写しなので上書きせず落とす。`core.hooksPath` が hook をよそへ向けていれば落とす。common git dir の `hooks` は linked worktree も共有し、checkout で消えない。`core.hooksPath` で作業ツリーの `hooks/` を指すと、`hooks/` の無い commit を checkout した worktree から hook 無しで push が通る。
+- push は `hooks/pre-push` で、push のコマンドに `PUSH_OK=1` が付いていないものを止める (付け方は [pr-workflow/SKILL.md](pr-workflow/SKILL.md) の「push の手順」)。単一検証コマンドで `hooks/pre-push` を common git dir (`git rev-parse --git-common-dir`) の `hooks` へ写す。写す先に `hooks/pre-push` と違う pre-push があれば (旧版でも)、このリポのものかを中身から決められないので、上書きせず落として置き換えのコマンドを示す。`core.hooksPath` が hook をよそへ向けていれば落とす。common git dir の `hooks` は linked worktree も共有し、checkout で消えない。`core.hooksPath` で作業ツリーの `hooks/` を指すと、`hooks/` の無い commit を checkout した worktree から hook 無しで push が通る。
 - レビューは review-perspectives skill で行う。観点は plugin で配られる。
   - テストフレームワーク・ランタイム・リポ自身の終了ハンドラや資源の型の名前を、ルートの `review-perspectives/<観点>.md` に書く (review-perspectives の [repo-supplement.md](../review-perspectives/repo-supplement.md))。
   - managed Code Review (Claude GitHub App) を使うリポでは、効かせたい観点をルートの `REVIEW.md` に書く。managed Code Review はルートの `REVIEW.md` しか読まない (`canon: facts/claude-code/review-md-consumers`)。
