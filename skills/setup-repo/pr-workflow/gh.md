@@ -42,7 +42,7 @@ gh 2.98.0 で `--help` と実行を確認したもの。「未実測」と書い
     - `codex-usage-limit` の行 (Codex のレビューの利用上限。行の形は `pr.sh` の先頭): 次のとおりにしてから起動し直す。reset が分かっていれば、それを過ぎると watch が `@codex review` を出す。
       - `resets <時刻> 5h`: 何もしない。
       - `resets <時刻>` でほかの窓 (`weekly` など): PushNotification で reset の時刻をユーザーに知らせる。
-      - `reset unknown: <理由>`: PushNotification で理由をユーザーに知らせる (Codex の summary があれば、watch が 300 秒後に `@codex review` を 1 回出す)。
+      - `reset unknown: <理由>`: PushNotification で理由をユーザーに知らせる (PR が draft でなく、Codex の summary があり、head のレビューが始まっていなければ、watch が 300 秒後に `@codex review` を 1 回出す。draft の間は ready にするまでレビューは来ない)。
     - `codex-review requested` の行 (watch が `@codex review` を出した): 起動し直すだけ。
     - `codex-review not-started` の行 (`@codex review` の後も head のレビューが始まらない): PushNotification でユーザーに知らせてから起動し直す。
     - PR の close: 起動し直さない。

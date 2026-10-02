@@ -17,7 +17,7 @@
 #     自分 (トークンの持ち主) の通常のコメントは出す (エージェントの返信とユーザー自身の指示を見分けられない)。
 #     Codex のレビューの利用上限のコメント (Codex の bot の、本文が "You have reached your Codex usage limits for code reviews." で始まるもの) は、状態に無く、Codex の summary の最後の編集より新しいか等しく (updated_at は秒精度で、同じ秒は前後を判定できないので現在扱いとする)、PR が open で head に Completed の summary が無いときに扱う (それ以外のものは、その後にレビューが動いたか、閉じた PR のもの)。Codex は窓が明けても自分ではレビューを再開せず、push か "@codex review" のコメントが要る (canon: facts/codex-github/usage-limit-auto-resume)。
 #       扱うとは: PR_CODEX_LIMITS を 1 回回し、その周期に扱うコメントごとに codex-usage-limit の行を出す。usedPercent が 100 以上で resetsAt のある窓のうち、resetsAt が最も遅いもの (それが明けるまでレビューは止まる) を上限の窓とし、その resetsAt を reset とする。
-#       reset が分かれば、状態に codex-resume<TAB><head の sha><TAB><reset の epoch 秒> を残す。分からなければ消す (上限のコメントを扱うたびに置き換える)。分からないときは、下の「始まったか」の検査が 300 秒後に要求する。
+#       reset が分かれば、状態に codex-resume<TAB><head の sha><TAB><reset の epoch 秒> を残す。分からなければ消す (上限のコメントを扱うたびに置き換える)。分からないときは、下の「始まったか」の検査が、それの見る PR (open で draft でなく summary がある) で head のレビューが始まっていなければ 300 秒後に要求する。
 #       以後の周期で、codex-resume の head が今の head で、PR が open で head に Completed の summary が無く、reset を過ぎていれば、issue comment "@codex review" を 1 件 POST し、codex-review requested の行を出して codex-resume の reset を - にする (その head では要求済み)。POST したコメントは comment の行として出さない。
 #       reset が - の head には、上限のコメントを扱っても codex-resume を置き直さない (Codex が要求に上限で応え、読んだ窓は明けている、を繰り返さない)。その head は下の「始まったか」の検査が扱う。
 #       それより先に、head が変わる・Completed が付く・PR が閉じる・最新の上限のコメントより新しい "@codex review" で始まる issue comment が付く (他の人の要求や、応答が届かなかった自分の POST。そのコメントは comment の行で出る) のどれかが起きたら、POST せずに codex-resume を消す (reset が - のものは、head が変わる・Completed が付く・PR が閉じるときだけ消す)。push でレビューが起動するとは限らない (canon: facts/github/codex-review-pr-flow) ので、新しい head は下の「始まったか」の検査が扱う。まだ上限なら、その要求に Codex が新しい上限のコメントを出し、それをここで扱い直す。

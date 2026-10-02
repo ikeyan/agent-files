@@ -31,7 +31,7 @@
  *   - 新しい "@codex review" (他人のもの、上限明けの POST) は要求済みとして起点を置き直し、今の head の codex-resume がある間は起点を止める。上限のコメントがあっても codex-resume が無ければ (reset が分からない、上限の後の push) 止めない。
  *   - 上限明けの POST は head ごとに 1 回だけで、その後の同じ head の上限のコメントは codex-usage-limit の行を出すが codex-resume を置き直さない (reset が既に過ぎた窓を読んでも POST を繰り返さない)。
  *   - 上限中の Codex は、pr.sh が POST した "@codex review" に新しい上限のコメントで応えることがある (answer)。
- *   - 出して終わったら、gh.md の手順どおり同じ状態のディレクトリで起動し直し、起動し直した周期も同じく計算する。
+ *   - 出して終わったら、gh.md の手順どおり同じ状態のディレクトリで起動し直し、起動し直した周期も同じく計算する。PR を閉じたら起動し直さず、状態に codex-wait・codex-resume が残らないこと、時刻を 300 秒進めて一度だけ起動し直しても閉じた PR の行だけを出して POST しないことを確かめて終える。
  * - reply-resolve: スレッド先頭の id なら、そのスレッドが resolved で、トークンの持ち主の同じ本文の返信がちょうど 1 件になり、ほかは変わらない (一時的な失敗で exit 1 になったら、そのままやり直す)。スレッド先頭でない id なら exit 1 で何も変えない。
  * - 恒久的な失敗: 401 なら auth の行で exit 2。404・301・権限の 403・レート制限でない GraphQL の errors なら error の行で exit 3。
  * - 一時的な失敗 (5xx・429・レート制限・接続の切断) を 2 件まで挟んでも、上の結果は変わらない。
@@ -1319,6 +1319,7 @@ const stallOpArb: fc.Arbitrary<StallOp> = fc.oneof(
   { weight: 1, arbitrary: fc.record({ op: fc.constant("ready" as const), draft: fc.boolean() }) },
   { weight: 2, arbitrary: fc.record({ op: fc.constant("limit" as const), push: fc.boolean() }) },
   { weight: 1, arbitrary: fc.constant({ op: "comment" as const, c: { kind: "text" as const, login: "alice", text: REQUEST } }) },
+  { weight: 1, arbitrary: fc.record({ op: fc.constant("close" as const), merged: fc.boolean() }) },
 );
 /** 上限の窓: 失敗・遠い未来 (上限のコメントが現在のまま止まり続ける)・今・時刻を進めると過ぎる */
 const stallLimitsArb = fc.constantFrom<number | string | null>("fail", "fail", FAR[0], FAR[0], "+0", "+150", "+300").map((r) =>
@@ -1370,6 +1371,8 @@ async function runStall(spec: WorldSpec, init: StallInit, ops: StallOp[], limits
           Object.assign(m, retry);
         }
         proc = null;
+        // gh.md の手順では閉じた PR の watch を起動し直さない
+        if (w.pr.state === "closed") break;
       }
       if (JSON.stringify(fake.world) !== JSON.stringify(w)) throw new Error(`${what}: POST が合わない (${fake.posts.length} 件)`);
     };
@@ -1384,6 +1387,15 @@ async function runStall(spec: WorldSpec, init: StallInit, ops: StallOp[], limits
         fake.pending = [structuredClone(w)];
       }
       await settle(what, o.op === "advance" ? 1 : 2);
+      if (w.pr.state === "closed") {
+        const state = await Deno.readTextFile(`${dir}/state`);
+        if (/^codex-(wait|resume)\t/m.test(state)) throw new Error(`${what}: 閉じた PR の状態に codex-wait か codex-resume が残る\n${state}`);
+        // 残っていれば、起点や reset を過ぎた時刻の起動で POST する
+        m.now += 300;
+        await fake.setNow(m.now);
+        await settle(`${what} の後に起動し直す`, 2);
+        break;
+      }
     }
   });
 }
@@ -1558,6 +1570,17 @@ async function checkEqualSecondLimit(limitFirst: boolean) {
   });
 }
 
+/**
+ * 上限のコメントの後 (reset が遠い codex-resume か、reset が分からず codex-wait の計時中) に 300 秒の手前で PR を閉じると、その周期は閉じた PR の行だけを出して POST せず、
+ * 状態から codex-resume・codex-wait が消えることを確かめる (runStall が閉じた後に確かめる)。生成器が閉じる前に計時を 299 秒まで進めるかは確率に任せるので、ここで固定して確かめる
+ */
+async function checkClose() {
+  const ops: StallOp[] = [{ op: "limit", push: false }, { op: "advance", secs: 299 }, { op: "close", merged: false }];
+  for (const limits of [specOf([{ used: 100, reset: FAR[0], mins: 300 }, null]), "fail"]) {
+    await runStall(emptySpec, "old", ops, limits, { skip: 0, list: [] }, false, false);
+  }
+}
+
 // ---- 入口 ----
 
 const tmpRoot = await Deno.makeTempDir({ prefix: "pr-pbt." });
@@ -1620,6 +1643,7 @@ try {
   await checkEqualSecondLimit(true);
   await checkPushDuringLimit();
   await checkResumeOnceAndDraft();
+  await checkClose();
   // 1 件に数秒かかるので、縮小せずに最初の反例で止める (FC_SEED と表示される path で再現する)
   const params = { numRuns, ...(seedEnv ? { seed: Number(seedEnv) } : {}), endOnFailure: true, verbose: fc.VerbosityLevel.Verbose };
   await fc.assert(p1, params);
