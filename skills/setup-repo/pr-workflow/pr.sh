@@ -12,7 +12,7 @@
 #       - head の CI の失敗 (再実行や同じ context の後の status で置き換えられたものを含む)
 #       - 閉じた PR
 #       - Completed の Codex の summary
-#     以後: 前回との差 (コメント・review の追加と編集、タイトル、説明、CI の失敗、PR の close) を見つけたら、間隔と 10 秒の短いほうだけ待って取り直し、まとめて出して終わる。
+#     以後: 前回との差 (コメント・review の追加と編集、タイトル、説明、CI の失敗、PR の close と reopen) を見つけたら、間隔と 10 秒の短いほうだけ待って取り直し、まとめて出して終わる。
 #     出さないもの: resolve 済みのスレッドのレビューコメント、本文の無い COMMENTED の review (返信で作られる)、Codex の summary コメントの、今の head の Completed 以外への編集。
 #     自分 (トークンの持ち主) の通常のコメントは出す (エージェントの返信とユーザー自身の指示を見分けられない)。
 #     Codex のレビューの利用上限のコメント (Codex の bot の、本文が "You have reached your Codex usage limits for code reviews." で始まるもの) は、状態に無く、Codex の summary の最後の編集より新しいか等しく (updated_at は秒精度で、同じ秒は前後を判定できないので現在扱いとする)、PR が open で head に Completed の summary が無いときに扱う (それ以外のものは、その後にレビューが動いたか、閉じた PR のもの)。Codex は窓が明けても自分ではレビューを再開せず、push か "@codex review" のコメントが要る (canon: facts/codex-github/usage-limit-auto-resume)。
@@ -20,10 +20,10 @@
 #       reset が分かれば、状態に codex-resume<TAB><head の sha><TAB><reset の epoch 秒> を残す。分からなければ消す (上限のコメントを扱うたびに置き換える)。分からないときは、下の「始まったか」の検査が、それの見る PR (open で draft でなく summary がある) で head のレビューが始まっていなければ 300 秒後に要求する。
 #       以後の周期で、codex-resume の head が今の head で、PR が open で head に Completed の summary が無く、reset を過ぎていれば、issue comment "@codex review" を 1 件 POST し、codex-review requested の行を出して codex-resume の reset を - にする (その head では要求済み)。POST したコメントは comment の行として出さない。
 #       reset が - の head には、上限のコメントを扱っても codex-resume を置き直さない (Codex が要求に上限で応え、読んだ窓は明けている、を繰り返さない)。その head は下の「始まったか」の検査が扱う。
-#       それより先に、head が変わる・Completed が付く・PR が閉じる・最新の上限のコメントより新しい "@codex review" で始まる issue comment が付く (他の人の要求や、応答が届かなかった自分の POST。そのコメントは comment の行で出る) のどれかが起きたら、POST せずに codex-resume を消す (reset が - のものは、head が変わる・Completed が付く・PR が閉じるときだけ消す)。push でレビューが起動するとは限らない (canon: facts/github/codex-review-pr-flow) ので、新しい head は下の「始まったか」の検査が扱う。まだ上限なら、その要求に Codex が新しい上限のコメントを出し、それをここで扱い直す。
+#       それより先に、head が変わる・Completed が付く・PR が閉じる・最新の上限のコメントより新しい "@codex review" で始まる issue comment が付く (他の人の要求や、応答が届かなかった自分の POST。そのコメントは comment の行で出る) のどれかが起きたら、POST せずに codex-resume を消す (reset が - のものは、head が変わるか Completed が付くときだけ消し、PR が閉じても残す)。push でレビューが起動するとは限らない (canon: facts/github/codex-review-pr-flow) ので、新しい head は下の「始まったか」の検査が扱う。まだ上限なら、その要求に Codex が新しい上限のコメントを出し、それをここで扱い直す。
 #     PR が open で draft でなく Codex の summary があれば、head のレビューが始まったかを見る (push でレビューが起動しないことがある。draft は ready にするまで Codex が起動しないので見ない)。push でレビューが確実に起動する条件が canon (facts/github/codex-review-pr-flow) で確かめられたら、この検査は外す。始まった = どれかの summary の Commit 列が head の接頭辞 (Codex は開始時に Commit 列を head にして Running にするので、Running か Completed かを問わない)。
-#       始まっていない head について、状態に codex-wait<TAB><head の sha><TAB><起点の epoch 秒か -><TAB><wait・requested・reported> を残す (時刻は周期ごとに 1 回 date +%s で読む)。始まる・PR が閉じるか draft になる・summary が無くなると消し、head が変われば wait で作り直す。
-#       起点は、始まっていないことを見た最初の周期の時刻。"@codex review" で始まる issue comment が前の周期より新しく付けば (他の人の要求も、pr.sh 自身の POST も)、requested にして起点を置き直す。上限明けの要求を待つ間 (今の head の codex-resume の reset が - でない間) は起点を - にして止める。
+#       始まっていない head について、状態に codex-wait<TAB><head の sha><TAB><起点の epoch 秒か -><TAB><wait・requested・reported> を残す (時刻は周期ごとに 1 回 date +%s で読む)。head のレビューが始まると消し、head が変われば wait で作り直す。検査が見ない間 (PR が閉じた・draft・summary が無い) は、同じ head の行を wait・requested・reported のまま残して起点を - にし、見るようになった周期から計時し直す (draft と ready、close と reopen を行き来しても、その head への POST と通知は 1 回ずつ)。
+#       起点は、始まっていないことを見た最初の周期の時刻。"@codex review" で始まる issue comment が前の周期より新しく付けば (他の人の要求も、pr.sh 自身の POST も)、requested にして起点を置き直す。検査が見ない間と、上限明けの要求を待つ間 (今の head の codex-resume の reset が - でない間) は起点を - にして止める。
 #       起点から 300 秒たっても始まっていなければ、wait なら "@codex review" を 1 件 POST して codex-review requested の行を出し (POST したコメントは comment の行として出さない)、requested にして起点を置き直す。requested なら codex-review not-started の行を出して reported にする (その head では以後何もしない)。
 #   pr.sh reply-resolve <owner>/<repo> <PR 番号> <スレッド先頭のレビューコメントの id (整数)> <本文>
 #     スレッドに返信し、そのスレッドを resolve する。
@@ -222,8 +222,11 @@ codex_step() { # <現状> <open か new>: 利用上限のコメントと上限�
   local prev=/dev/null head fresh out reason="no window at 100% with resetsAt" reset="" window when rhead
   [ ! -f "$state" ] || prev=$state
   resume=$(awk -F'\t' '$1 == "codex-resume"' "$prev")
-  if printf '%s\n' "$1" | awk -F'\t' '($1 == "pr" && $2 != "open") || ($1 ~ /^ic:/ && $2 ~ /^completed /) { f = 1 } END { exit !f }'; then resume=; return 0; fi
   head=$(printf '%s\n' "$1" | awk -F'\t' '$1 == "head" { print $2 }')
+  case $(printf '%s\n' "$1" | awk -F'\t' '$1 ~ /^ic:/ && $2 ~ /^completed / { c = 1 } $1 == "pr" && $2 != "open" { o = 1 } END { print c ? "completed" : o ? "closed" : "open" }') in
+    completed) resume=; return 0 ;;
+    closed) [ "$resume" = "$(printf 'codex-resume\t%s\t-' "$head")" ] || resume=; return 0 ;;
+  esac
   fresh=$(printf '%s\n' "$1" | awk -F'\t' -v prev="$prev" 'BEGIN { while ((getline l < prev) > 0) { split(l, f, "\t"); seen[f[1]] } }
     $1 == "summary" && $2 > last { last = $2 }
     $1 ~ /^limit:/ && !($1 in seen) { split($2, v, " "); at[$1] = v[1]; url[$1] = v[2] }
@@ -267,11 +270,14 @@ codex_wait() { # <現状 (POST したコメントを含む)>: 今の head でレ
       requested = prev != "/dev/null" && r > pr
       print isopen && !draft && has, s + 0, requested, head, (wh == "" ? "-" : wh), (ws == "" ? "-" : ws), (wt == "" ? "wait" : wt)
     }')
-  [ "$applies" = 1 ] && [ "$started" = 0 ] || return 0
-  [ "$whead" = "$head" ] || since=- step=wait
+  [ "$started" = 0 ] || return 0
+  if [ "$whead" != "$head" ]; then
+    [ "$applies" = 1 ] || return 0
+    since=- step=wait
+  fi
   if [ "$step" != reported ]; then
     [ "$requested" = 0 ] || since=$now step=requested
-    if [ -n "$resume" ] && [ "${resume##*$'\t'}" != - ]; then
+    if [ "$applies" = 0 ] || { [ -n "$resume" ] && [ "${resume##*$'\t'}" != - ]; }; then
       since=-
     elif [ "$since" = - ]; then
       since=$now
