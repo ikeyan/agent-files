@@ -17,9 +17,13 @@
 #     自分 (トークンの持ち主) の通常のコメントは出す (エージェントの返信とユーザー自身の指示を見分けられない)。
 #     Codex のレビューの利用上限のコメント (Codex の bot の、本文が "You have reached your Codex usage limits for code reviews." で始まるもの) は、状態に無く、Codex の summary の最後の編集より新しいか等しく (updated_at は秒精度で、同じ秒は前後を判定できないので現在扱いとする)、PR が open で head に Completed の summary が無いときに扱う (それ以外のものは、その後にレビューが動いたか、閉じた PR のもの)。Codex は窓が明けても自分ではレビューを再開せず、push か "@codex review" のコメントが要る (canon: facts/codex-github/usage-limit-auto-resume)。
 #       扱うとは: PR_CODEX_LIMITS を 1 回回し、その周期に扱うコメントごとに codex-usage-limit の行を出す。usedPercent が 100 以上で resetsAt のある窓のうち、resetsAt が最も遅いもの (それが明けるまでレビューは止まる) を上限の窓とし、その resetsAt を reset とする。
-#       reset が分かれば、状態に codex-resume<TAB><head の sha><TAB><reset の epoch 秒> を残す。分からなければ消す (上限のコメントを扱うたびに置き換える)。分からないときは、push か手動の "@codex review" までレビューは来ないので、どうするかは監視側が決める。
+#       reset が分かれば、状態に codex-resume<TAB><head の sha><TAB><reset の epoch 秒> を残す。分からなければ消す (上限のコメントを扱うたびに置き換える)。分からないときは、下の「始まったか」の検査が 300 秒後に要求する。
 #       以後の周期で、codex-resume の head が今の head で、PR が open で head に Completed の summary が無く、reset を過ぎていれば、issue comment "@codex review" を 1 件 POST し、codex-review requested の行を出して codex-resume を消す。POST したコメントは comment の行として出さない。
-#       それより先に、head が変わる・Completed が付く・PR が閉じる・最新の上限のコメントより新しい "@codex review" で始まる issue comment が付く (他の人の要求や、応答が届かなかった自分の POST。そのコメントは comment の行で出る) のどれかが起きたら、POST せずに codex-resume を消す (新しい head は push でレビューが起動し、まだ上限なら Codex が新しい上限のコメントを出すので、それを扱い直す)。
+#       それより先に、head が変わる・Completed が付く・PR が閉じる・最新の上限のコメントより新しい "@codex review" で始まる issue comment が付く (他の人の要求や、応答が届かなかった自分の POST。そのコメントは comment の行で出る) のどれかが起きたら、POST せずに codex-resume を消す。push でレビューが起動するとは限らない (canon: facts/github/codex-review-pr-flow) ので、新しい head は下の「始まったか」の検査が扱う。まだ上限なら、その要求に Codex が新しい上限のコメントを出し、それをここで扱い直す。
+#     PR が open で Codex の summary があれば、head のレビューが始まったかを見る (push でレビューが起動しないことがある)。始まった = どれかの summary の Commit 列が head の接頭辞 (Codex は開始時に Commit 列を head にして Running にするので、Running か Completed かを問わない)。
+#       始まっていない head について、状態に codex-wait<TAB><head の sha><TAB><起点の epoch 秒か -><TAB><wait・requested・reported> を残す (時刻は周期ごとに 1 回 date +%s で読む)。始まる・PR が閉じる・summary が無くなると消し、head が変われば wait で作り直す。
+#       起点は、始まっていないことを見た最初の周期の時刻。"@codex review" で始まる issue comment が前の周期より新しく付けば (他の人の要求も、pr.sh 自身の POST も)、requested にして起点を置き直す。上限明けの要求を待つ間 (今の head の codex-resume がある間) は起点を - にして止める。
+#       起点から 300 秒たっても始まっていなければ、wait なら "@codex review" を 1 件 POST して codex-review requested の行を出し (POST したコメントは comment の行として出さない)、requested にして起点を置き直す。requested なら codex-review not-started の行を出して reported にする (その head では以後何もしない)。
 #   pr.sh reply-resolve <owner>/<repo> <PR 番号> <スレッド先頭のレビューコメントの id (整数)> <本文>
 #     スレッドに返信し、そのスレッドを resolve する。
 #   環境変数 PR_CODEX_LIMITS: watch が Codex の利用上限の窓を読むコマンド (既定 <pr.sh のディレクトリ>/codex-limits.sh)。引数なしで直接実行できるファイルのパス。成功は exit 0 で stdout が codex-limits.sh の先頭の形、失敗は exit 0 以外で出力 (stdout と stderr) の 1 行目が理由。
@@ -28,7 +32,7 @@
 #   Codex の利用上限のイベント文は codex-usage-limit <コメントの URL> に続けて、resets <reset の ISO 8601 UTC> <上限の窓> か reset unknown: <理由>。
 #     <上限の窓> は windowDurationMins から決める (primary・secondary の名前からは決めない): 300 なら 5h、10080 なら weekly、無ければ unknown、それ以外は <分>m。
 #     <理由> は、PR_CODEX_LIMITS の失敗なら出力の 1 行目、成功して該当する窓が無ければ no window at 100% with resetsAt。
-#   上限明けの要求は new codex-review requested <POST したコメントの URL>。
+#   上限明けと、始まらないレビューの要求は new codex-review requested <POST したコメントの URL>。要求の後も始まらなければ new codex-review not-started <head の sha>。
 #   auth で始まる行を出して終わったら、トークンが無いか無効 (401)。error で始まる行なら、PR 番号・リポジトリ・権限・問い合わせの誤り (3xx、401 以外の 4xx、レート制限でない GraphQL の errors、curl 自身の URL・プロトコルの誤り)。3xx はリポジトリの改名・移動で、新しい名前で起動し直す。
 # 失敗: 一時的な API の失敗 (ネットワーク・5xx・レート制限の 403・429) は、watch では出さずに間隔を倍にして (上限 900 秒) 再試行し、reply-resolve では止まる。curl 自身の失敗も同じ規則 (相手や経路の状態で結果が変わりうる転送の失敗は一時的、ローカルの設定・引数・TLS の信頼・機能の欠如は再試行しても変わらないので恒久) で分ける: 一時的は curl(1) の EXIT CODES の 5・6・7・16・18・28・52・55・56・89・92・95・96 (名前解決・接続・送受信・途中切断・timeout・HTTP/2・HTTP/3・QUIC の枠組みの失敗。内訳は req() の case の直前を見る)、それ以外 (URL・プロトコル・TLS の設定・CA など) は恒久 (error の行で 3)。
 #   reply-resolve は、止まった後にそのままやり直してよい (スレッドに自分の同じ本文の返信があれば返信を重ねない)。同じスレッドに並行に起動しない (返信の有無を見てから返信するまでに割り込まれると、返信が重なる)。
@@ -206,9 +210,14 @@ diff_events() { # <現状>: 状態ファイルとの差をイベントの行で�
   printf '%s\n' "$1" | awk -F'\t' 'NR == FNR { seen[$1] = $2; next } $3 == "" { next } !($1 in seen) { print "new " $3; next } seen[$1] != $2 { print "changed " $3 }' "$state" -
   if ! cmp -s "$dir/body" "$dir/body.new"; then echo "description changed"; diff -u "$dir/body" "$dir/body.new" | tail -n +3; fi
 }
-codex_step() { # <現状> <open か new>: 利用上限のコメントと上限明けの要求を扱う (先頭の宣言)。出す行を codex_lines、状態に残す codex-resume の行を resume、POST したコメントの現状の行を posted に置く。POST の失敗は req の終了コードを返す
-  local prev=/dev/null head fresh out reason="no window at 100% with resetsAt" reset="" window when res rhead
-  codex_lines='' posted=''
+request_review() { # issue comment "@codex review" を POST し、codex-review requested の行を codex_lines に、そのコメントの現状の行 (comment と request) を posted に足す。POST の失敗は req の終了コードを返す
+  local res
+  res=$(req POST "$api/repos/$repo/issues/$pr/comments" '{"body":"@codex review"}') || return
+  posted=${posted:+$posted$'\n'}$(jq -r "$comment_line"', "request\t\(.updated_at)\t"' <<<"$res") || return 1
+  codex_lines=${codex_lines:+$codex_lines$'\n'}"new codex-review requested $(jq -r .html_url <<<"$res")"
+}
+codex_step() { # <現状> <open か new>: 利用上限のコメントと上限明けの要求を扱う (先頭の宣言)。出す行を codex_lines に、状態に残す codex-resume の行を resume に置き、POST したコメントの現状の行を posted に足す。POST の失敗は req の終了コードを返す
+  local prev=/dev/null head fresh out reason="no window at 100% with resetsAt" reset="" window when rhead
   [ ! -f "$state" ] || prev=$state
   resume=$(awk -F'\t' '$1 == "codex-resume"' "$prev")
   if printf '%s\n' "$1" | awk -F'\t' '($1 == "pr" && $2 != "open") || ($1 ~ /^ic:/ && $2 ~ /^completed /) { f = 1 } END { exit !f }'; then resume=; return 0; fi
@@ -237,10 +246,44 @@ codex_step() { # <現状> <open か new>: 利用上限のコメントと上限�
   IFS=$'\t' read -r _ rhead reset <<<"$resume"
   if [ "$rhead" != "$head" ] || printf '%s\n' "$1" | awk -F'\t' '$1 ~ /^limit:/ { split($2, v, " "); if (v[1] > l) l = v[1] }
     $1 == "request" && $2 > r { r = $2 } END { exit !(r > l) }'; then resume=; return 0; fi
-  [ "$(date +%s)" -ge "$reset" ] || return 0
-  res=$(req POST "$api/repos/$repo/issues/$pr/comments" '{"body":"@codex review"}') || return
-  posted=$(jq -r "$comment_line" <<<"$res") || return 1
-  codex_lines="new codex-review requested $(jq -r .html_url <<<"$res")" resume=
+  [ "$now" -ge "$reset" ] || return 0
+  request_review || return
+  resume=
+}
+codex_wait() { # <現状 (POST したコメントを含む)>: 今の head でレビューが始まらないときの要求と通知 (先頭の宣言)。状態に残す codex-wait の行を waiting に置き、出す行を codex_lines に、POST したコメントの現状の行を posted に足す。POST の失敗は req の終了コードを返す
+  local prev=/dev/null applies started requested head whead since step
+  waiting=
+  [ ! -f "$state" ] || prev=$state
+  read -r applies started requested head whead since step < <(printf '%s\n' "$1" | awk -F'\t' -v prev="$prev" '
+    BEGIN { while ((getline l < prev) > 0) { split(l, f, "\t"); if (f[1] == "request" && f[2] > pr) pr = f[2]; if (f[1] == "codex-wait") { wh = f[2]; ws = f[3]; wt = f[4] } } }
+    $1 == "pr" { isopen = $2 == "open" }
+    $1 == "head" { head = $2 }
+    $1 == "summary" { has = 1 }
+    $1 ~ /^ic:/ && $2 ~ /^(completed|other) [0-9a-f]/ { commits[substr($2, index($2, " ") + 1)] }
+    $1 == "request" && $2 > r { r = $2 }
+    END {
+      for (c in commits) if (index(head, c) == 1) s = 1
+      requested = prev != "/dev/null" && r > pr
+      print isopen && has, s + 0, requested, head, (wh == "" ? "-" : wh), (ws == "" ? "-" : ws), (wt == "" ? "wait" : wt)
+    }')
+  [ "$applies" = 1 ] && [ "$started" = 0 ] || return 0
+  [ "$whead" = "$head" ] || since=- step=wait
+  if [ "$step" != reported ]; then
+    [ "$requested" = 0 ] || since=$now step=requested
+    if [ -n "$resume" ]; then
+      since=-
+    elif [ "$since" = - ]; then
+      since=$now
+    elif [ $((now - since)) -ge 300 ]; then
+      if [ "$step" = wait ]; then
+        request_review || return
+        since=$now step=requested
+      else
+        codex_lines=${codex_lines:+$codex_lines$'\n'}"new codex-review not-started $head" step=reported
+      fi
+    fi
+  fi
+  waiting=$(printf 'codex-wait\t%s\t%s\t%s' "$head" "$since" "$step")
 }
 closed_line() { # <現状>: PR が閉じていれば、その行を出す
   printf '%s\n' "$1" | awk -F'\t' '$1 == "pr" && $2 == "closed" { print "changed " $3 }'
@@ -265,7 +308,8 @@ while :; do
     prefix=new
   fi
   if [ "$rc" = 0 ]; then
-    if codex_step "$cur" "$prefix"; then
+    codex_lines='' posted='' now=$(date +%s)
+    if codex_step "$cur" "$prefix" && codex_wait "$cur${posted:+$'\n'$posted}"; then
       cur=$cur${posted:+$'\n'$posted} events=$events${codex_lines:+${events:+$'\n'}$codex_lines}
     else
       rc=$?
@@ -279,7 +323,7 @@ while :; do
     delay=$interval
     # 出せたときだけ記録する (記録の前に止まれば、次の起動で同じものをもう一度出す)
     if [ -n "$events" ]; then printf '%s\n' "$events" || exit 1; fi
-    printf '%s\n' "$cur" ${resume:+"$resume"} > "$state"
+    printf '%s\n' "$cur" ${resume:+"$resume"} ${waiting:+"$waiting"} > "$state"
     mv "$dir/body.new" "$dir/body"
     [ -z "$events" ] || exit 0
   fi

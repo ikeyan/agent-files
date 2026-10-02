@@ -25,6 +25,11 @@
  *   - reset が分かれば、以後の周期で reset を過ぎ、head が同じで、Completed も上限のコメントより新しい "@codex review" も無ければ、@codex review をちょうど 1 件 POST して new codex-review requested <url> を出す。POST の応答が切れたら、代わりにそのコメントが new comment me <url> で出る。POST の後は、bot の応答 (Completed・次の上限のコメント・無し) に関わらずもう POST しない。
  *   - head が変わる・Completed が付く・他人の "@codex review" が先に付く・reset が分からない、のどれかなら POST しない。
  *   - 偽の PR_CODEX_LIMITS は、失敗 (exit 1) か、両窓の usedPercent (0・99・100・150)、resetsAt (遠い未来の固定値か null)、windowDurationMins (300・10080・1440・null) を返す (窓ごと無いこともある)。reset を過ぎる経路 (p4) では resetsAt を実行時の now + 0〜2 秒にする。
+ * - 始まらないレビュー (p5。pr.sh の先頭の宣言): 時刻を偽の date で止めて進め、操作 (push で Codex が始めない・始める・上限のコメント・他人の "@codex review"・時刻を 100〜300 秒進める) ごとに、pr.sh の周期を状態 (前の周期の S、codex-resume、codex-wait) から 1 つずつ計算する。
+ *   - PR が open で Codex の summary があり、どの summary の Commit 列も head の接頭辞でない間、head ごとの起点から 300 秒で @codex review を 1 回だけ POST して new codex-review requested <url> を、さらに 300 秒で new codex-review not-started <head> を 1 回だけ出す。POST の応答が切れたら、代わりにそのコメントが new comment me <url> で出て、もう POST しない。
+ *   - 新しい "@codex review" (他人のもの、上限明けの POST) は要求済みとして起点を置き直し、今の head の codex-resume がある間は起点を止める。上限のコメントがあっても codex-resume が無ければ (reset が分からない、上限の後の push) 止めない。
+ *   - 上限中の Codex は、pr.sh が POST した "@codex review" に新しい上限のコメントで応えることがある (answer)。
+ *   - 出して終わったら、gh.md の手順どおり同じ状態のディレクトリで起動し直し、起動し直した周期も同じく計算する。
  * - reply-resolve: スレッド先頭の id なら、そのスレッドが resolved で、トークンの持ち主の同じ本文の返信がちょうど 1 件になり、ほかは変わらない (一時的な失敗で exit 1 になったら、そのままやり直す)。スレッド先頭でない id なら exit 1 で何も変えない。
  * - 恒久的な失敗: 401 なら auth の行で exit 2。404・301・権限の 403・レート制限でない GraphQL の errors なら error の行で exit 3。
  * - 一時的な失敗 (5xx・429・レート制限・接続の切断) を 2 件まで挟んでも、上の結果は変わらない。
@@ -307,6 +312,7 @@ type Op =
   | { op: "editReviewComment"; i: number; shown: boolean; text: string }
   | { op: "resolve"; i: number }
   | { op: "push"; summary: "stale" | "running" | "completed" }
+  | { op: "start"; completed: boolean }
   | { op: "limit"; push: boolean }
   | { op: "ci"; check: boolean; name: string; conclusion: string }
   | { op: "title"; title: string }
@@ -375,6 +381,10 @@ function apply(w: World, o: Op) {
     case "push":
       w.pr.head = shaOf(tick(w));
       if (o.summary !== "stale") summarize(w, o.summary === "completed");
+      break;
+    case "start":
+      // Codex は summary を同じ内容に書き換えない
+      if (w.issue.find(isSummary)?.body !== summaryBody(o.completed, w.pr.head.slice(0, 7))) summarize(w, o.completed);
       break;
     case "limit":
       // 上限中の Codex は summary を更新せず、push ごとに上限のコメントを出す (canon: facts/codex-github/usage-limit-auto-resume)
@@ -519,6 +529,7 @@ const opArb: fc.Arbitrary<Op> = fc.oneof(
   { weight: 2, arbitrary: fc.record({ op: fc.constant("editReviewComment" as const), i: fc.nat(200), shown: fc.boolean(), text: textArb }) },
   { weight: 1, arbitrary: fc.record({ op: fc.constant("resolve" as const), i: fc.nat(200) }) },
   { weight: 1, arbitrary: fc.record({ op: fc.constant("push" as const), summary: fc.constantFrom("stale" as const, "running" as const, "completed" as const) }) },
+  { weight: 1, arbitrary: fc.record({ op: fc.constant("start" as const), completed: fc.boolean() }) },
   { weight: 1, arbitrary: fc.record({ op: fc.constant("limit" as const), push: fc.boolean() }) },
   { weight: 1, arbitrary: fc.record({ op: fc.constant("ci" as const), check: fc.boolean(), name: fc.constantFrom("build", "ci/a"), conclusion: fc.constantFrom(...FAILING) }) },
   { weight: 1, arbitrary: fc.record({ op: fc.constant("title" as const), title: titleArb }) },
@@ -612,17 +623,27 @@ class Fake {
   ends: number[] = []; // 周期の終わり (commit status の最後のページ) ごとの、その時点の starts
   log: string[] = [];
   procs: Proc[] = [];
-  posts: { id: number; at: number }[] = []; // 受けた issue comment の POST と、受けた時刻 (epoch 秒)
+  posts: { id: number; at: number }[] = []; // 受けた issue comment の POST と、受けた時刻 (epoch 秒。偽の date の時刻)
+  now: number | null = null; // 偽の date が止めている時刻。null なら実際の時刻
+  dropPosts = 0; // issue comment の POST を受けてから応答を切る残りの回数
+  answer = false; // 上限中の Codex として、POST された "@codex review" に上限のコメントで応える
   private server: Deno.HttpServer<Deno.NetAddr>;
 
-  /** limits: pr.sh に PR_CODEX_LIMITS として渡すパス */
-  constructor(world: World, private skip: number, private failures: Transient[], private permanent: Permanent | null, readonly limits: string) {
+  /** limits: pr.sh に PR_CODEX_LIMITS として渡すパス。bin: 偽の date を置いたディレクトリ (pr.sh の PATH の先頭) */
+  constructor(world: World, private skip: number, private failures: Transient[], private permanent: Permanent | null, readonly limits: string, readonly bin: string) {
     this.world = world;
     this.server = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, (req) => this.handle(req));
   }
 
   get url() {
     return `http://127.0.0.1:${this.server.addr.port}`;
+  }
+
+  /** 偽の date +%s が返す時刻を epoch 秒の t に止める (読みかけの date が空のファイルを読まないように、置き換えで書く) */
+  async setNow(t: number) {
+    await Deno.writeTextFile(`${this.bin}/date.now.new`, `${t}\n`);
+    await Deno.rename(`${this.bin}/date.now.new`, `${this.bin}/date.now`);
+    this.now = t;
   }
 
   close() {
@@ -663,6 +684,10 @@ class Fake {
       ? this.graphql(JSON.parse(body))
       : this.rest(req.method, u, body, () => end = true);
     if (f) return dropped();
+    if (req.method === "POST" && u.pathname === `/repos/${REPO}/issues/${PR}/comments` && this.dropPosts > 0) {
+      this.dropPosts--;
+      return dropped();
+    }
     if (end) this.ends.push(this.starts);
     return res;
   }
@@ -704,7 +729,8 @@ class Fake {
       const n = tick(w);
       const c = { id: idOf(n), login: ME, body: JSON.parse(body).body, updated_at: timeOf(n) };
       w.issue.push(c);
-      this.posts.push({ id: c.id, at: Date.now() / 1000 });
+      if (this.answer && c.body.startsWith(REQUEST)) addComment(w, { kind: "limit", login: BOT });
+      this.posts.push({ id: c.id, at: this.now ?? Date.now() / 1000 });
       return json(201, { id: c.id, user: { login: ME }, body: c.body, updated_at: c.updated_at, html_url: urls.issue(c.id) });
     }
     if (method === "POST" && (m = rest.match(new RegExp(`^pulls/${PR}/comments/(\\d+)/replies$`)))) {
@@ -824,7 +850,7 @@ class Proc {
     this.child = new Deno.Command("bash", {
       args: [script, ...args],
       clearEnv: true,
-      env: prEnv({ GITHUB_API_URL: fake.url, PR_CODEX_LIMITS: fake.limits }),
+      env: prEnv({ GITHUB_API_URL: fake.url, PR_CODEX_LIMITS: fake.limits, PATH: `${fake.bin}:${Deno.env.get("PATH") ?? ""}` }),
       stdin: "null",
       stdout: "piped",
       stderr: "piped",
@@ -960,6 +986,11 @@ if [ "$(cat "$0.spec")" = fail ]; then echo fail >> "$0.log"; echo "${LIMITS_FAI
 awk -F'\\t' -v OFS='\\t' -v now="$(date +%s)" '$3 ~ /^[+]/ { $3 = now + substr($3, 2) } { print }' "$0.spec" | tee -a "$0.log"
 `;
 
+/** 偽の date。<自身のパス>.now があれば date +%s にその中身を返し、それ以外は PATH の残りの date に渡す (PATH の先頭に置く) */
+const DATE_STUB = `#!/bin/sh
+if [ "$#" = 1 ] && [ "$1" = +%s ] && [ -f "$0.now" ]; then cat "$0.now"; else PATH=\${PATH#*:} exec date "$@"; fi
+`;
+
 /** spec (specOf の形) を返し、返したものを <パス>.log に足していく偽の PR_CODEX_LIMITS を置いて、そのパスを返す。spec が null なら無いパスを返す */
 async function limitsStub(spec: string | null): Promise<string> {
   const path = `${await Deno.makeTempDir({ dir: tmpRoot })}/limits`;
@@ -977,7 +1008,10 @@ async function withFake(
   limits: string | null,
   body: (fake: Fake, dir: string) => Promise<void>,
 ) {
-  const fake = new Fake(w, failures.skip, structuredClone(failures.list), permanent, await limitsStub(limits));
+  const bin = await Deno.makeTempDir({ dir: tmpRoot });
+  await Deno.writeTextFile(`${bin}/date`, DATE_STUB);
+  await Deno.chmod(`${bin}/date`, 0o755);
+  const fake = new Fake(w, failures.skip, structuredClone(failures.list), permanent, await limitsStub(limits), bin);
   const dir = await Deno.makeTempDir({ dir: tmpRoot });
   try {
     await body(fake, dir);
@@ -1191,6 +1225,170 @@ const p4 = fc.asyncProperty(
   },
 );
 
+/** 始まらないレビューの経路 (p5) のモデルの状態。pr.sh の状態ファイルと、偽の date の時刻 */
+interface StallModel {
+  prev: World | null; // 前の周期の S (状態ファイルの現状の行)。null なら初回
+  now: number;
+  limits: string; // 偽の PR_CODEX_LIMITS の spec
+  answer: boolean; // Fake.answer
+  resume: { head: string; at: number } | null; // codex-resume
+  wait: { head: string; since: number | null; step: "wait" | "requested" | "reported" } | null; // codex-wait
+}
+
+const latest = (cs: IssueComment[]) => cs.map((c) => c.updated_at).reduce((a, b) => a > b ? a : b, "");
+const isRequest = (c: IssueComment) => !isSummary(c) && !isLimit(c) && c.body.startsWith(REQUEST);
+/** どれかの Codex の summary の Commit 列が head の接頭辞 (Running か Completed かを問わない) */
+const started = (w: World) =>
+  w.issue.some((c) => {
+    const commit = isSummary(c) ? /`([0-9a-f]{7,40})`/.exec(c.body)?.[1] : undefined;
+    return commit !== undefined && w.pr.head.startsWith(commit);
+  });
+/** 偽の PR_CODEX_LIMITS が時刻 now に返すもの */
+const limitsAt = (spec: string, now: number) =>
+  spec.split("\n").map((l) => l.split("\t").map((f, i) => i === 2 && f.startsWith("+") ? String(now + Number(f.slice(1))) : f).join("\t")).join("\n");
+
+/** pr.sh の 1 周期で、PR が w のときに出す行を返し、m と w (POST したコメント) を進める */
+function stallCycle(m: StallModel, w: World): string[] {
+  const out = limitsAt(m.limits, m.now);
+  const when = whenOf(out);
+  const lines = m.prev === null ? expectInitial(w, when) : [...expectDelta(m.prev, w), ...limitLines(m.prev, w, when)];
+  const answers: number[] = [];
+  const post = () => {
+    const n = tick(w);
+    w.issue.push({ id: idOf(n), login: ME, body: REQUEST, updated_at: timeOf(n) });
+    if (m.answer) {
+      addComment(w, { kind: "limit", login: BOT });
+      answers.push(w.issue.at(-1)!.id);
+    }
+    lines.push(`new codex-review requested ${urls.issue(idOf(n))}`);
+  };
+  // 上限のコメントと上限明けの要求
+  if (w.pr.state !== "open" || [...targets(w).values()].some((t) => t.startsWith("codex-review completed "))) m.resume = null;
+  else if (limitLines(m.prev, w, "").length > 0) {
+    const r = resetOf(out);
+    m.resume = r && { head: w.pr.head, at: r.at };
+  } else if (m.resume !== null) {
+    if (m.resume.head !== w.pr.head || latest(w.issue.filter(isRequest)) > latest(w.issue.filter(isLimit))) m.resume = null;
+    else if (m.now >= m.resume.at) {
+      post();
+      m.resume = null;
+    }
+  }
+  // 始まらないレビュー
+  if (w.pr.state !== "open" || !w.issue.some(isSummary) || started(w)) m.wait = null;
+  else {
+    const t = m.wait?.head === w.pr.head ? { ...m.wait } : { head: w.pr.head, since: null, step: "wait" as const };
+    if (t.step !== "reported") {
+      if (m.prev !== null && latest(w.issue.filter(isRequest)) > latest(m.prev.issue.filter(isRequest))) [t.step, t.since] = ["requested", m.now];
+      if (m.resume !== null) t.since = null;
+      else if (t.since === null) t.since = m.now;
+      else if (m.now - t.since >= 300) {
+        if (t.step === "wait") {
+          post();
+          [t.step, t.since] = ["requested", m.now];
+        } else {
+          lines.push(`new codex-review not-started ${w.pr.head}`);
+          t.step = "reported";
+        }
+      }
+    }
+    m.wait = t;
+  }
+  // 状態に入るのは POST したコメントだけで、それへの Codex の応答は次の周期に新しく見つける
+  m.prev = structuredClone({ ...w, issue: w.issue.filter((c) => !answers.includes(c.id)) });
+  return lines;
+}
+
+type StallOp = Op | { op: "advance"; secs: number };
+/** Codex が push で始めない・始める・上限で止まる・他人が要求する・時刻が進む。300 秒の要求と通知が検査に入るように 300 を多くし、境目の前後に当たるように 100 と 299 も進める */
+const stallOpArb: fc.Arbitrary<StallOp> = fc.oneof(
+  { weight: 6, arbitrary: fc.record({ op: fc.constant("advance" as const), secs: fc.constantFrom(100, 299, 300, 300, 300) }) },
+  { weight: 2, arbitrary: fc.constant({ op: "push" as const, summary: "stale" as const }) },
+  { weight: 1, arbitrary: fc.record({ op: fc.constant("push" as const), summary: fc.constantFrom("running" as const, "completed" as const) }) },
+  { weight: 1, arbitrary: fc.record({ op: fc.constant("start" as const), completed: fc.boolean() }) },
+  { weight: 2, arbitrary: fc.record({ op: fc.constant("limit" as const), push: fc.boolean() }) },
+  { weight: 1, arbitrary: fc.constant({ op: "comment" as const, c: { kind: "text" as const, login: "alice", text: REQUEST } }) },
+);
+/** 上限の窓: 失敗・遠い未来 (上限のコメントが現在のまま止まり続ける)・今・時刻を進めると過ぎる */
+const stallLimitsArb = fc.constantFrom<number | string | null>("fail", "fail", FAR[0], FAR[0], "+0", "+150", "+300").map((r) =>
+  r === "fail" ? "fail" : specOf([{ used: 100, reset: r, mins: 300 }, null])
+);
+const T0 = 1_900_000_000;
+
+type StallInit = "none" | "running" | "completed" | "old";
+type Failures = { skip: number; list: Transient[] };
+
+/**
+ * 時刻を偽の date で止め、操作ごとに pr.sh を周期ごとに進めて、出す行を stallCycle と照合する。出して終わったら同じ状態のディレクトリで起動し直す。
+ * 初めの summary は無い・head の Running・head の Completed・前の head の Completed (push で Codex が始めなかった) のどれか。
+ */
+async function runStall(spec: WorldSpec, init: StallInit, ops: StallOp[], limits: string, failures: Failures, dropPost: boolean, answer: boolean) {
+  const w = build({ ...spec, closed: false });
+  if (init !== "none") summarize(w, init !== "running");
+  if (init === "old") w.pr.head = shaOf(tick(w));
+  const m: StallModel = { prev: null, now: T0, limits, answer, resume: null, wait: null };
+  await withFake(structuredClone(w), failures, null, limits, async (fake, dir) => {
+    await fake.setNow(T0);
+    // 一時的な失敗 (failuresArb) は最初の数周期にしか当たらず POST に届かないので、POST の応答が切れる経路はここで入れる
+    if (dropPost) fake.dropPosts = 1;
+    fake.answer = answer;
+    let proc: Proc | null = null;
+    /**
+     * pr.sh を周期ごとに進め、何も出さない周期まで照合する。出して終わったら起動し直す。時刻だけを進めたなら、次に終わる周期は進めた後に時刻を読むので 1 周期待てばよい。
+     * PR を変えたなら、差を見つけた周期の窓の後の取り直しも 1 周期に数えられるので 2 周期待つ
+     */
+    const settle = async (what: string, cycles: number) => {
+      const deadline = Date.now() + CASE_SECONDS * 1000;
+      for (;;) {
+        proc ??= watch(fake, dir);
+        const before = structuredClone(m);
+        const want = stallCycle(m, w);
+        if (want.length === 0) {
+          await until(() => fake.pending.length === 0, proc, deadline);
+          await expectQuiet(fake, proc, deadline, cycles, what);
+          break;
+        }
+        const code = await proc.exit(deadline);
+        if (code !== 0) throw new Error(`${what}: exit ${code}\n${proc.show()}`);
+        const got = proc.out.split("\n").slice(0, -1);
+        if (JSON.stringify(sorted(got)) !== JSON.stringify(sorted(want))) {
+          // POST の応答が切れたら、その周期は記録されず、次の周期が POST 済みの PR (Codex の応答を含む) を前の状態から見る
+          const retry = structuredClone(before);
+          const lost = want.some((l) => l.startsWith("new codex-review requested ")) ? stallCycle(retry, structuredClone(w)) : want;
+          expectLines(got, lost, what, proc);
+          Object.assign(m, retry);
+        }
+        proc = null;
+      }
+      if (JSON.stringify(fake.world) !== JSON.stringify(w)) throw new Error(`${what}: POST が合わない (${fake.posts.length} 件)`);
+    };
+    await settle("初回", 2);
+    for (const [i, o] of ops.entries()) {
+      const what = `操作 ${i} ${JSON.stringify(o)} (時刻 +${m.now - T0})`;
+      if (o.op === "advance") {
+        m.now += o.secs;
+        await fake.setNow(m.now);
+      } else {
+        apply(w, o);
+        fake.pending = [structuredClone(w)];
+      }
+      await settle(what, o.op === "advance" ? 1 : 2);
+    }
+  });
+}
+
+const p5 = fc.asyncProperty(
+  worldArb,
+  fc.constantFrom<StallInit>("none", "running", "running", "completed", "old", "old", "old"),
+  fc.array(stallOpArb, { minLength: 2, maxLength: 7 }),
+  stallLimitsArb,
+  failuresArb,
+  fc.boolean(),
+  fc.boolean(),
+  // reset が今 (+0) の上限に毎回上限のコメントで応えると、上限明けの要求と応答が際限なく続くので組まない
+  (spec, init, ops, limits, failures, dropPost, answer) => runStall(spec, init, ops, limits, failures, dropPost, answer && !limits.includes("\t+0\t")),
+);
+
 // ---- 固定の検査 ----
 
 /** <args> と <env> の組が curl 自身に恒久的な失敗 (URL・プロトコルの誤り) として扱われ、exit 3 と error の行 (stdout、fail 3 から) で止まることを確かめる。生成器は repo の形を変えないので、ここで固定して確かめる */
@@ -1272,6 +1470,32 @@ async function checkLimitsLine(what: string, spec: string | null, want: string |
       throw new Error(`${what}: ${prefix}${want} の 1 行のはず (exit ${code})\n${proc.show()}`);
     }
   });
+}
+
+/**
+ * 上限のコメントの後の push で Codex がレビューも新しい上限のコメントも出さないとき、codex-resume は消え、古い上限のコメントが Codex の最後の動きのまま残る。
+ * そこで止まり続けず、300 秒で要求し、さらに 300 秒で通知することを確かめる (canon: facts/github/codex-review-pr-flow。push でレビューが起動するとは限らない)。
+ * 要求に上限のコメントで応えるなら、それを扱い直し、reset が遠ければ codex-resume で止まる。生成器が操作をこの順に並べるかは確率に任せるので、ここで固定して確かめる
+ */
+async function checkPushDuringLimit() {
+  const empty: WorldSpec = {
+    closed: false,
+    merged: false,
+    title: "t",
+    body: null,
+    comments: [],
+    threads: [],
+    reviews: [],
+    checks: [],
+    statuses: [],
+    bulk: { issue: 0, threads: 0, reviews: 0, checks: 0, statuses: 0 },
+  };
+  const far = specOf([{ used: 100, reset: FAR[0], mins: 300 }, null]);
+  const ops: StallOp[] = [{ op: "limit", push: true }, { op: "push", summary: "stale" }, { op: "advance", secs: 300 }, { op: "advance", secs: 300 }];
+  const none = { skip: 0, list: [] };
+  for (const limits of [far, "fail"]) {
+    for (const answer of [false, true]) await runStall(empty, "completed", ops, limits, none, false, answer);
+  }
 }
 
 /**
@@ -1364,12 +1588,14 @@ try {
   );
   await checkEqualSecondLimit(false);
   await checkEqualSecondLimit(true);
+  await checkPushDuringLimit();
   // 1 件に数秒かかるので、縮小せずに最初の反例で止める (FC_SEED と表示される path で再現する)
   const params = { numRuns, ...(seedEnv ? { seed: Number(seedEnv) } : {}), endOnFailure: true, verbose: fc.VerbosityLevel.Verbose };
   await fc.assert(p1, params);
   await fc.assert(p2, params);
   await fc.assert(p3, params);
   await fc.assert(p4, params);
+  await fc.assert(p5, params);
 } finally {
   await Deno.remove(tmpRoot, { recursive: true }).catch(() => {});
 }
