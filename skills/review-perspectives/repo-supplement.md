@@ -10,7 +10,14 @@
 - ランタイムの終了ハンドラと、スコープ終端で解放する仕組み。
 - リポ自身が持つ、終了ハンドラを登録する関数、資源を包む型、dispose / close を持つクラス。これらを呼ぶ箇所・作る箇所が列挙の対象になる。
 
-観点によっては、除外する対象を書く。経緯と無いことの宣言を書かない には、リポが経緯を置く媒体のパス (ADR、CHANGELOG、incidents) を書く。
+観点によっては、除外する対象を書く。経緯と無いことの宣言を書かない には、リポが経緯を置く場所を書く。標準はコミット本文・PR 本文・PR の振り返り (`retrospectives/`) で、ADR・CHANGELOG・incidents があれば足す。
+
+```text
+# review-perspectives/経緯と無いことの宣言を書かない.md
+コミット本文
+PR 本文
+retrospectives/
+```
 
 ## 例: TypeScript (vitest + Node.js)
 
