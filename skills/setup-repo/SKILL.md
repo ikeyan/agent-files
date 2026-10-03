@@ -58,6 +58,7 @@ description: Use when creating a new repository, bringing an existing repository
 - push は `hooks/pre-push` で、push のコマンドに `PUSH_OK=1` が付いていないものを止める (付け方は [pr-workflow/SKILL.md](pr-workflow/SKILL.md) の「push の手順」)。単一検証コマンドで `hooks/pre-push` を common git dir (`git rev-parse --git-common-dir`) の `hooks` へ写す。写す先に `hooks/pre-push` と違う pre-push があれば (旧版でも)、このリポのものかを中身から決められないので、上書きせず落として置き換えのコマンドを示す。`core.hooksPath` が hook をよそへ向けていれば落とす。common git dir の `hooks` は linked worktree も共有し、checkout で消えない。`core.hooksPath` で作業ツリーの `hooks/` を指すと、`hooks/` の無い commit を checkout した worktree から hook 無しで push が通る。
 - レビューは review-perspectives skill で行う。観点は plugin で配られる。
   - テストフレームワーク・ランタイム・リポ自身の終了ハンドラや資源の型の名前を、ルートの `review-perspectives/<観点>.md` に書く (review-perspectives の [repo-supplement.md](../review-perspectives/repo-supplement.md))。
+  - リポの中で経緯を置くパス (標準は `retrospectives/`) を、ルートの `review-perspectives/経緯と無いことの宣言を書かない.md` に書く (同じく repo-supplement.md)。
   - managed Code Review (Claude GitHub App) を使うリポでは、効かせたい観点をルートの `REVIEW.md` に書く。managed Code Review はルートの `REVIEW.md` しか読まない (`canon: facts/claude-code/review-md-consumers`)。
   - 使わないリポには `REVIEW.md` とその同期チェックを置かず、既存のリポにあれば消す。
 

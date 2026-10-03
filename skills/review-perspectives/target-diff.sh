@@ -8,7 +8,7 @@
 #   <path>: log と diff をそのパスに限る。リポジトリのルートからの相対パスで (cwd によらない)、glob も pathspec magic も無いそのままのパス名。
 #     - 絶対パスは止まる (対象を指定すると別の worktree に切り替えるので、チェックアウトの絶対パスは対象によって通ったり外になったりする)
 #     - `..` でルートの外に出るものと空文字列は git が止める
-# 出力 (stdout、1 行 1 つ): work=<レビュー対象ごとの作業ディレクトリ (PR 番号とその head のブランチ名は同じ作業ディレクトリ: 系列は head で決まり、base は範囲を変えるだけ。head が fork にあれば系列は `<owner>:<branch>` で、同じブランチ名の別の fork の PR とも別になる)> run=<この実行の生成物のディレクトリ ($TMPDIR の下。消えて困るものは置かない)> repo=<レビュアーに渡すリポジトリのルート> diff=<target.diff (PR 番号なら PR のタイトルと説明、各コミットのメッセージ、patch の順)> tree=<レビュー対象の内容全体 (未追跡を含む) の tree id> rules=<レビューの規則 (SKILL.md・観点・リポ固有の検索対象) の hash>
+# 出力 (stdout、1 行 1 つ): work=<レビュー対象ごとの作業ディレクトリ (PR 番号とその head のブランチ名は同じ作業ディレクトリ: 系列は head で決まり、base は範囲を変えるだけ。head が fork にあれば系列は `<owner>:<branch>` で、同じブランチ名の別の fork の PR とも別になる)> run=<この実行の生成物のディレクトリ ($TMPDIR の下。消えて困るものは置かない)> repo=<レビュアーに渡すリポジトリのルート> diff=<target.diff (PR 番号なら PR のタイトルと説明、各コミットのメッセージ、patch の順)> tree=<レビュー対象の内容全体 (未追跡を含む) の tree id> rules=<レビューの規則 (このスキルの直下の md (SKILL.md・repo-supplement.md など)・観点・リポ固有の検索対象) の hash>
 # 事前条件: origin があり、その HEAD が既定ブランチを指している。
 # 事後条件: 対象を指定したら repo は run の下の linked worktree。レビュー後に git worktree remove <repo> してから rm -r <run> で消す。失敗して終わるときは自分で消す。同じ対象を並行して回しても run は別で、work の exclusions.md と origin の remote-tracking ref だけを共有する。
 #
@@ -114,7 +114,7 @@ git diff-index -p -M --cached "$base" -- "${paths[@]+"${paths[@]}"}" > "$run/pat
 tree=$(git write-tree)
 shopt -s nullglob
 # 検索対象は名前で観点に割り当てるので、内容と一緒に名前も hash する
-rules_files=("$here"/SKILL.md "$here"/perspectives/*.md review-perspectives/*.md)
+rules_files=("$here"/*.md "$here"/perspectives/*.md review-perspectives/*.md)
 rules=$(paste -d ' ' <(git hash-object "${rules_files[@]}") <(printf '%s\n' "${rules_files[@]#"$here"/}") | git hash-object --stdin)
 ok=1
 printf 'work=%s\nrun=%s\nrepo=%s\ndiff=%s\ntree=%s\nrules=%s\n' "$work" "$run" "$repo" "$run/target.diff" "$tree" "$rules"
