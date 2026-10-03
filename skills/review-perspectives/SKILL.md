@@ -63,7 +63,7 @@ description: Use when reviewing a diff before commit or push, when asked to revi
    - `repo=`: 手順 2 でレビュアーに渡すリポジトリ。
    - `diff=`: `target.diff`。
    - `tree=`: レビュー対象の内容全体の tree id (手順 3 と 5 で使う)。
-   - `rules=`: このスキルの SKILL.md・観点と、リポ固有の検索対象の hash (手順 3 と 5 で使う)。
+   - `rules=`: このスキルの直下の md (SKILL.md・repo-supplement.md)・観点と、リポ固有の検索対象の hash (手順 3 と 5 で使う)。
 
    後始末と、止まったときの行動:
 
