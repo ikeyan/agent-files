@@ -5,6 +5,7 @@
 # - 上流の更新 (v1 → v2): 変わったファイルを置き直し、一覧から消えたファイルを消す (ディレクトリは消さず、利用者の空のディレクトリが残る)
 # - 作業ツリーを変えずに落ちる (理由も見る): 引数 (exit 2)、入力ファイルの欠け、archetype.yaml の source の行の定義域、generated の定義域・順序・古いパスの種類、answers の欠け、置き先の重複 (別の置き先の親のディレクトリを含む)、置き先の .agent-sync/ の下、一覧の行が定義域の外 (上流のパスの symlink、置き先の途中の symlink を含む)、一覧と描画の不一致、描画の出力のファイル名に改行、描画が .agent-sync/sync.sh を置かない、利用者のファイル、置き先・古いパスの綴り (途中のディレクトリを含む) が既存のものと大文字小文字だけ違う・KELVIN SIGN など Unicode で同じものに当たる、上流の tree が同じものに当たる別のパスを持つ (NFC と NFD を含む) (一時ディレクトリが大文字小文字を区別しないときだけ。区別するときは別のファイルとして通ることを見る。上流の大文字小文字だけの改名は、古い綴りを消すまで前回の出力だと示して落ちる)、途中のディレクトリの一覧が取れない (root では飛ばす)、置き先のディレクトリの綴りが大文字小文字だけ違う、生成物の同一性の表の落ちる行 (commit 済みの利用者の編集を含む)、ロックが取られている、別のリポの sync.sh の起動、TMPDIR の文字と絶対パス、上流のパスの大文字小文字の衝突、fetch の GIT_TERMINAL_PROMPT、archetect の版、対応していない OS、OS の sandbox を適用できない・描画が非 0 で終わる、リポジトリの場所を決める GIT_* (`git rev-parse --local-env-vars` の各変数)
 # - 環境: awk が正規表現の区間を持たなくても通る。GIT_CONFIG* は通る (この test 自身が GIT_CONFIG_COUNT で上流へ向ける)。core.autocrlf・core.eol を変えても、置くバイトは上流の blob と同じ。UTF-8 の locale (LANG・LC_ALL) でも通り、文字の分類 (タブ・制御文字・空白・shell の特殊文字・é・あ・ｚ。canon: facts/shell/string-input-categories) ごとに、置き先・source の名前・TMPDIR の定義域の外として落ちる
+# - 名前が - で始まるパス: 上流の tree にあっても取り出しが通り、置き先・古いパスにあっても置いて消せる。ディレクトリ同士の別名を持つ上流 (大文字小文字を区別しないファイルシステムだけ) は、取り出しで落ちる。
 # - 標準出力は git status --short と同じ。終わった (落ちた) 後にロックが残らない
 # OS の sandbox を適用できない環境 (別の sandbox の中など) では、最初の実際の描画 (初回) が sync.sh の固定の文言「OS の sandbox を適用できない」で落ちる。そのとき、描画を伴う残りの検査を飛ばしたことを理由と一緒に stderr に出す。CI (環境変数 CI が空でない) では落とす。
 # それ以外では archetect と、macOS では sandbox-exec と otool、Linux では bwrap と ldd が要り、無ければ落ちる。
@@ -206,11 +207,16 @@ collisions="newline|$c_nl|に改行がある"
 if [ "$ci_fs" = 1 ]; then
   c_file=$(tree_commit file-file "$(two_files README.md readme.md)")
   c_dir=$(tree_commit file-dir "$(printf '100644 blob %s\tFoo\n040000 tree %s\tfoo\n' "$blob_a" "$sub_dir")")
+  dir_a=$(printf '100644 blob %s\ta.txt\n' "$blob_a" | git -C upstream mktree)
+  dir_b=$(printf '100644 blob %s\tb.txt\n' "$blob_b" | git -C upstream mktree)
+  x_tree=$(printf '040000 tree %s\tFoo\n040000 tree %s\tfoo\n' "$dir_a" "$dir_b" | git -C upstream mktree)
+  c_dirdir=$(tree_commit dir-dir "$(printf '040000 tree %s\tx\n' "$x_tree")")
   c_dir_first=$(tree_commit dir-file "$(printf '040000 tree %s\tFoo\n100644 blob %s\tfoo\n' "$sub_dir" "$blob_a")")
   c_kelvin=$(tree_commit kelvin "$(two_files K.txt "$kelvin.txt")")
   c_norm=$(tree_commit nfc-nfd "$(two_files "$nfc.txt" "$nfd.txt")")
   collisions="file-file|$c_file|上流のパス x/readme.md がファイルシステム上で別のパスと同じものに当たる
-file-dir|$c_dir|の親のディレクトリを作れない
+file-dir|$c_dir|上流のパス foo/x の途中のディレクトリが、ファイルシステム上で別のパスと同じものに当たる
+dir-dir|$c_dirdir|上流のパス x/foo/b.txt の途中のディレクトリが、ファイルシステム上で別のパスと同じものに当たる
 dir-file|$c_dir_first|上流のパス foo がファイルシステム上で別のパスと同じものに当たる
 kelvin|$c_kelvin|がファイルシステム上で別のパスと同じものに当たる
 nfc-nfd|$c_norm|がファイルシステム上で別のパスと同じものに当たる
@@ -644,6 +650,25 @@ if [ "$ci_fs" = 1 ]; then
   sync_ok '上流の大文字小文字だけの改名の後、古い綴りを消した' ren
   { [ -n "$(find ren -maxdepth 1 -name notice.txt)" ] && ! grep -q NOTICE.txt ren/.agent-sync/generated && grep -q "^notice.txt$(printf '\t')" ren/.agent-sync/generated; } || { echo '上流の大文字小文字だけの改名: notice.txt が置かれず generated が改名後の綴りでない' >&2; status=1; }
 fi
+
+# 名前が - で始まるパスは、外部コマンドにオプションとして読まれない。上流の tree に -x/y と --help/x があっても取り出しは通り (置き先は一覧が決めるので置かれない)、置き先と古いパスの名前が - で始まっても置いて消せる。
+c_dash=$(export GIT_INDEX_FILE="$tmp/dash.index"; git -C upstream read-tree "$v1"; git -C upstream update-index --add --cacheinfo "100644,$blob_a,-x/y" --cacheinfo "100644,$blob_a,--help/x"; git -C upstream commit-tree "$(git -C upstream write-tree)" -m dash)
+make_ds dashup "$c_dash"
+sync_ok '上流のパスの名前が - で始まる' dashup
+{ [ ! -e dashup/-x ] && [ ! -e dashup/--help ]; } || { echo '上流のパスの名前が - で始まる: 一覧に無い上流のパスを置いた' >&2; status=1; }
+v1_downstream dashdest
+dash_content=dashdest/.agent-sync/archetype/content
+mkdir "$dash_content/-dash"
+printf 'd\n' >"$dash_content/-dash/-f.txt"
+printf -- '-\t-dash/-f.txt\t644\n' >>"$dash_content/.agent-sync/files/local"
+sync_ok '置き先の名前が - で始まる (置く)' dashdest
+{ [ "$(cat dashdest/-dash/-f.txt 2>/dev/null)" = d ] && grep -q "^-dash/-f.txt$(printf '\t')" dashdest/.agent-sync/generated; } || { echo '置き先の名前が - で始まる: 置かれず generated にも無い' >&2; status=1; }
+git -C dashdest add -A
+git -C dashdest commit -q -m dash
+rm -r "${dash_content:?}/-dash"
+printf -- '-\tNOTICE.txt\t644\n' >"$dash_content/.agent-sync/files/local"
+sync_ok '古いパスの名前が - で始まる (消す)' dashdest
+{ [ ! -e dashdest/-dash/-f.txt ] && ! grep -q -- '-dash' dashdest/.agent-sync/generated; } || { echo '古いパスの名前が - で始まる: 消えず generated に残った' >&2; status=1; }
 
 v1_downstream edit
 printf '# mine\n' >>edit/hooks/pre-push

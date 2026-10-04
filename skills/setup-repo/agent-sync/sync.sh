@@ -22,7 +22,7 @@
 # 排他: 作業ツリーごとに `$(git rev-parse --absolute-git-dir)/agent-sync.lock` を mkdir で取り、同じ作業ツリーの同時の起動は 2 つ目が落ちる。終わるとき (落ちるときも) 消す。kill -9 などで残ったら、起動中の sync.sh が無いことを確かめて手で消す。
 #
 # 手順:
-#   1. 取得: 固定した sha を git で浅く取り、tree の通常のファイル (mode 100644・100755) を、blob のバイトのまま `git ls-tree -r -z` と `git cat-file blob` で作る (mode は tree の値)。symlink (120000) と submodule (160000) は作らない (一覧が指せば手順 3 で通常のファイルでないとして落ちる)。パスに . .. .git (大文字小文字によらない) の名前か改行があれば落ちる。上流のパスは非 ASCII でもよい (日本語の名前など)。tree のパスは互いに別だが、ファイルシステムが別のパスを同じものとみなす (APFS の既定は大文字小文字と Unicode の正規化を同一視する。`README.md` と `readme.md`、KELVIN SIGN U+212A の `K` と ASCII の `K`、NFC と NFD の `é`) と、後の blob が先のものを黙って上書きして一覧が指した中身が別のものになる。この別名を綴りの規則 (大文字小文字の畳み込み) の再現で探さず、ファイルシステム自身の答えで見つける: blob を置く前に置き先のパス (途中のディレクトリを作る前の親のパスを含む) が既に在れば、別名と見て落ちる (取り出し先は空で、tree のパスは互いに別なので、在るのは別名だけ)。ディレクトリ同士の別名 (`Docs/a.md` と `docs/b.md`) は黙って 1 つに合わさるが、バイトは各ファイルが持つので害はなく、ファイルの衝突は上の検査が落とす。区別するファイルシステムでは別名が無く、`README.md` と `readme.md` は両方置かれる。上流のコードは実行しない。
+#   1. 取得: 固定した sha を git で浅く取り、tree の通常のファイル (mode 100644・100755) を、blob のバイトのまま `git ls-tree -r -z` と `git cat-file blob` で作る (mode は tree の値)。symlink (120000) と submodule (160000) は作らない (一覧が指せば手順 3 で通常のファイルでないとして落ちる)。パスに . .. .git (大文字小文字によらない) の名前か改行があれば落ちる。上流のパスは非 ASCII でもよい (日本語の名前など)。tree のパスは互いに別だが、ファイルシステムが別のパスを同じものとみなす (APFS の既定は大文字小文字と Unicode の正規化を同一視する。`README.md` と `readme.md`、KELVIN SIGN U+212A の `K` と ASCII の `K`、NFC と NFD の `é`) と、後の blob が先のものを黙って上書きして一覧が指した中身が別のものになる。この別名を綴りの規則 (大文字小文字の畳み込み) の再現で探さず、ファイルシステム自身の答えで見つける: ディレクトリは 1 つずつ作って綴りのまま覚え、覚えていないのに在る成分 (途中のディレクトリ) があれば別名と見て落ちる。blob を置く前に置き先のパスが既に在れば、同じく落ちる (取り出し先は空で、tree のパスは互いに別なので、在るのは別名だけ)。ディレクトリ同士の別名 (`Docs/a.md` と `docs/b.md`) も落ちる (合わせると、描画が 2 つの git のディレクトリのファイルを 1 つのディレクトリの中身として混ぜて読む)。区別するファイルシステムでは別名が無く、`README.md` と `readme.md` は両方置かれる。上流のパス・置き先・古いパスの名前は `-` で始まってもよい: 外部コマンドへ渡すパスは、絶対パスの基点を前置するか、パラメータ展開で扱うか、`--` の後に置き、裸の相対パスをオペランドにしない (canon: facts/shell/string-input-categories の先頭の `-`)。上流のコードは実行しない。
 #   2. 描画: archetect を OS の sandbox (macOS は sandbox-exec と render.sb、Linux は bwrap) で動かす。ネットワーク無し。読めるのは入力の写し・取得した上流・archetect とその共有ライブラリだけ、書けるのは空の出力ディレクトリだけ。
 #   3. 計画: 下の定義域を全て検査する。違反があれば作業ツリーに触れずに終わる。
 #   4. 適用: 古いパスを消し、新しい・変わったファイルを置き、mode を揃え、generated を書き換える。古いパスの削除は記録したファイルだけで、ディレクトリは消さない (generated はファイルしか記録せず、git は空のディレクトリを追跡しないので、空になったものが前回の出力か利用者のものか区別できない)。
@@ -83,7 +83,7 @@ main() {
   done
   export LC_ALL=C
   case ${TMPDIR:-/tmp} in /*) ;; *) echo "agent-sync: TMPDIR ${TMPDIR} が絶対パスでない" >&2; exit 1 ;; esac
-  here=$(cd "$(dirname "$0")" && pwd -P)
+  here=$(cd "$(dirname -- "$0")" && pwd -P)
   root=$(git rev-parse --show-toplevel)
   cfg=$root/.agent-sync
   [ "$here" = "$(cd "$root" && pwd -P)/.agent-sync" ] || { echo "agent-sync: このスクリプトの場所 $here が、カレントの作業ツリー $root の .agent-sync/ でない (そのリポの .agent-sync/sync.sh を、そのリポの中で起動する)" >&2; exit 1; }
@@ -372,8 +372,8 @@ recorded_id() { # <パス>: generated に記録された id (無ければ空)
   awk -F '\t' -v p="$1" '$1 == p { print $2 }' "$cfg/generated"
 }
 
-materialize() { # <リポ> <先>: stdin の `git ls-tree -r -z` の出力から、通常のファイルを blob のバイトのまま先に作る。mode と名前の検査を済ませてから作り始める (別名の検査は作る途中。取り出し先は捨てる作業ディレクトリ)
-  local repo=$1 to=$2 e meta p mode oid
+materialize() { # <リポ> <先>: stdin の `git ls-tree -r -z` の出力から、通常のファイルを blob のバイトのまま先に作る。mode と名前の検査を済ませてから作り始める (別名の検査は作る途中。取り出し先は捨てる作業ディレクトリ。ディレクトリは dirs に覚えた綴りだけを再利用する)
+  local repo=$1 to=$2 e meta p mode oid rest cur rel name dirs=$'\n'
   cat >"$run/tree"
   while IFS= read -r -d '' e; do
     meta=${e%%$'\t'*}
@@ -390,8 +390,23 @@ materialize() { # <リポ> <先>: stdin の `git ls-tree -r -z` の出力から�
     mode=${meta%% *}
     oid=${meta##* }
     case $mode in 120000 | 160000) continue ;; esac
-    # 取り出し先は空で tree のパスは互いに別なので、在るのはファイルシステムが同じものとみなす別のパス (別名)。
-    mkdir -p "$to/$(dirname "$p")" || { echo "agent-sync: 上流のパス $p の親のディレクトリを作れない (ファイルシステム上で別のパスと同じものに当たるファイルがあるか、ファイルシステムの失敗)" >&2; exit 1; }
+    # 取り出し先は空で、ディレクトリはこの関数が 1 つずつ作る (dirs に綴りのまま覚える)。覚えていないのに在るディレクトリの成分は、ファイルシステムが同じものとみなす別の綴りのもの (別名) か、同じ綴りのファイル。
+    rest=$p
+    cur=$to
+    rel=
+    while [ "${rest#*/}" != "$rest" ]; do
+      name=${rest%%/*}
+      rest=${rest#*/}
+      cur=$cur/$name
+      rel=$rel$name/
+      case $dirs in *$'\n'"$rel"$'\n'*) continue ;; esac
+      if [ -e "$cur" ] || [ -L "$cur" ]; then
+        echo "agent-sync: 上流のパス $p の途中のディレクトリが、ファイルシステム上で別のパスと同じものに当たる" >&2
+        exit 1
+      fi
+      mkdir "$cur" || { echo "agent-sync: 上流のパス $p の途中のディレクトリ $rel を作れない (ファイルシステムの失敗)" >&2; exit 1; }
+      dirs=$dirs$rel$'\n'
+    done
     if [ -e "$to/$p" ] || [ -L "$to/$p" ]; then
       echo "agent-sync: 上流のパス $p がファイルシステム上で別のパスと同じものに当たる" >&2
       exit 1
