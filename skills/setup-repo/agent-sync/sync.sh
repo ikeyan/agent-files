@@ -9,10 +9,12 @@
 #   answers.yaml              全ての問いの答え。
 #   generated                 前回の sync が置いたパスの一覧。1 行 1 件、LC_ALL=C の順で重複なし。初回は空のファイル。
 #   描画に渡すのは archetype/ と answers.yaml のうち、追跡しているか無視されていないファイルの写しだけ。
-# 読む環境: PATH (git・archetect・realpath と、macOS では sandbox-exec と otool、Linux では bwrap と ldd)・TMPDIR・SANDBOX_RUNTIME。
+# 読む環境: PATH (git・archetect・realpath と、macOS では sandbox-exec と otool、Linux では bwrap と ldd)・TMPDIR・GIT_CONFIG_*。
 #   archetect は `archetect --version` が `archetect 3.6.1` (canon: facts/archetect と CI の verify.yml が固定する版) のものだけ。違えば落ちる。
 #   TMPDIR は書き込める既存のディレクトリ (未設定は /tmp)。その下に作る作業ディレクトリの解決済みのパスは、A-Z a-z 0-9 . _ / - だけ (archetect の設定の YAML と render.sb に引用せずに書くため)。違えば落ちる。
-#   git は自分の環境変数 (GIT_*) と設定 (url.<base>.insteadOf など) を読む。
+#   git は GIT_CONFIG_*・GIT_CONFIG_PARAMETERS・GIT_CONFIG_GLOBAL・GIT_CONFIG_SYSTEM と設定 (url.<base>.insteadOf など) を読む。
+#   リポジトリの場所を決める GIT_* は読まない: `git rev-parse --local-env-vars` が挙げる変数のうち GIT_CONFIG・GIT_CONFIG_PARAMETERS・GIT_CONFIG_COUNT 以外が 1 つでも設定されていれば、起動の最初に落ちる (git の hook や `git rebase --exec` から起動すると、`git -C` は GIT_DIR などに勝てず、手順 1 の init・fetch・checkout が利用者のリポジトリに当たる。canon: facts/git/local-env-vars-and-hook-env)。
+#   LANG・LC_* は読まない: 起動の最初に LC_ALL=C を export する (bash 3.2 の glob の範囲は UTF-8 の locale で非 ASCII の文字を通す。canon: facts/shell/locale-dependent-ranges)。
 #   archetect は空の環境に HOME (作業ディレクトリの下) だけを足して起動するので、ARCHETECT_*・XDG_*・git の global config は描画に届かない (canon: facts/archetect/inputs)。
 # ネットワーク: 手順 1 の git fetch だけ。
 # 排他: 作業ツリーごとに `$(git rev-parse --absolute-git-dir)/agent-sync.lock` を mkdir で取り、同じ作業ツリーの同時の起動は 2 つ目が落ちる。終わるとき (落ちるときも) 消す。kill -9 などで残ったら、起動中の sync.sh が無いことを確かめて手で消す。
@@ -38,17 +40,17 @@
 #   - 古いパスは、無いか、通常のファイルか symlink。
 # 同一性: 生成物は作業ツリーのルートからの相対パスで同定する。置き先は、通常のファイルでないかバイトが違う (cmp) ときに置き直し、mode は毎回揃える。
 #   generated にあるパス (置き先と古いパス) は、あるとき HEAD から (mode だけの違いを除いて) 変わっている・追跡していない・無視されている (`git status --porcelain --ignored` が何か出す) なら、利用者の変更と前回の結果が区別できないので、上書きも削除もせず落ちる。前回の結果は commit してから起動する。
-# 失敗: 手順 1〜3 のどこで落ちても作業ツリーは変わらない。手順 4 は検査済みのパスへの rm・mv・chmod だけだが、ファイルシステムの失敗で途中まで当たることはある (git status に出る)。
-# Claude Code の Bash の sandbox の中 (SANDBOX_RUNTIME=1) では描画の sandbox を入れ子にできない (sandbox-exec が exit 71) ので、起動を拒む。
-# 一時的な拒否: Claude Code の sandbox が入れ子の sandbox-exec を許し、SANDBOX_RUNTIME=1 でも描画できるようになったら、この拒否 (と scripts/test-agent-sync.sh の飛ばす分岐) を消す。
+# 失敗: 手順 2 の描画が非 0 で終わる (archetect の失敗か、別の sandbox の中などで OS の sandbox を適用できない) と、終了状態を示して落ちる。手順 1〜3 のどこで落ちても作業ツリーは変わらない。手順 4 は検査済みのパスへの rm・mv・chmod だけだが、ファイルシステムの失敗で途中まで当たることはある (git status に出る)。
 set -euo pipefail
 
 main() {
   [ $# -eq 0 ] || { echo "usage: .agent-sync/sync.sh (引数なし)" >&2; exit 2; }
-  if [ "${SANDBOX_RUNTIME:-}" = 1 ]; then
-    echo "agent-sync: SANDBOX_RUNTIME=1 (Claude Code の sandbox の中) では描画の sandbox を入れ子にできない。sandbox の外で起動する" >&2
-    exit 1
-  fi
+  local v
+  for v in $(git rev-parse --local-env-vars); do
+    case $v in GIT_CONFIG | GIT_CONFIG_PARAMETERS | GIT_CONFIG_COUNT) continue ;; esac
+    [ -z "${!v+x}" ] || { echo "agent-sync: $v が設定されている。git の hook や git rebase --exec の中からは起動しない (git -C は $v に勝てず、利用者のリポジトリに当たる)" >&2; exit 1; }
+  done
+  export LC_ALL=C
   here=$(cd "$(dirname "$0")" && pwd)
   root=$(git rev-parse --show-toplevel)
   cfg=$root/.agent-sync
@@ -95,7 +97,7 @@ main() {
   printf 'locals:\n  enabled: true\n  paths:\n    - %s\n' "$run/src" >"$run/conf/archetect.yaml"
 
   # 2. 描画
-  local bin
+  local bin rc=0
   bin=$(realpath "$(command -v archetect)")
   local args=(render "$run/ds/.agent-sync/archetype" --destination . --headless --offline
     -c "$run/conf/archetect.yaml" -A "$run/ds/.agent-sync/answers.yaml")
@@ -111,9 +113,9 @@ main() {
       done
     done >>"$profile"
     (cd "$run/out" && env -i HOME="$run/conf/home" \
-      sandbox-exec -f "$profile" -D BIN="$bin" -D KEG="$(dirname "$(dirname "$bin")")" \
+      "$(command -v sandbox-exec)" -f "$profile" -D BIN="$bin" -D KEG="$(dirname "$(dirname "$bin")")" \
       -D DS="$run/ds" -D SRC="$run/src" -D CONF="$run/conf" -D OUT="$run/out" \
-      "$bin" "${args[@]}" </dev/null >&2)
+      "$bin" "${args[@]}" </dev/null >&2) || rc=$?
     ;;
   Linux)
     # namespace には archetect とその共有ライブラリと入力しか無い。/bin/sh が無いので os.execute・io.popen は何も起動できない。
@@ -125,13 +127,15 @@ main() {
     done < <(ldd "$bin" | sed -nE 's|^[[:space:]]*[^[:space:]]+ => (/.+) \(0x[0-9a-f]+\)$|\1|p; s|^[[:space:]]*(/.+) \(0x[0-9a-f]+\)$|\1|p')
     b+=(--ro-bind "$run/ds" "$run/ds" --ro-bind "$run/src" "$run/src" --ro-bind "$run/conf" "$run/conf"
       --bind "$run/out" "$run/out" --chdir "$run/out" --setenv HOME "$run/conf/home" --remount-ro /)
-    bwrap "${b[@]}" "$bin" "${args[@]}" </dev/null >&2
+    bwrap "${b[@]}" "$bin" "${args[@]}" </dev/null >&2 || rc=$?
     ;;
   *)
     echo "agent-sync: 対応していない OS: $(uname -s)" >&2
     exit 1
     ;;
   esac
+
+  [ "$rc" = 0 ] || { echo "agent-sync: 描画が exit $rc で終わった (archetect の失敗か、OS の sandbox を適用できない。別の sandbox の中なら、その外で起動する。理由は上の出力)" >&2; exit 1; }
 
   # 3. 計画
   cd "$run/out"
@@ -140,9 +144,9 @@ main() {
   if [ -d "$lists" ]; then
     [ -z "$(find "$lists" -mindepth 1 \( ! -type f -o -path "$lists/*/*" \))" ] || { echo "agent-sync: $lists の下に、直下の通常のファイルでないものがある" >&2; exit 1; }
   fi
-  find . -type f ! -path "./$lists/*" | sed 's|^\./||' | LC_ALL=C sort >"$run/rendered"
+  find . -type f ! -path "./$lists/*" | sed 's|^\./||' | sort >"$run/rendered"
   # records: <置き先>\t<上流のパスか ->\t<mode>\t<一覧>
-  find . -type f -path "./$lists/*" | LC_ALL=C sort | sed 's|^\./||' | {
+  find . -type f -path "./$lists/*" | sort | sed 's|^\./||' | {
     files=()
     while IFS= read -r f; do files+=("$f"); done
     [ ${#files[@]} -eq 0 ] || awk -F '\t' '
@@ -170,16 +174,16 @@ main() {
     { seen[k] = $1 " (" $4 ")" }
     END { exit bad }
   ' "$run/records"
-  awk -F '\t' '$2 == "-" {print $1}' "$run/records" | LC_ALL=C sort >"$run/declared"
+  awk -F '\t' '$2 == "-" {print $1}' "$run/records" | sort >"$run/declared"
   local errs=0
   while IFS= read -r p; do
     echo "agent-sync: 描画の出力 $p が、どの一覧にも - の行で無い" >&2
     errs=1
-  done < <(LC_ALL=C comm -23 "$run/rendered" "$run/declared")
+  done < <(comm -23 "$run/rendered" "$run/declared")
   while IFS= read -r p; do
     echo "agent-sync: 一覧の - の行の $p を、描画が出していない" >&2
     errs=1
-  done < <(LC_ALL=C comm -13 "$run/rendered" "$run/declared")
+  done < <(comm -13 "$run/rendered" "$run/declared")
 
   awk -F '\t' '
     function bad_path(p,   n, a, i) {
@@ -191,9 +195,9 @@ main() {
     bad_path($0) { print "agent-sync: generated:" NR ": パスが定義域の外: " $0 > "/dev/stderr"; bad = 1 }
     END { exit bad }
   ' "$cfg/generated"
-  LC_ALL=C sort -c -u "$cfg/generated" 2>/dev/null || { echo "agent-sync: $cfg/generated が LC_ALL=C の順で重複なしでない" >&2; exit 1; }
-  cut -f1 "$run/records" | LC_ALL=C sort >"$run/new"
-  LC_ALL=C comm -23 "$cfg/generated" "$run/new" >"$run/stale"
+  sort -c -u "$cfg/generated" 2>/dev/null || { echo "agent-sync: $cfg/generated が LC_ALL=C の順で重複なしでない" >&2; exit 1; }
+  cut -f1 "$run/records" | sort >"$run/new"
+  comm -23 "$cfg/generated" "$run/new" >"$run/stale"
 
   local dest from mode list t
   while IFS=$'\t' read -r dest from mode list; do

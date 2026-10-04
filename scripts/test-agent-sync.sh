@@ -3,10 +3,10 @@
 # - 初回: 部品の一覧のファイルを、上流と同じバイトと一覧の mode で置く。一覧の mode は上流の git の mode と同じ。手で写した sync.sh と render.sb は同じバイトなので引き取る。下流の archetype が描画したファイルも置く。
 # - 2 回目は何も変えず、mode のずれと消したファイルは戻す
 # - 上流の更新 (v1 → v2): 変わったファイルを置き直し、一覧から消えたファイルを消す
-# - 作業ツリーを変えずに落ちる (理由も見る): 引数 (exit 2)、入力ファイルの欠け、archetype.yaml の source の行の定義域、generated の定義域・順序・古いパスの種類、answers の欠け、置き先の重複、一覧の行が定義域の外 (上流のパスの symlink、置き先の途中の symlink を含む)、一覧と描画の不一致、利用者のファイル、HEAD から変わった生成物と古いパス、ロックが取られている、TMPDIR の文字、archetect の版、対応していない OS、SANDBOX_RUNTIME=1
+# - 作業ツリーを変えずに落ちる (理由も見る): 引数 (exit 2)、入力ファイルの欠け、archetype.yaml の source の行の定義域、generated の定義域・順序・古いパスの種類、answers の欠け、置き先の重複、一覧の行が定義域の外 (上流のパスの symlink、置き先の途中の symlink を含む)、一覧と描画の不一致、利用者のファイル、HEAD から変わった生成物と古いパス、ロックが取られている、TMPDIR の文字、archetect の版、対応していない OS、OS の sandbox を適用できない (描画が非 0 で終わる)、リポジトリの場所を決める GIT_* (`git rev-parse --local-env-vars` の各変数)
+# - 環境: GIT_CONFIG* は通る (この test 自身が GIT_CONFIG_COUNT で上流へ向ける)。UTF-8 の locale (LANG・LC_ALL) でも通り、非 ASCII の文字は定義域の外として落ちる (置き先・source の名前・TMPDIR)
 # - 標準出力は git status --short と同じ。終わった (落ちた) 後にロックが残らない
-# SANDBOX_RUNTIME=1 (Claude Code の sandbox の中) では描画の sandbox を入れ子にできないので、SANDBOX_RUNTIME=1 の拒否だけを確かめ、残りを飛ばしたことを stderr に出す。
-# 一時的な飛ばし: Claude Code の sandbox が入れ子の sandbox-exec を許し、SANDBOX_RUNTIME=1 でも描画できるようになったら、この分岐を消す (sync.sh の拒否と同時に)。
+# OS の sandbox を適用できない環境 (別の sandbox の中など) では、実際に適用を試す probe が失敗するので、描画を伴う検査を飛ばしたことを理由と一緒に stderr に出す。CI (環境変数 CI が空でない) では飛ばさず落とす。
 # それ以外では archetect と、macOS では sandbox-exec と otool、Linux では bwrap と ldd が要り、無ければ落ちる。
 # ネットワークは使わない (上流は file システムの上のリポで、sync.sh が取る URL を git の insteadOf で向ける)。
 set -euo pipefail
@@ -19,6 +19,10 @@ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="url.$tmp/upstream.insteadOf" GIT_CONFIG_VALUE_0=$url
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
 export TMPDIR=$tmp
+# hook や rebase --exec から呼ばれても、この test の git が呼び出し元のリポジトリを使わない
+for v in $(git rev-parse --local-env-vars); do
+  case $v in GIT_CONFIG | GIT_CONFIG_PARAMETERS | GIT_CONFIG_COUNT) ;; *) unset "$v" ;; esac
+done
 status=0
 cd "$tmp"
 
@@ -86,8 +90,8 @@ expect_fail() { # <名前> <dir> <stderr に含まれる文字列> [<環境変�
   grep -qF -- "$want" "$tmp/err.txt" || { echo "$name: stderr に「$want」が無い — $(cat "$tmp/err.txt")" >&2; status=1; }
 }
 
-sync_ok() { # <名前> <dir>: 通り、標準出力が git status --short と同じで、ロックを残さない
-  (cd "$2" && ./.agent-sync/sync.sh) >"$tmp/out.txt" 2>"$tmp/err.txt" || { echo "$1: sync.sh が落ちた — $(cat "$tmp/err.txt")" >&2; status=1; }
+sync_ok() { # <名前> <dir> [<環境変数の代入…>]: 通り、標準出力が git status --short と同じで、ロックを残さない
+  (cd "$2" && env "${@:3}" ./.agent-sync/sync.sh) >"$tmp/out.txt" 2>"$tmp/err.txt" || { echo "$1: sync.sh が落ちた — $(cat "$tmp/err.txt")" >&2; status=1; }
   [ "$(cat "$tmp/out.txt")" = "$(git -C "$2" status --short)" ] || { echo "$1: 標準出力が git status --short と違う — $(cat "$tmp/out.txt")" >&2; status=1; }
   [ ! -e "$2/.git/agent-sync.lock" ] || { echo "$1: ロックが残った" >&2; status=1; }
 }
@@ -96,12 +100,6 @@ clean() { # <名前> <dir>: 作業ツリーが commit と同じ
   [ -z "$(git -C "$2" status --porcelain)" ] || { echo "$1: 作業ツリーが変わった — $(git -C "$2" status --porcelain)" >&2; status=1; }
 }
 
-if [ "${SANDBOX_RUNTIME:-}" = 1 ]; then
-  make_ds refuse 0000000000000000000000000000000000000000
-  expect_fail 'SANDBOX_RUNTIME=1' "$tmp/refuse" SANDBOX_RUNTIME=1
-  echo "test-agent-sync.sh: SANDBOX_RUNTIME=1 (Claude Code の sandbox の中) なので、描画を伴う検査を飛ばした。sandbox の外で ./verify.sh を回すと全部を検査する (CI は全部を回す)" >&2
-  exit "$status"
-fi
 case $(uname -s) in
 Darwin) tools="archetect sandbox-exec otool" ;;
 Linux) tools="archetect bwrap ldd" ;;
@@ -154,6 +152,33 @@ v1=$(git -C upstream rev-parse HEAD)
 lists=$(cd upstream && find components -type f -path '*/content/.agent-sync/files/*' ! -path 'components/probe/*' | LC_ALL=C sort)
 [ -n "$lists" ] || { echo "上流に部品の一覧が無い" >&2; exit 1; }
 
+# OS の sandbox を適用できなければ、描画が非 0 で終わった状態を示して落ちる (sandbox-exec・bwrap を exit 71 で終わるものに替える)
+mkdir shim-sb
+printf '#!/bin/sh\nexit 71\n' >shim-sb/sandbox-exec
+cp shim-sb/sandbox-exec shim-sb/bwrap
+chmod 755 shim-sb/sandbox-exec shim-sb/bwrap
+make_ds nosb "$v1"
+expect_fail 'OS の sandbox を適用できない' nosb '描画が exit 71 で終わった' "PATH=$tmp/shim-sb:$PATH"
+# 描画に実際に OS の sandbox を適用できるかを、最小の probe で見る
+case $(uname -s) in
+Darwin) probe=(sandbox-exec -p '(version 1)(allow default)' /usr/bin/true) ;;
+Linux) probe=(bwrap --unshare-all --ro-bind / / --proc /proc --dev /dev /usr/bin/true) ;;
+esac
+if ! "${probe[@]}" >/dev/null 2>"$tmp/probe.err"; then
+  if [ -n "${CI:-}" ]; then
+    echo "test-agent-sync.sh: CI で OS の sandbox を適用できない (${probe[*]}) — $(cat "$tmp/probe.err")" >&2
+    exit 1
+  fi
+  echo "test-agent-sync.sh: OS の sandbox を適用できない (${probe[*]}: $(cat "$tmp/probe.err")) ので、描画を伴う検査を飛ばした。適用できる環境 (別の sandbox の外や CI) で回すと全部を検査する" >&2
+  exit "$status"
+fi
+loc=
+avail=$(locale -a)
+for l in en_US.UTF-8 en_US.utf8 ja_JP.UTF-8 ja_JP.utf8 C.UTF-8 C.utf8; do
+  if grep -qix "$l" <<<"$avail"; then loc=$l; break; fi
+done
+[ -n "$loc" ] || echo "test-agent-sync.sh: UTF-8 の locale が無いので、locale の検査を飛ばした" >&2
+
 # 初回
 make_ds ds "$v1"
 sync_ok 初回 ds
@@ -175,6 +200,7 @@ git -C ds commit -q -m sync
 
 sync_ok 2回目 ds
 clean 2回目 ds
+[ -z "$loc" ] || { sync_ok "locale $loc" ds LC_ALL="$loc" LANG="$loc"; clean "locale $loc" ds; }
 chmod 644 ds/hooks/pre-push
 chmod 755 ds/.claude/skills/pr-workflow/SKILL.md
 rm ds/.claude/skills/pr-workflow/gh.md
@@ -294,6 +320,18 @@ SHIM
 chmod 755 shim-ver/archetect shim-os/uname
 expect_fail 'archetect の版' ds 'archetect 3.6.1 が PATH に無い' "PATH=$tmp/shim-ver:$PATH"
 expect_fail '対応していない OS' ds '対応していない OS: Plan9' "PATH=$tmp/shim-os:$PATH"
+if [ -n "$loc" ]; then
+  loc_env=(LC_ALL="$loc" LANG="$loc")
+  printf 'description: x\ncatalog:\n  agent-files:\n    source: https://example.com/x/é.git#%s\n' "$v1" >"$yaml"
+  expect_fail 'source の名前に非 ASCII の文字 (UTF-8 の locale)' ds '定義域の外' "${loc_env[@]}"
+  cp yaml.orig "$yaml"
+  mkdir "$tmp/é"
+  expect_fail 'TMPDIR に非 ASCII の文字 (UTF-8 の locale)' ds 'A-Z a-z 0-9 . _ / - 以外の文字がある' "TMPDIR=$tmp/é" "${loc_env[@]}"
+  cp "$local_list" list.orig
+  printf 'hooks/pre-push\té\t644\n' >>"$local_list"
+  expect_fail '置き先に非 ASCII の文字 (UTF-8 の locale)' ds '置き先のパスが定義域の外' "${loc_env[@]}"
+  cp list.orig "$local_list"
+fi
 clean 定義域の検査の後 ds
 
 # 上流の更新: hooks/pre-push を変え、codex-limits.sh を一覧から消す
@@ -312,7 +350,19 @@ cmp -s upstream/hooks/pre-push ds/hooks/pre-push || { echo "v2: hooks/pre-push �
   { echo "v2: 変わったものが想定と違う — $(git -C ds status --porcelain)" >&2; status=1; }
 git -C ds add -A
 git -C ds commit -q -m v2
-expect_fail 'SANDBOX_RUNTIME=1' ds SANDBOX_RUNTIME=1 SANDBOX_RUNTIME=1
+
+# リポジトリの場所を決める GIT_* が設定されていれば、手順 1 の前に落ちる。指された別のリポジトリにも何も起きない (GIT_CONFIG* は通る: この test 自身が使う)
+git init -q -b main other
+git -C other commit -q --allow-empty -m other
+other_before=$(git -C other for-each-ref; find other/.git -type f | LC_ALL=C sort)
+ds_head=$(git -C ds rev-parse HEAD)
+for v in $(git rev-parse --local-env-vars); do
+  case $v in GIT_CONFIG | GIT_CONFIG_PARAMETERS | GIT_CONFIG_COUNT) continue ;; esac
+  expect_fail "$v が設定されている" ds "$v が設定されている" "$v=$tmp/other/.git"
+done
+[ "$(git -C other for-each-ref; find other/.git -type f | LC_ALL=C sort)" = "$other_before" ] || { echo "GIT_*: 指された別のリポジトリが変わった" >&2; status=1; }
+[ "$(git -C ds rev-parse HEAD)" = "$ds_head" ] || { echo "GIT_*: ds の HEAD が変わった" >&2; status=1; }
+clean 'GIT_* の後' ds
 
 # generated にある置き先と古いパスが HEAD から変わっていれば (利用者の変更と区別できない)、上書きも削除もしない。戻せば古いパスは消える
 printf 'mine\n' >>ds/hooks/pre-push

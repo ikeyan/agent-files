@@ -121,7 +121,7 @@ return context
 ```
 
 - 起動: リポの中で `.agent-sync/sync.sh`。
-  - 描画を OS の sandbox に入れるので、Claude Code の Bash の sandbox の中 (`SANDBOX_RUNTIME=1`) では拒む。Claude は `dangerouslyDisableSandbox` で起動する (ユーザーの許可が要る)。
+  - 描画を OS の sandbox に入れるので、別の sandbox の中 (Claude Code の Bash の sandbox など。sandbox-exec が exit 71) では描画が落ちる (終了状態を示す)。Claude は `dangerouslyDisableSandbox` で起動する (ユーザーの許可が要る)。
   - 要るもの: `git`、`archetect` (3.6.1 だけ。違えば落ちる。`canon: facts/archetect`)、macOS では `sandbox-exec` と `otool` (Xcode Command Line Tools)、Linux では `bwrap` と `ldd` と非特権の user namespace (Ubuntu 23.10 以降は AppArmor が制限する)。
   - 落ちたら作業ツリーは変わらない (当てている途中のファイルシステムの失敗を除く)。置き先に generated に無い違うファイル (利用者のファイル) があれば落ちるので、中身を `repo.md` などリポが持つファイルへ移してから消す。
   - generated にあるパスが HEAD から変わっていれば (前回の結果が未コミットの場合も) 落ちる。前回の結果は commit してから起動する。

@@ -34,7 +34,7 @@
   - review-perspectives の `target-diff.sh` の fixture (`scripts/test-target-diff.sh`) と model based test (`scripts/test-target-diff.ts`。fast-check)、`hooks/pre-push` の fixture (`scripts/test-pre-push.sh`)
   - pr-workflow の `pr.sh` の、fake GitHub を相手にした model based test (`scripts/test-pr.ts`。fast-check)
   - pr-workflow の `codex-limits.sh` の、偽の codex を相手にした fixture (`scripts/test-codex-limits.sh`)
-  - agent-sync の `sync.sh` の、このリポの catalog から作った手元の上流を相手にした fixture (`scripts/test-agent-sync.sh`)。Claude Code の sandbox の中 (`SANDBOX_RUNTIME=1`) では描画の sandbox を入れ子にできないので、描画を伴う検査を飛ばして stderr に出す。全部を検査するには sandbox の外で回す (CI は全部を回す)。
+  - agent-sync の `sync.sh` の、このリポの catalog から作った手元の上流を相手にした fixture (`scripts/test-agent-sync.sh`)。OS の sandbox を適用できない環境 (別の sandbox の中など) では、描画を伴う検査を飛ばして理由を stderr に出す。全部を検査するには適用できる環境で回す (CI は飛ばさず落とす)。
   - JSON の構文と schema
   - Markdown のリポ内リンク
   - `.claude/skills` と `skills/` の対応
