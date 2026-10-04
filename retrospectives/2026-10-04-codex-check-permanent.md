@@ -16,7 +16,7 @@
 | 問題 | 直した先 |
 | --- | --- |
 | merge 済みのローカルの作業ブランチが残っていた (ユーザーの指摘) | pr-workflow の方針に「merge の後にローカルの作業ブランチを消す」を足した。squash merge なので、PR の head とブランチの先端の一致を確かめてから `git branch -D` (`89150a9`)。既存の `retro-pr22` も消した |
-| ブランチを消す手順が、checkout 中のブランチを git が消せないことを扱っていなかった (Codex) | そのブランチを checkout している worktree を、先に既定ブランチへ切り替えるか消す (`c82afab`)。linked worktree でも同じエラーになることを確かめた |
+| ブランチを消す手順が、checkout 中のブランチを git が消せないことを扱っていなかった (Codex) | そのブランチを checkout している worktree で、先に `git switch --detach` する (`33e9c79`)。最初は「既定ブランチへの切り替えか worktree の削除」と書いたが、既定ブランチが別の worktree で checkout 中だと前者が、main worktree では後者が失敗した (Codex)。同じ箇所への 2 回目なので、worktree の種類と既定ブランチの checkout の有無の組み合わせを試し、どれでも通る 1 つの操作にした |
 | 満たされる見込みの無い解除条件が残っていた | 解除条件を外し、前提の文にした (`2ba9ef2`) |
 
 ## 残っていること
