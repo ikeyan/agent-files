@@ -60,7 +60,8 @@
 #   | パスの綴りが既存のものと大文字小文字だけ違う                  | 落ちる (中身が同じでも)      | 落ちる (中身が同じでも)                          |
 #   利用者が生成物を編集して commit しても、cur が rec と違えば落ちる (今回置くものと同じなら利用者の変更でない)。前回の結果が未コミットでも cur = rec なので、続けて起動しても、手順 4 の途中で落ちた後に同じ入力で起動し直しても、同じ結果に収束する。
 #   手順 4 の途中で落ちた後、入力 (上流の sha など) を変えて起動すると、generated に載っていない置き済みのファイルは今回置くものと違えば落ちる (消すか戻してから起動し直す)。
-#   手順 3 を通った置き先は無いか通常のファイルなので、手順 4 の mv が symlink を通して書くことは無く、rm・mv・chmod が利用者の別の綴りのファイルに当たることも無い。
+#   sync は既存の inode を書き換えない (中身も mode も)。手順 4 は新しい inode を rename で置くので、置き先が別のパスとの hard link でも、そのパスのバイトと mode は変わらない。
+#   手順 3 を通った置き先は無いか通常のファイルなので、手順 4 の mv が symlink を通して書くことは無く、rm・mv が利用者の別の綴りのファイルに当たることも無い。
 # 資源: 取るのは、作業ディレクトリ・ロック・手順 4 が置き先ごとと generated に 1 つずつ作る作業ツリーの一時ファイル (同じディレクトリの `.agent-sync.XXXXXX`。現在の 1 つを wt_tmp が持つ)。全て EXIT trap が解放する (cp・chmod・mv が失敗して落ちるときも、一時ファイルを作業ツリーに残さない)。
 # 失敗: 手順 2 の描画が非 0 で終わると終了状態を示して落ちる。OS の sandbox を適用できなかった場合は固定の文言 `agent-sync: OS の sandbox を適用できない` で落ちる。それは描画の終了状態が、macOS では 71 かつ stderr に `sandbox-exec: sandbox_apply:` で始まる行 (canon: facts/claude-code/sandbox-exec-nested-apply-failure)、Linux では stderr に `bwrap: ` で始まる行 (bwrap が設定の失敗を出す書式。未測定) があるとき。手順 1〜3 のどこで落ちても作業ツリーは変わらない。手順 4 は検査済みのパスへの rm・mv・chmod だけだが、ファイルシステムの失敗で途中まで当たることはある (git status に出る)。起動し直せば、同一性の表に従って同じ結果に収束する。
 set -euo pipefail
@@ -345,16 +346,14 @@ main() {
   while IFS=$'\t' read -r dest from mode list; do
     t=$root/$dest
     new=$(id_of "$(content_of "$dest" "$from")")
-    if [ "$(id_of "$t")" != "$new" ]; then
+    if [ "$(id_of "$t")" != "$new" ] || [ -z "$(find "$t" -perm "$mode")" ]; then
       mkdir -p "$(dirname "$t")"
-      # 新しい inode に書いて rename する。動いている sync.sh 自身も置き換えるので、上書きで中身を変えない。
+      # 新しい inode に書いて rename する。既存の inode は中身も mode も変えない (別のパスとの hard link かもしれず、動いている sync.sh 自身も置き換えるため)。中身か mode が違えば置き直し、同じなら触らない。
       wt_tmp=$(mktemp "$(dirname "$t")/.agent-sync.XXXXXX")
       cp "$(content_of "$dest" "$from")" "$wt_tmp"
       chmod "$mode" "$wt_tmp"
       mv -f "$wt_tmp" "$t"
       wt_tmp=
-    else
-      chmod "$mode" "$t"
     fi
   done <"$run/records"
   wt_tmp=$(mktemp "$cfg/.agent-sync.XXXXXX")
