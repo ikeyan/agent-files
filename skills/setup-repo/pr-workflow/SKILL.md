@@ -29,6 +29,7 @@ description: Use when pushing a branch, creating a pull request or editing its d
   - 根拠と実測: `canon: facts/git/force-with-lease-recreated-branch`
 - **push の単位**: コミットごとには push しない。作業の区切り (レビュー依頼・指示された時点) でまとめる。
 - **PR の作成**: 頼まれたときだけ作る。寄稿規約に従う。
+- **merge の後**: ローカルの作業ブランチを消す。squash merge では先端が既定ブランチの祖先にならず `git branch -d` が断るので、PR が merged で、その head がブランチの先端と一致することを確かめてから `git branch -D <branch>` で消す。一致しなければ PR に入っていない commit があるので消さない。
 - **PR の説明**: 最新の HEAD に関連することだけを書く。push するたびに更新するので、計測結果を書くなら計測スクリプトを用意する。
   - 書くこと (寄稿規約に PR テンプレートがあればその構成に収め、無ければ次の 3 つを見出しにする):
     - Purpose: 何を達成しようとして、何を期待し、実際に何が起きたか。
