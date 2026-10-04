@@ -25,10 +25,11 @@
 #   1. 取得: 固定した sha を git で浅く取り、tree の通常のファイル (mode 100644・100755) を、blob のバイトのまま `git ls-tree -r -z` と `git cat-file blob` で作る (mode は tree の値)。symlink (120000) と submodule (160000) は作らない (一覧が指せば手順 3 で通常のファイルでないとして落ちる)。パスに . .. .git (大文字小文字によらない) の名前か改行があれば落ちる。通常のファイルの 2 つのパスが大文字小文字によらず等しい (`README.md` と `readme.md`)、または一方が他方の親のディレクトリ (`Foo` と `foo/x`) でも落ちる (大文字小文字を区別しないファイルシステムでは後の blob が先のものを黙って上書きし、一覧が指した中身が別のものになる)。上流のコードは実行しない。
 #   2. 描画: archetect を OS の sandbox (macOS は sandbox-exec と render.sb、Linux は bwrap) で動かす。ネットワーク無し。読めるのは入力の写し・取得した上流・archetect とその共有ライブラリだけ、書けるのは空の出力ディレクトリだけ。
 #   3. 計画: 下の定義域を全て検査する。違反があれば作業ツリーに触れずに終わる。
-#   4. 適用: 古いパスを消し、新しい・変わったファイルを置き、mode を揃え、generated を書き換える。
+#   4. 適用: 古いパスを消し、新しい・変わったファイルを置き、mode を揃え、generated を書き換える。古いパスの削除は記録したファイルだけで、ディレクトリは消さない (generated はファイルしか記録せず、git は空のディレクトリを追跡しないので、空になったものが前回の出力か利用者のものか区別できない)。
 #
 # 描画の出力の定義域:
 #   - 通常のファイルとディレクトリだけ。
+#   - 通常のファイルのパス (一覧を含む) は、全て下のパスの定義域に入る。違えば手順 3 の最初に落ちる (一覧の - の行の突き合わせも、一覧の読み出しも、パスを改行区切りで扱うため。出力の走査は NUL 区切り)。
 #   - .agent-sync/files/<部品名> (直下の通常のファイル) は置くファイルの一覧で、1 行 1 件 `<上流のパス><TAB><置き先のパス><TAB><mode>`。一覧そのものは作業ツリーに置かない。
 #     - 上流のパス: 取得した上流の中の通常のファイル (それも途中のディレクトリも symlink でない)。バイトをそのまま置き先に写す。`-` なら、描画の出力の置き先と同じパスのファイルを置く。
 #     - 置き先のパス: 作業ツリーのルートからの相対パス。
@@ -45,6 +46,7 @@
 #     - 上流が置き先を大文字小文字だけ改名すると (`README.md` → `readme.md`)、大文字小文字を区別しないファイルシステムでは、前回 sync が置いた古い綴りに当たって落ち続ける。古い綴りを消してから起動し直す (落ちる文言は、当たった既存のパスが generated にあって中身が記録した id と同じなら、利用者のファイルでなく前回の出力だと示す)。
 #   - 成分の親のディレクトリは一覧が取れる (読めないディレクトリは、綴りを突き合わせられないので落ちる)。
 #   - generated は 1 行 `<パス><TAB><id>`、パスは LC_ALL=C の順で重複なし、id は 40 桁か 64 桁の小文字 16 進。
+#   - 空のディレクトリも含め、ディレクトリが置き先・古いパスにあれば落ちる (利用者のもの。置き先の途中のディレクトリは空でも使う)。
 #   - 置き先・古いパスの現在の中身は、無いか、通常のファイル。symlink・ディレクトリ・その他は利用者のもので、generated にあっても落ちる (id が決まらない。symlink は先のものを書き換えさせないためにも置き換えない)。
 # 同一性 (これだけが判定。git の状態・HEAD・追跡の有無・core.fileMode は見ない):
 #   対象 = 作業ツリーのルートからの相対パスの通常のファイルの中身。鍵 = パス。id = `git hash-object --no-filters` (mode は含めず、置くときに毎回揃える)。
@@ -185,9 +187,22 @@ main() {
   if [ -d "$lists" ]; then
     [ -z "$(find "$lists" -mindepth 1 \( ! -type f -o -path "$lists/*/*" \))" ] || { echo "agent-sync: $lists の下に、直下の通常のファイルでないものがある" >&2; exit 1; }
   fi
-  find . -type f ! -path "./$lists/*" | sed 's|^\./||' | sort >"$run/rendered"
+  : >"$run/rendered.raw"
+  : >"$run/lists.raw"
+  while IFS= read -r -d '' f; do
+    f=${f#./}
+    if [[ ! $f =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ ]] || case "/$f/" in */./* | */../*) true ;; *) false ;; esac; then
+      printf 'agent-sync: 描画の出力のパスが定義域の外 (A-Z a-z 0-9 . _ - の名前だけ。改行を含む): %q\n' "$f" >&2
+      exit 1
+    fi
+    case $f in
+    "$lists"/*) printf '%s\n' "$f" >>"$run/lists.raw" ;;
+    *) printf '%s\n' "$f" >>"$run/rendered.raw" ;;
+    esac
+  done < <(find . -type f -print0)
+  sort "$run/rendered.raw" >"$run/rendered"
   # records: <置き先>\t<上流のパスか ->\t<mode>\t<一覧>
-  find . -type f -path "./$lists/*" | sort | sed 's|^\./||' | {
+  sort "$run/lists.raw" | {
     files=()
     while IFS= read -r f; do files+=("$f"); done
     [ ${#files[@]} -eq 0 ] || awk -F '\t' "$AWK_AGENT"'
@@ -324,11 +339,8 @@ main() {
   [ "$errs" = 0 ] || exit 1
 
   # 4. 適用
-  local d
   while IFS= read -r p; do
     rm -f "$root/$p"
-    d=$(dirname "$p")
-    while [ "$d" != . ] && rmdir "$root/$d" 2>/dev/null; do d=$(dirname "$d"); done
   done <"$run/stale"
   while IFS=$'\t' read -r dest from mode list; do
     t=$root/$dest

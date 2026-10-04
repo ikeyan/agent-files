@@ -2,8 +2,8 @@
 # skills/setup-repo/agent-sync/sync.sh を、このリポの catalog (作業ツリーのもの) から作った手元の上流と、下流のリポを相手に回す。verify.sh から呼ぶ。
 # - 初回: 部品の一覧のファイルを、上流と同じバイトと一覧の mode で置く。一覧の mode は上流の git の mode と同じ。手で写した sync.sh と render.sb は同じバイトなので引き取る。下流の archetype が描画したファイルも置く。
 # - 2 回目は何も変えず、mode のずれと消したファイルは戻す
-# - 上流の更新 (v1 → v2): 変わったファイルを置き直し、一覧から消えたファイルを消す
-# - 作業ツリーを変えずに落ちる (理由も見る): 引数 (exit 2)、入力ファイルの欠け、archetype.yaml の source の行の定義域、generated の定義域・順序・古いパスの種類、answers の欠け、置き先の重複 (別の置き先の親のディレクトリを含む)、置き先の .agent-sync/ の下、一覧の行が定義域の外 (上流のパスの symlink、置き先の途中の symlink を含む)、一覧と描画の不一致、描画が .agent-sync/sync.sh を置かない、利用者のファイル、置き先・古いパスの綴り (途中のディレクトリを含む) が既存のものと大文字小文字だけ違う (一時ディレクトリが大文字小文字を区別しないときだけ。区別するときは別のファイルとして通ることを見る。上流の大文字小文字だけの改名は、古い綴りを消すまで前回の出力だと示して落ちる)、途中のディレクトリの一覧が取れない (root では飛ばす)、置き先のディレクトリの綴りが大文字小文字だけ違う、生成物の同一性の表の落ちる行 (commit 済みの利用者の編集を含む)、ロックが取られている、別のリポの sync.sh の起動、TMPDIR の文字と絶対パス、上流のパスの大文字小文字の衝突、fetch の GIT_TERMINAL_PROMPT、archetect の版、対応していない OS、OS の sandbox を適用できない・描画が非 0 で終わる、リポジトリの場所を決める GIT_* (`git rev-parse --local-env-vars` の各変数)
+# - 上流の更新 (v1 → v2): 変わったファイルを置き直し、一覧から消えたファイルを消す (ディレクトリは消さず、利用者の空のディレクトリが残る)
+# - 作業ツリーを変えずに落ちる (理由も見る): 引数 (exit 2)、入力ファイルの欠け、archetype.yaml の source の行の定義域、generated の定義域・順序・古いパスの種類、answers の欠け、置き先の重複 (別の置き先の親のディレクトリを含む)、置き先の .agent-sync/ の下、一覧の行が定義域の外 (上流のパスの symlink、置き先の途中の symlink を含む)、一覧と描画の不一致、描画の出力のファイル名に改行、描画が .agent-sync/sync.sh を置かない、利用者のファイル、置き先・古いパスの綴り (途中のディレクトリを含む) が既存のものと大文字小文字だけ違う (一時ディレクトリが大文字小文字を区別しないときだけ。区別するときは別のファイルとして通ることを見る。上流の大文字小文字だけの改名は、古い綴りを消すまで前回の出力だと示して落ちる)、途中のディレクトリの一覧が取れない (root では飛ばす)、置き先のディレクトリの綴りが大文字小文字だけ違う、生成物の同一性の表の落ちる行 (commit 済みの利用者の編集を含む)、ロックが取られている、別のリポの sync.sh の起動、TMPDIR の文字と絶対パス、上流のパスの大文字小文字の衝突、fetch の GIT_TERMINAL_PROMPT、archetect の版、対応していない OS、OS の sandbox を適用できない・描画が非 0 で終わる、リポジトリの場所を決める GIT_* (`git rev-parse --local-env-vars` の各変数)
 # - 環境: awk が正規表現の区間を持たなくても通る。GIT_CONFIG* は通る (この test 自身が GIT_CONFIG_COUNT で上流へ向ける)。core.autocrlf・core.eol を変えても、置くバイトは上流の blob と同じ。UTF-8 の locale (LANG・LC_ALL) でも通り、文字の分類 (タブ・制御文字・空白・shell の特殊文字・é・あ・ｚ。canon: facts/shell/string-input-categories) ごとに、置き先・source の名前・TMPDIR の定義域の外として落ちる
 # - 標準出力は git status --short と同じ。終わった (落ちた) 後にロックが残らない
 # OS の sandbox を適用できない環境 (別の sandbox の中など) では、最初の実際の描画 (初回) が sync.sh の固定の文言「OS の sandbox を適用できない」で落ちる。そのとき、描画を伴う残りの検査を飛ばしたことを理由と一緒に stderr に出す。CI (環境変数 CI が空でない) では落とす。
@@ -623,6 +623,27 @@ to_v2 edit2
 expect_fail '編集を commit した生成物を、上流が一覧から消す' edit2 '古いパス .claude/skills/pr-workflow/codex-limits.sh の中身が'
 [ -e edit2/.claude/skills/pr-workflow/codex-limits.sh ] || { echo '編集を commit した古いパスが消えた' >&2; status=1; }
 git -C edit2 checkout -q -- .agent-sync/archetype/archetype.yaml
+
+# 描画の出力のファイル名に改行があれば、一覧の - の行の突き合わせで foo と bar に割れて通らないよう、手順 3 の最初に落ちる。古いパスを消さずに落ちる (下流の archetype.lua は上流のコードと同じく信頼しない)
+v1_downstream nlname
+sed -i.bak '/agent-files\/pr-workflow/d' nlname/.agent-sync/archetype/archetype.lua
+rm nlname/.agent-sync/archetype/archetype.lua.bak
+sed -i.bak 's|^return context|local h = io.open("foo\\nbar", "w"); h:write("x"); h:close()\nreturn context|' nlname/.agent-sync/archetype/archetype.lua
+rm nlname/.agent-sync/archetype/archetype.lua.bak
+printf -- '-\tfoo\t644\n-\tbar\t644\n' >>nlname/.agent-sync/archetype/content/.agent-sync/files/local
+expect_fail '描画の出力のファイル名に改行' nlname '描画の出力のパスが定義域の外'
+[ -e nlname/.claude/skills/pr-workflow/SKILL.md ] || { echo '描画の出力のファイル名に改行: 古いパスを消した' >&2; status=1; }
+
+# 古いパスの削除は記録したファイルだけで、ディレクトリは消さない (利用者の空のディレクトリに sync が置いたファイルを、上流が落としても残る)
+make_ds keepdir "$v1"
+mkdir -p keepdir/.claude/skills/pr-workflow
+sync_ok 'keepdir の初回' keepdir
+[ -f keepdir/.claude/skills/pr-workflow/SKILL.md ] || { echo 'keepdir: 初回が pr-workflow を置かなかった' >&2; status=1; }
+grep -v 'agent-files/pr-workflow' keepdir/.agent-sync/archetype/archetype.lua >"$tmp/lua.keepdir"
+cp "$tmp/lua.keepdir" keepdir/.agent-sync/archetype/archetype.lua
+sync_ok 'keepdir: 上流が部品を落とす' keepdir
+[ ! -e keepdir/.claude/skills/pr-workflow/SKILL.md ] || { echo 'keepdir: 古いパスが残った' >&2; status=1; }
+[ -d keepdir/.claude/skills/pr-workflow ] || { echo 'keepdir: 利用者の空のディレクトリを消した' >&2; status=1; }
 
 # 前回の結果を commit する前に続けて起動しても、何も変わらない
 make_ds twice "$v1"
