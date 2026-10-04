@@ -51,7 +51,7 @@
   - 共通のツール: `shellcheck`、`deno`、`curl` (7.84 以降)、`jq`、`archetect` (3.6.1)。
   - macOS: `sandbox-exec`、`otool`。
   - Linux: `bwrap`、`ldd` (非特権の user namespace が要る)。
-  - `www.schemastore.org` への到達。
+  - ネットワーク: `www.schemastore.org` への到達。
 
 ## コメントの書き方
 
