@@ -9,7 +9,7 @@
 #   answers.yaml              全ての問いの答え。
 #   generated                 前回の sync が置いたものの一覧。1 行 1 件 `<パス><TAB><置いたバイトの id>`、パスは LC_ALL=C の順で重複なし。初回は空のファイル。id は `git hash-object --no-filters` (git が使うオブジェクトの形式のハッシュで、sha1 のリポは 40 桁・sha256 のリポは 64 桁の小文字 16 進。改行・変換を通さないバイトそのもの。canon: facts/git/checkout-filters-vs-raw-blob)。
 #   描画に渡すのは archetype/ と answers.yaml のうち、追跡しているか無視されていないファイルの写しだけ。
-# 読む環境: PATH (git・archetect・realpath・awk と、macOS では sandbox-exec と otool、Linux では bwrap と ldd)・TMPDIR・GIT_CONFIG_*。
+# 読む環境: PATH (git・archetect・realpath・awk・find と、macOS では sandbox-exec と otool、Linux では bwrap と ldd)・TMPDIR・GIT_CONFIG_*。
 #   sandbox-exec (macOS) か bwrap (Linux) が PATH に無ければ、手順 2 の最初に固定の文言 `agent-sync: 描画を起動できない` で落ちる (起動前に `command -v` で確かめる。描画の終了状態 127 では、sandbox 内の archetect の終了と区別できない)。
 #   awk は POSIX の awk で、正規表現の区間 `{n}` に頼らない (mawk 1.3.4-20200724 より前は既定で区間が無い。canon: facts/shell/awk-interval-expressions)。
 #   archetect は `archetect --version` が `archetect 3.6.1` (canon: facts/archetect と CI の verify.yml が固定する版) のものだけ。違えば落ちる。
@@ -40,6 +40,7 @@
 #   - 置き先の中に、.agent-sync/sync.sh がある (agent-sync の部品を合成している。描画が一覧を 1 つも出さなくても成功するので、無ければ generated の全てが古いパスになり sync.sh 自身まで消える)。
 # 作業ツリーの定義域 (置き先と、generated にあって置き先に無い古いパス。generated も上のパスと .agent-sync/ の規則に従う):
 #   - 途中のディレクトリは、無いか symlink でないディレクトリ。
+#   - 既存の成分 (途中のディレクトリも最後の名前も) の綴りは、要求した綴りと完全に等しい。大文字小文字を区別しないファイルシステム (macOS の APFS の既定) では、`[ -e ]` も open も別の綴りの既存のものに当たる。親の一覧と突き合わせ、大文字小文字だけ違うものにしか当たらなければ落ちる (`readme.md` に利用者の `README.md`、`docs/` に `Docs/`)。区別するファイルシステムでは別のファイルで、どちらも許す (canon: facts/shell/case-insensitive-filesystem-path-resolution)。
 #   - generated は 1 行 `<パス><TAB><id>`、パスは LC_ALL=C の順で重複なし、id は 40 桁か 64 桁の小文字 16 進。
 #   - 置き先・古いパスの現在の中身は、無いか、通常のファイル。symlink・ディレクトリ・その他は利用者のもので、generated にあっても落ちる (id が決まらない。symlink は先のものを書き換えさせないためにも置き換えない)。
 # 同一性 (これだけが判定。git の状態・HEAD・追跡の有無・core.fileMode は見ない):
@@ -51,9 +52,10 @@
 #   | 通常のファイルで cur = rec かつ cur != new (前回の結果)       | 置き直す                     | cur = rec: 消す                                  |
 #   | 通常のファイルで cur が rec とも new とも違う (利用者の変更。generated に無いパスは rec が無い) | 落ちる | 落ちる                                         |
 #   | symlink・ディレクトリ・その他                                 | 落ちる                       | 落ちる                                           |
+#   | パスの綴りが既存のものと大文字小文字だけ違う                  | 落ちる (中身が同じでも)      | 落ちる (中身が同じでも)                          |
 #   利用者が生成物を編集して commit しても、cur が rec と違えば落ちる (今回置くものと同じなら利用者の変更でない)。前回の結果が未コミットでも cur = rec なので、続けて起動しても、手順 4 の途中で落ちた後に同じ入力で起動し直しても、同じ結果に収束する。
 #   手順 4 の途中で落ちた後、入力 (上流の sha など) を変えて起動すると、generated に載っていない置き済みのファイルは今回置くものと違えば落ちる (消すか戻してから起動し直す)。
-#   手順 3 を通った置き先は無いか通常のファイルなので、手順 4 の mv が symlink を通して書くことは無い。
+#   手順 3 を通った置き先は無いか通常のファイルなので、手順 4 の mv が symlink を通して書くことは無く、rm・mv・chmod が利用者の別の綴りのファイルに当たることも無い。
 # 資源: 取るのは、作業ディレクトリ・ロック・手順 4 が置き先ごとと generated に 1 つずつ作る作業ツリーの一時ファイル (同じディレクトリの `.agent-sync.XXXXXX`。現在の 1 つを wt_tmp が持つ)。全て EXIT trap が解放する (cp・chmod・mv が失敗して落ちるときも、一時ファイルを作業ツリーに残さない)。
 # 失敗: 手順 2 の描画が非 0 で終わると終了状態を示して落ちる。OS の sandbox を適用できなかった場合は固定の文言 `agent-sync: OS の sandbox を適用できない` で落ちる。それは描画の終了状態が、macOS では 71 かつ stderr に `sandbox-exec: sandbox_apply:` で始まる行 (canon: facts/claude-code/sandbox-exec-nested-apply-failure)、Linux では stderr に `bwrap: ` で始まる行 (bwrap が設定の失敗を出す書式。未測定) があるとき。手順 1〜3 のどこで落ちても作業ツリーは変わらない。手順 4 は検査済みのパスへの rm・mv・chmod だけだが、ファイルシステムの失敗で途中まで当たることはある (git status に出る)。起動し直せば、同一性の表に従って同じ結果に収束する。
 set -euo pipefail
@@ -253,7 +255,7 @@ main() {
   comm -23 "$run/gen_paths" "$run/new_paths" >"$run/stale"
   cut -f1 "$run/records" | grep -qxF .agent-sync/sync.sh || { echo "agent-sync: 描画が .agent-sync/sync.sh を置かない (archetype が agent-sync の部品を合成していない)" >&2; errs=1; }
 
-  local dest from mode list t new cur rec
+  local dest from mode list t new cur rec actual
   : >"$run/new"
   while IFS=$'\t' read -r dest from mode list; do
     new=
@@ -269,6 +271,9 @@ main() {
     t=$root/$dest
     if ! parents_ok "$root" "$dest"; then
       echo "agent-sync: 置き先 $dest の途中に、symlink かディレクトリでないものがある" >&2
+      errs=1
+    elif actual=$(case_clash "$root" "$dest") && [ -n "$actual" ]; then
+      echo "agent-sync: 置き先 $dest が、大文字小文字だけ違う既存の $actual に当たる (大文字小文字を区別しないファイルシステム)。移すか綴りを戻してから起動し直す" >&2
       errs=1
     elif [ -L "$t" ] || [ -e "$t" ]; then
       cur=$(id_of "$t")
@@ -286,6 +291,9 @@ main() {
     t=$root/$p
     if ! parents_ok "$root" "$p"; then
       echo "agent-sync: 古いパス $p の途中に、symlink かディレクトリでないものがある" >&2
+      errs=1
+    elif actual=$(case_clash "$root" "$p") && [ -n "$actual" ]; then
+      echo "agent-sync: 古いパス $p が、大文字小文字だけ違う既存の $actual に当たる (大文字小文字を区別しないファイルシステム)。移すか綴りを戻してから起動し直す" >&2
       errs=1
     elif [ -e "$t" ] || [ -L "$t" ]; then
       cur=$(id_of "$t")
@@ -388,6 +396,23 @@ parents_ok() { # <基点> <相対パス>: 途中のディレクトリが、無�
     cur=$cur/${rest%%/*}
     rest=${rest#*/}
     if [ -L "$cur" ] || { [ -e "$cur" ] && [ ! -d "$cur" ]; }; then return 1; fi
+  done
+}
+
+case_clash() { # <基点> <相対パス>: 既存の成分が、要求と大文字小文字だけ違う綴りでしか無ければ、その実際のパスを出す (無ければ空)。大文字小文字を区別しないファイルシステムでは [ -e ] が別の綴りに当たるので、親の一覧 (find) と綴りを完全一致で突き合わせる
+  local cur=$1 rest=$2 name actual pre=
+  while [ -n "$rest" ]; do
+    name=${rest%%/*}
+    if [ "$name" = "$rest" ]; then rest=; else rest=${rest#*/}; fi
+    { [ -e "$cur/$name" ] || [ -L "$cur/$name" ]; } || return 0
+    actual=$(find "$cur" -mindepth 1 -maxdepth 1 | awk -v c="${#cur}" -v n="$name" '{ f = substr($0, c + 2) } f == n { e = 1 } tolower(f) == tolower(n) && f != n { a = f } END { if (!e && a != "") print a }')
+    if [ -n "$actual" ]; then
+      [ -z "$rest" ] || actual=$actual/$rest
+      printf '%s\n' "$pre$actual"
+      return 0
+    fi
+    pre=$pre$name/
+    cur=$cur/$name
   done
 }
 

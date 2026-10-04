@@ -3,7 +3,7 @@
 # - 初回: 部品の一覧のファイルを、上流と同じバイトと一覧の mode で置く。一覧の mode は上流の git の mode と同じ。手で写した sync.sh と render.sb は同じバイトなので引き取る。下流の archetype が描画したファイルも置く。
 # - 2 回目は何も変えず、mode のずれと消したファイルは戻す
 # - 上流の更新 (v1 → v2): 変わったファイルを置き直し、一覧から消えたファイルを消す
-# - 作業ツリーを変えずに落ちる (理由も見る): 引数 (exit 2)、入力ファイルの欠け、archetype.yaml の source の行の定義域、generated の定義域・順序・古いパスの種類、answers の欠け、置き先の重複 (別の置き先の親のディレクトリを含む)、置き先の .agent-sync/ の下、一覧の行が定義域の外 (上流のパスの symlink、置き先の途中の symlink を含む)、一覧と描画の不一致、描画が .agent-sync/sync.sh を置かない、利用者のファイル、生成物の同一性の表の落ちる行 (commit 済みの利用者の編集を含む)、ロックが取られている、別のリポの sync.sh の起動、TMPDIR の文字と絶対パス、上流のパスの大文字小文字の衝突、fetch の GIT_TERMINAL_PROMPT、archetect の版、対応していない OS、OS の sandbox を適用できない・描画が非 0 で終わる、リポジトリの場所を決める GIT_* (`git rev-parse --local-env-vars` の各変数)
+# - 作業ツリーを変えずに落ちる (理由も見る): 引数 (exit 2)、入力ファイルの欠け、archetype.yaml の source の行の定義域、generated の定義域・順序・古いパスの種類、answers の欠け、置き先の重複 (別の置き先の親のディレクトリを含む)、置き先の .agent-sync/ の下、一覧の行が定義域の外 (上流のパスの symlink、置き先の途中の symlink を含む)、一覧と描画の不一致、描画が .agent-sync/sync.sh を置かない、利用者のファイル、置き先・古いパスの綴り (途中のディレクトリを含む) が既存のものと大文字小文字だけ違う (一時ディレクトリが大文字小文字を区別しないときだけ。区別するときは別のファイルとして通ることを見る)、生成物の同一性の表の落ちる行 (commit 済みの利用者の編集を含む)、ロックが取られている、別のリポの sync.sh の起動、TMPDIR の文字と絶対パス、上流のパスの大文字小文字の衝突、fetch の GIT_TERMINAL_PROMPT、archetect の版、対応していない OS、OS の sandbox を適用できない・描画が非 0 で終わる、リポジトリの場所を決める GIT_* (`git rev-parse --local-env-vars` の各変数)
 # - 環境: awk が正規表現の区間を持たなくても通る。GIT_CONFIG* は通る (この test 自身が GIT_CONFIG_COUNT で上流へ向ける)。core.autocrlf・core.eol を変えても、置くバイトは上流の blob と同じ。UTF-8 の locale (LANG・LC_ALL) でも通り、文字の分類 (タブ・制御文字・空白・shell の特殊文字・é・あ・ｚ。canon: facts/shell/string-input-categories) ごとに、置き先・source の名前・TMPDIR の定義域の外として落ちる
 # - 標準出力は git status --short と同じ。終わった (落ちた) 後にロックが残らない
 # OS の sandbox を適用できない環境 (別の sandbox の中など) では、最初の実際の描画 (初回) が sync.sh の固定の文言「OS の sandbox を適用できない」で落ちる。そのとき、描画を伴う残りの検査を飛ばしたことを理由と一緒に stderr に出す。CI (環境変数 CI が空でない) では落とす。
@@ -25,6 +25,10 @@ for v in $(git rev-parse --local-env-vars); do
 done
 status=0
 cd "$tmp"
+# 一時ディレクトリのファイルシステムが大文字小文字を区別しないか (macOS の APFS の既定)。検査の環境の選択で、sync.sh の挙動の分岐ではない。
+: >CaseProbe
+if [ -e caseprobe ]; then ci_fs=1; else ci_fs=0; fi
+rm CaseProbe
 
 copy_tracked() { # <元> <先> <パス…>: 元の作業ツリーの、追跡しているか無視されていないファイルを先へ写す
   local from=$1 to=$2 p
@@ -513,6 +517,25 @@ expect_fail '置き先: ディレクトリへの symlink' ds '通常のファイ
 reset_ds
 rm "ds/$dest"; mkdir "ds/$dest"; dest_refused '置き先: ディレクトリ' '通常のファイルでない'
 
+# 作業ツリーの既存のパスの綴りは、要求した綴りと完全に等しくなければならない。大文字小文字を区別しないファイルシステムでは、別の綴りの利用者のファイルや途中のディレクトリに当たるので落ちる。区別するファイルシステムでは別のファイルなので通る。
+clash=大文字小文字だけ違う
+if [ "$ci_fs" = 1 ]; then
+  rm ds/NOTICE.txt; printf 'project demo\n' >ds/notice.txt; dest_refused '置き先: 大文字小文字だけ違う利用者のファイル (中身が同じ、generated に id がある)' "$clash"
+  rm ds/NOTICE.txt; printf 'project demo\n' >ds/notice.txt; rec_as NOTICE.txt -; dest_refused '置き先: 大文字小文字だけ違う利用者のファイル (中身が同じ、generated に無い)' "$clash"
+  # git の reset は既存の綴りを直さないので、綴りを変えたものは消して index の綴りで取り直す
+  mv "ds/$dest" ds/hooks/Pre-Push; dest_refused '置き先: 利用者が綴りの大文字小文字を変えた' "$clash"
+  rm -rf ds/hooks; git -C ds checkout -q -- hooks
+  mv ds/hooks ds/Hooks; dest_refused '置き先: 途中のディレクトリが大文字小文字だけ違う' "$clash"
+  rm -rf ds/Hooks; git -C ds checkout -q -- hooks
+else
+  printf 'mine\n' >ds/notice.txt; sync_ok '置き先: 大文字小文字だけ違うファイルが別にある' ds
+  [ "$(cat ds/notice.txt)" = mine ] || { echo '置き先: 別のファイル notice.txt が変わった' >&2; status=1; }
+  reset_ds
+  mkdir ds/Hooks; printf 'mine\n' >ds/Hooks/pre-push; sync_ok '置き先: 大文字小文字だけ違うディレクトリが別にある' ds
+  [ "$(cat ds/Hooks/pre-push)" = mine ] || { echo '置き先: 別のディレクトリ Hooks が変わった' >&2; status=1; }
+  reset_ds
+fi
+
 old=zzz-old.txt
 printf 'old\n' >"ds/$old"
 printf '%s\t%s\n' "$old" "$(text_id old)" >>ds/.agent-sync/generated
@@ -539,6 +562,16 @@ printf '%s\n' "$old" >>ds/.gitignore; git -C ds rm -q --cached "$old"; stale_gon
 chmod 755 "ds/$old"; stale_gone '古いパス: mode だけ違う'
 rm "ds/$old"; ln -s nowhere "ds/$old"; stale_refused '古いパス: symlink' '古いパス zzz-old.txt が通常のファイルでない'
 rm "ds/$old"; mkdir "ds/$old"; stale_refused '古いパス: ディレクトリ' '古いパス zzz-old.txt が通常のファイルでない'
+
+if [ "$ci_fs" = 1 ]; then
+  rm "ds/$old"; printf 'old\n' >ds/ZZZ-old.txt; stale_refused '古いパス: 大文字小文字だけ違う利用者のファイル (中身が同じ)' "$clash"
+  printf 'zzzdir/o.txt\t%s\n' "$(text_id old)" >>ds/.agent-sync/generated
+  mkdir ds/Zzzdir; printf 'old\n' >ds/Zzzdir/o.txt; stale_refused '古いパス: 途中のディレクトリが大文字小文字だけ違う' "$clash"
+else
+  printf 'old\n' >ds/ZZZ-old.txt; sync_ok '古いパス: 大文字小文字だけ違うファイルが別にある' ds
+  { [ ! -e "ds/$old" ] && [ -f ds/ZZZ-old.txt ]; } || { echo '古いパス: 別のファイル ZZZ-old.txt を消したか、古いパスが残った' >&2; status=1; }
+  reset_ds
+fi
 
 # 利用者が生成物を編集して commit した後、上流が同じファイルを置き続けても、一覧から消しても、落ちて何も変えない。上流が v2 に進む前の v1 の下流を作って回す。
 v1_downstream() { # <名前>: v1 の生成物を置いて commit した下流
