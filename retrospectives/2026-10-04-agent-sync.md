@@ -11,7 +11,7 @@
 - 検証:
   - `scripts/test-agent-sync.sh` を macOS (sandbox-exec) で Claude Code の sandbox の外で回して通した。Linux (bwrap) は Debian trixie arm64 の privileged container の非 root で回して通した。
   - `./verify.sh` は新しい clone で sandbox の外で通した。
-- push と PR はまだ。
+- PR #25。CI (ubuntu-latest の bwrap の経路を含む) は push ごとに通った (初回の push だけ shellcheck の SC2015 で落ちた)。Codex のレビューは 7 回の指摘の後、`02a9499` で指摘なしになった。
 
 ## 良かったこと
 
@@ -70,17 +70,14 @@
 
 ## 残っていること
 
-- CI は未実測。`.github/workflows/verify.yml` で archetect (release の sha256 で固定) と bubblewrap を入れ、`kernel.apparmor_restrict_unprivileged_userns=0` で AppArmor の制限を外したが、ubuntu-latest (24.04、x86_64) で次が成り立つかは確かめていない:
-  - sysctl の後に bwrap が user namespace を作れること。通らなければ、`/usr/share/apparmor/extra-profiles/bwrap-userns-restrict` を読み込む形を試す。
-  - `ldd` が出す共有ライブラリだけで archetect が namespace の中で動くこと (Debian trixie arm64 では動いた)。
-  - archetect の linux の release は glibc 2.39 を要る (Debian bookworm では動かなかった)。ubuntu-latest が上がっても満たすかは、上がったときに CI で分かる。
+- CI (ubuntu-latest、x86_64) では、sysctl の後に bwrap が user namespace を作り、`ldd` が出す共有ライブラリだけで archetect が namespace の中で描画した (CI は描画の検査を飛ばさない)。archetect の linux の release は glibc 2.39 を要るので、runner の像が変わったら CI で分かる。
 - OS の sandbox を適用できない環境 (Claude Code の sandbox の中など) の `./verify.sh` は、最初の描画が「OS の sandbox を適用できない」で落ちたとき、描画を伴う残りの検査を飛ばす (理由を stderr に出す)。sync.sh・部品・render.sb を変えたら、sandbox の外で `scripts/test-agent-sync.sh` を回す。
 - パスの文字を POSIX の可搬なファイル名の文字に絞った。日本語のファイル名 (review-perspectives の観点など) を配るなら、Unicode の正規化で同じになる名前の重複も検査に足してから広げる。
 - 当てる手順 (手順 4) はトランザクションでない。検査は全部先に済ませるが、ファイルシステムの失敗では途中まで当たる。
 - 実際の下流のリポへの導入と、GitHub の HTTPS から sha で取る経路はまだ回していない (test は insteadOf で手元のリポに向ける)。
 - `render.sb` の KEG は archetect の実行ファイルの 2 つ上のディレクトリで、Homebrew の Cellar では keg だが、`/usr/local/bin` に置いた archetect では `/usr/local` 全体の読み取りを許す。
 - 2 回目のレビューの修正の実測と未測定:
-  - Linux (bwrap) の描画は、この環境 (macOS) で動かしていない。CI が最初の実測になる。通らなければ CI は落ちる。
+  - Linux (bwrap) の描画は、PR の CI で通った。
   - Linux の bwrap が入れ子の sandbox の中で動くかも未測定。
   - sandbox-exec の入れ子が exit 71 で落ちるのは、Claude Code の Bash の sandbox の中で probe が `Operation not permitted` で落ちる形で確かめた (描画の test は飛ばして理由を出す)。
   - bash の glob の範囲の locale 依存は macOS の bash 3.2 だけ測った。Linux の bash 5 は未測定で、`LC_ALL=C` の固定はどちらでも害が無いので測らずに入れた。
@@ -94,3 +91,4 @@
   - sync.sh と render.sb を部品の一覧から切り離し、固定した上流からの専用の自己更新の手順にする。`.agent-sync/` の置いてよい 2 つの許可リストと、「`.agent-sync/sync.sh` を置かない描画は落とす」検査が要らなくなる。
   - このリポの `.claude/skills/pr-workflow/` を、`skills/setup-repo/pr-workflow/` への symlink でなく agent-sync が置く実体の写しにする。テンプレートの repo.md の「実体のパスからたどる読者への案内」の行が要らなくなる。
 - 手元の shellcheck (0.11.0) と CI の shellcheck (ubuntu の apt) の版の差が閉じていない。CI だけが出す指摘が 2 度出た (PR #21、本 PR の `d819eef`)。版を固定するか、手元と CI を揃える。
+- Codex は、観点のレビューを 5 回通した後に、ファイルシステムの意味論の次元 (大文字小文字と Unicode の別名・hard link・`-` で始まる名前・改行を含む名前・空のディレクトリの出どころ) と、git の init が読む環境を 1 つずつ指摘した。パスを受ける操作の定義域を、canon の文字の分類 (`facts/shell/string-input-categories`) と同じように、ファイルシステムの性質 (大文字小文字の区別・正規化・hard link・symlink・ディレクトリ) の目録にして fixture の生成器で回す形は、まだ作っていない。次にパスを扱う機構を書くときは、先にその目録を引く (無ければ作る)。
