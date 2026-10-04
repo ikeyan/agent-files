@@ -3,7 +3,7 @@
 # - 初回: 部品の一覧のファイルを、上流と同じバイトと一覧の mode で置く。一覧の mode は上流の git の mode と同じ。手で写した sync.sh と render.sb は同じバイトなので引き取る。下流の archetype が描画したファイルも置く。
 # - 2 回目は何も変えず、mode のずれと消したファイルは戻す
 # - 上流の更新 (v1 → v2): 変わったファイルを置き直し、一覧から消えたファイルを消す
-# - 作業ツリーを変えずに落ちる (理由も見る): 引数 (exit 2)、入力ファイルの欠け、archetype.yaml の source の行の定義域、generated の定義域・順序・古いパスの種類、answers の欠け、置き先の重複、一覧の行が定義域の外 (上流のパスの symlink、置き先の途中の symlink を含む)、一覧と描画の不一致、利用者のファイル、HEAD から変わった生成物と古いパス、ロックが取られている、TMPDIR の文字、archetect の版、対応していない OS、OS の sandbox を適用できない (描画が非 0 で終わる)、リポジトリの場所を決める GIT_* (`git rev-parse --local-env-vars` の各変数)
+# - 作業ツリーを変えずに落ちる (理由も見る): 引数 (exit 2)、入力ファイルの欠け、archetype.yaml の source の行の定義域、generated の定義域・順序・古いパスの種類、answers の欠け、置き先の重複、一覧の行が定義域の外 (上流のパスの symlink、置き先の途中の symlink を含む)、一覧と描画の不一致、利用者のファイル、HEAD とも置くものとも違う生成物と HEAD から変わった古いパス、ロックが取られている、TMPDIR の文字、archetect の版、対応していない OS、OS の sandbox を適用できない (描画が非 0 で終わる)、リポジトリの場所を決める GIT_* (`git rev-parse --local-env-vars` の各変数)
 # - 環境: GIT_CONFIG* は通る (この test 自身が GIT_CONFIG_COUNT で上流へ向ける)。UTF-8 の locale (LANG・LC_ALL) でも通り、非 ASCII の文字は定義域の外として落ちる (置き先・source の名前・TMPDIR)
 # - 標準出力は git status --short と同じ。終わった (落ちた) 後にロックが残らない
 # OS の sandbox を適用できない環境 (別の sandbox の中など) では、実際に適用を試す probe が失敗するので、描画を伴う検査を飛ばしたことを理由と一緒に stderr に出す。CI (環境変数 CI が空でない) では飛ばさず落とす。
@@ -195,6 +195,7 @@ want_generated=$({ for list in $lists; do cut -f2 "upstream/$list"; done; echo N
 [ "$(cat ds/.agent-sync/generated)" = "$want_generated" ] || { echo "初回: generated が置き先の一覧でない — $(cat ds/.agent-sync/generated)" >&2; status=1; }
 [ -z "$(git -C ds status --porcelain -- .agent-sync/sync.sh .agent-sync/render.sb .env hooks/pre-push.local)" ] || { echo "初回: 手で写した sync.sh・render.sb か、下流のファイルが変わった" >&2; status=1; }
 [ ! -e ds/.agent-sync/files ] || { echo "初回: 一覧そのものを作業ツリーに置いた" >&2; status=1; }
+first_snap=$(snapshot ds)
 git -C ds add -A
 git -C ds commit -q -m sync
 
@@ -364,19 +365,105 @@ done
 [ "$(git -C ds rev-parse HEAD)" = "$ds_head" ] || { echo "GIT_*: ds の HEAD が変わった" >&2; status=1; }
 clean 'GIT_* の後' ds
 
-# generated にある置き先と古いパスが HEAD から変わっていれば (利用者の変更と区別できない)、上書きも削除もしない。戻せば古いパスは消える
-printf 'mine\n' >>ds/hooks/pre-push
-expect_fail '変えた生成物' ds 'HEAD から変わっている'
-git -C ds checkout -q -- hooks/pre-push
-printf 'old\n' >ds/zzz-old.txt
-echo zzz-old.txt >>ds/.agent-sync/generated
+# generated にあるパスの同一性 (sync.sh の同一性の表の行ごと)。HEAD と同じ (行 2) は 2回目・v2 が見ている
+base=$(git -C ds rev-parse HEAD)
+reset_ds() { git -C ds reset -q --hard "$base" && git -C ds clean -fdq; }
+dest=hooks/pre-push
+placed=upstream/hooks/pre-push
+head_as() { # <中身>: HEAD の $dest を <中身> にする (HEAD に無い状態は dest_untracked・dest_ignored で作る)
+  printf '%s\n' "$1" >"ds/$dest"
+  git -C ds commit -q -am "head $1"
+}
+dest_untracked() { git -C ds rm -q "$dest" && git -C ds commit -q -m "no $dest"; }
+dest_ignored() { dest_untracked && printf '%s\n' "$dest" >>ds/.gitignore && git -C ds add .gitignore && git -C ds commit -q -m "ignore $dest"; }
+dest_ok() { # <名前>: 通り、$dest が置くものと同じバイトで実行可能
+  sync_ok "$1" ds
+  cmp -s "$placed" "ds/$dest" && [ -x "ds/$dest" ] || { echo "$1: $dest が置くものと同じバイトの実行可能なファイルでない" >&2; status=1; }
+  reset_ds
+}
+dest_refused() { # <名前>: 落ち、$dest に触らない
+  expect_fail "$1" ds 'HEAD とも置くものとも違う'
+  reset_ds
+}
+rm "ds/$dest"; dest_ok '置き先: 無い'
+head_as other; cp "$placed" "ds/$dest"; dest_ok '置き先: HEAD と違い、置くものと同じバイト'
+head_as other; printf 'mine\n' >"ds/$dest"; dest_refused '置き先: HEAD と違い、置くものと違うバイト'
+printf 'mine\n' >>"ds/$dest"; dest_refused '置き先: HEAD から変えた'
+head_as other; cp "$placed" "ds/$dest"; git -C ds add "$dest"; dest_ok '置き先: staged で、置くものと同じバイト'
+printf 'mine\n' >>"ds/$dest"; git -C ds add "$dest"; dest_refused '置き先: staged で、置くものと違うバイト'
+dest_untracked; cp "$placed" "ds/$dest"; dest_ok '置き先: 追跡していなくて、置くものと同じバイト'
+dest_untracked; printf 'mine\n' >"ds/$dest"; dest_refused '置き先: 追跡していなくて、置くものと違うバイト'
+dest_ignored; cp "$placed" "ds/$dest"; dest_ok '置き先: 無視されていて、置くものと同じバイト'
+dest_ignored; printf 'mine\n' >"ds/$dest"; dest_refused '置き先: 無視されていて、置くものと違うバイト'
+chmod 644 "ds/$dest"; dest_ok '置き先: mode だけ違う'
+rm "ds/$dest"; ln -s nowhere "ds/$dest"; git -C ds add "$dest"; git -C ds commit -q -m "symlink $dest"; dest_ok '置き先: symlink で HEAD と同じ'
+rm "ds/$dest"; ln -s nowhere "ds/$dest"; dest_refused '置き先: symlink で HEAD と違う'
+rm "ds/$dest"; mkdir "ds/$dest"; expect_fail '置き先: ディレクトリ' ds "置き先 $dest が通常のファイルでも symlink でもない"; reset_ds
+
+old=zzz-old.txt
+printf 'old\n' >"ds/$old"
+echo "$old" >>ds/.agent-sync/generated
 git -C ds add -A
 git -C ds commit -q -m old
-printf 'edited\n' >>ds/zzz-old.txt
-expect_fail '変えた古いパス' ds 'HEAD から変わっている'
-git -C ds checkout -q -- zzz-old.txt
-sync_ok 古いパスの削除 ds
-[ ! -e ds/zzz-old.txt ] || { echo "古いパスの削除: zzz-old.txt が残った" >&2; status=1; }
+base=$(git -C ds rev-parse HEAD)
+stale_gone() { # <名前>: 通り、古いパスが無く generated にも無い
+  sync_ok "$1" ds
+  if [ -e "ds/$old" ] || grep -qx "$old" ds/.agent-sync/generated; then echo "$1: 古いパス $old か generated の行が残った" >&2; status=1; fi
+  reset_ds
+}
+stale_refused() { # <名前>: 落ち、古いパスに触らない
+  expect_fail "$1" ds "古いパス $old が HEAD から変わっている"
+  reset_ds
+}
+stale_gone '古いパス: HEAD と同じ'
+rm "ds/$old"; stale_gone '古いパス: 消した'
+git -C ds rm -q "$old"; git -C ds commit -q -m "no $old"; stale_gone '古いパス: 初めから無い'
+printf 'edited\n' >>"ds/$old"; stale_refused '古いパス: HEAD から変えた'
+printf 'edited\n' >>"ds/$old"; git -C ds add "$old"; stale_refused '古いパス: staged'
+git -C ds rm -q --cached "$old"; git -C ds commit -q -m "untrack $old"; stale_refused '古いパス: 追跡していない'
+git -C ds rm -q --cached "$old"; printf '%s\n' "$old" >>ds/.gitignore; git -C ds add .gitignore; git -C ds commit -q -m "ignore $old"; stale_refused '古いパス: 無視されている'
+chmod 755 "ds/$old"; stale_gone '古いパス: mode だけ違う'
+
+# 前回の結果を commit する前に続けて起動しても、何も変わらない
+make_ds twice "$v1"
+sync_ok 'commit 前の 1 回目' twice
+twice_snap=$(snapshot twice)
+sync_ok 'commit 前の 2 回目' twice
+[ "$(snapshot twice)" = "$twice_snap" ] || { echo "commit 前の 2 回目が作業ツリーを変えた" >&2; status=1; }
+[ "$twice_snap" = "$first_snap" ] || { echo "commit 前の 1 回目が、初回と違う結果を作った" >&2; status=1; }
+
+# 手順 4 の mv が途中で失敗すれば、一時ファイルとロックを残さずに落ちる。起動し直せば、続けて起動したのと同じ作業ツリーに収束する
+mkdir shim-mv
+cat >shim-mv/mv <<'SHIM'
+#!/bin/sh
+n=$(cat "$MV_COUNT" 2>/dev/null || echo 0)
+n=$((n + 1))
+echo "$n" >"$MV_COUNT"
+for last; do :; done
+case $last in $MV_FAIL_PAT) echo "mv: 疑似の失敗" >&2; exit 1 ;; esac
+[ "$n" != "$MV_FAIL_AT" ] || { echo "mv: 疑似の失敗" >&2; exit 1; }
+exec /bin/mv "$@"
+SHIM
+chmod 755 shim-mv/mv
+apply_fails() { # <名前> <dir> <MV_FAIL_AT=n | MV_FAIL_PAT=glob>: 手順 4 が落ち、一時ファイルとロックを残さず、その後の起動が収束する
+  local name=$1 d=$2 left
+  rm -f "$tmp/mv.count"
+  if (cd "$d" && env PATH="$tmp/shim-mv:$PATH" MV_COUNT="$tmp/mv.count" MV_FAIL_AT=0 MV_FAIL_PAT=- "$3" ./.agent-sync/sync.sh) >/dev/null 2>"$tmp/err.txt"; then
+    echo "$name: sync.sh が通った" >&2
+    status=1
+  fi
+  grep -qF 'mv: 疑似の失敗' "$tmp/err.txt" || { echo "$name: mv が失敗していない — $(cat "$tmp/err.txt")" >&2; status=1; }
+  left=$(find "$d" -name '.agent-sync.*' -not -path '*/.git/*')
+  [ -z "$left" ] || { echo "$name: 一時ファイルが残った — $left" >&2; status=1; }
+  [ ! -e "$d/.git/agent-sync.lock" ] || { echo "$name: ロックが残った" >&2; status=1; }
+  sync_ok "$name の後の起動し直し" "$d"
+  [ "$(snapshot "$d")" = "$first_snap" ] || { echo "$name: 起動し直しが、初回と同じ作業ツリーに収束しない" >&2; status=1; }
+}
+make_ds part1 "$v1"
+apply_fails 'mv の失敗 (2 つ目)' part1 MV_FAIL_AT=2
+[ "$(cat "$tmp/mv.count")" = 2 ] || { echo "mv の失敗 (2 つ目): 2 つ目の mv で失敗していない (数: $(cat "$tmp/mv.count"))" >&2; status=1; }
+make_ds part2 "$v1"
+apply_fails 'mv の失敗 (generated)' part2 'MV_FAIL_PAT=*/generated'
 
 # 上流の部品の Lua は、sandbox の外へ書けず、外を読めず、プロセスを起動できない
 make_ds hostile "$v1"

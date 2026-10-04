@@ -38,9 +38,22 @@
 #   - 途中のディレクトリは、無いか symlink でないディレクトリ。
 #   - 既にある置き先は、generated にある通常のファイルか symlink、または置くものと同じバイトの通常のファイル (利用者のファイルを上書きしない)。
 #   - 古いパスは、無いか、通常のファイルか symlink。
-# 同一性: 生成物は作業ツリーのルートからの相対パスで同定する。置き先は、通常のファイルでないかバイトが違う (cmp) ときに置き直し、mode は毎回揃える。
-#   generated にあるパス (置き先と古いパス) は、あるとき HEAD から (mode だけの違いを除いて) 変わっている・追跡していない・無視されている (`git status --porcelain --ignored` が何か出す) なら、利用者の変更と前回の結果が区別できないので、上書きも削除もせず落ちる。前回の結果は commit してから起動する。
-# 失敗: 手順 2 の描画が非 0 で終わる (archetect の失敗か、別の sandbox の中などで OS の sandbox を適用できない) と、終了状態を示して落ちる。手順 1〜3 のどこで落ちても作業ツリーは変わらない。手順 4 は検査済みのパスへの rm・mv・chmod だけだが、ファイルシステムの失敗で途中まで当たることはある (git status に出る)。
+# 同一性: 生成物は作業ツリーのルートからの相対パスで同定し、generated にあるパスだけを前回の結果として扱う (generated に無い置き先は、置くものと同じバイトの通常のファイルでなければ、上の定義域で利用者のファイルとして落ちる)。
+#   generated にあるパスの現在の中身が HEAD と違い (staged・追跡していない・無視されているを含む。mode だけの違いは除く)、かつ今回置くものとも違うときだけ、利用者の変更として上書きも削除もせず落ちる。前回の結果が未コミットでも、今回置くものと同じなら利用者の変更でない (続けて起動しても、手順 4 の途中で落ちた後に起動し直しても、同じ結果に収束する)。
+#   | generated にあるパスの状態                              | 置き先                   | 古いパス (generated にあって置き先に無い) |
+#   | 無い (消した、初めから無い)                             | 置く                     | 何もしない                                |
+#   | HEAD と同じ (mode だけ違うを含む)                       | 置く (mode も揃える)     | 消す                                      |
+#   | HEAD と違う追跡ファイルで、置くものと同じバイト         | そのまま (mode は揃える) | 落ちる                                    |
+#   | HEAD と違う追跡ファイルで、置くものと違うバイト         | 落ちる                   | 落ちる                                    |
+#   | staged で、置くものと同じ / 違うバイト                  | そのまま / 落ちる        | 落ちる                                    |
+#   | 追跡していない、置くものと同じ / 違うバイト             | そのまま / 落ちる        | 落ちる                                    |
+#   | 無視されている、置くものと同じ / 違うバイト             | そのまま / 落ちる        | 落ちる                                    |
+#   | symlink で HEAD と同じ                                  | 通常のファイルに置き換える | 消す                                    |
+#   | symlink で HEAD と違う (置くものとは同じにならない)     | 落ちる                   | 落ちる                                    |
+#   | 通常のファイルでも symlink でもない                     | 落ちる                   | 落ちる                                    |
+#   置き先は、通常のファイルでないかバイトが違う (cmp) ときに置き直し、mode は毎回揃える。
+# 資源: 手順 4 までに取るのは、作業ディレクトリ・ロック・手順 4 が置き先ごとと generated に 1 つずつ作る作業ツリーの一時ファイル (同じディレクトリの `.agent-sync.XXXXXX`。現在の 1 つを wt_tmp が持つ)。全て EXIT trap が解放する (cp・chmod・mv が失敗して落ちるときも、一時ファイルを作業ツリーに残さない)。
+# 失敗: 手順 2 の描画が非 0 で終わる (archetect の失敗か、別の sandbox の中などで OS の sandbox を適用できない) と、終了状態を示して落ちる。手順 1〜3 のどこで落ちても作業ツリーは変わらない。手順 4 は検査済みのパスへの rm・mv・chmod だけだが、ファイルシステムの失敗で途中まで当たることはある (git status に出る)。起動し直せば、同一性の表に従って同じ結果に収束する。
 set -euo pipefail
 
 main() {
@@ -67,7 +80,7 @@ main() {
   name=$(basename "$url" .git)
   case $name in . | .. | *[!A-Za-z0-9._-]*) echo "agent-sync: source の URL のファイル名 $name.git が定義域の外" >&2; exit 1 ;; esac
 
-  trap '[ -z "${run:-}" ] || rm -rf "$run"; [ -z "${held:-}" ] || rmdir "$held"' EXIT
+  trap '[ -z "${run:-}" ] || rm -rf "$run"; [ -z "${wt_tmp:-}" ] || rm -f "$wt_tmp"; [ -z "${held:-}" ] || rmdir "$held"' EXIT
   local lock
   lock=$(git -C "$root" rev-parse --absolute-git-dir)/agent-sync.lock
   mkdir "$lock" 2>/dev/null || { echo "agent-sync: $lock がある (別の sync.sh が動いているか、強制終了の跡)。動いていなければ消す" >&2; exit 1; }
@@ -216,8 +229,8 @@ main() {
         if ! { [ -L "$t" ] || [ -f "$t" ]; }; then
           echo "agent-sync: 置き先 $dest が通常のファイルでも symlink でもない" >&2
           errs=1
-        elif user_changed "$dest"; then
-          echo "agent-sync: 置き先 $dest が generated にあるが HEAD から変わっている (利用者の変更か、前回の結果が未コミット)。commit するか戻してから起動し直す" >&2
+        elif user_changed "$dest" "$(content_of "$dest" "$from")"; then
+          echo "agent-sync: 置き先 $dest が generated にあるが、HEAD とも置くものとも違う (利用者の変更)。commit するか戻してから起動し直す" >&2
           errs=1
         fi
       elif [ -L "$t" ] || [ ! -f "$t" ] || ! cmp -s "$(content_of "$dest" "$from")" "$t"; then
@@ -236,7 +249,7 @@ main() {
         echo "agent-sync: 古いパス $p が通常のファイルでも symlink でもない" >&2
         errs=1
       elif user_changed "$p"; then
-        echo "agent-sync: 古いパス $p が HEAD から変わっている (利用者の変更か、前回の結果が未コミット)。commit するか戻してから起動し直す" >&2
+        echo "agent-sync: 古いパス $p が HEAD から変わっている (利用者の変更)。commit するか戻してから起動し直す" >&2
         errs=1
       fi
     fi
@@ -244,7 +257,7 @@ main() {
   [ "$errs" = 0 ] || exit 1
 
   # 4. 適用
-  local d tmp
+  local d
   while IFS= read -r p; do
     rm -f "$root/$p"
     d=$(dirname "$p")
@@ -255,23 +268,28 @@ main() {
     if [ -L "$t" ] || ! cmp -s "$(content_of "$dest" "$from")" "$t"; then
       mkdir -p "$(dirname "$t")"
       # 新しい inode に書いて rename する。動いている sync.sh 自身も置き換えるので、上書きで中身を変えない。
-      tmp=$(mktemp "$(dirname "$t")/.agent-sync.XXXXXX")
-      cp "$(content_of "$dest" "$from")" "$tmp"
-      chmod "$mode" "$tmp"
-      mv -f "$tmp" "$t"
+      wt_tmp=$(mktemp "$(dirname "$t")/.agent-sync.XXXXXX")
+      cp "$(content_of "$dest" "$from")" "$wt_tmp"
+      chmod "$mode" "$wt_tmp"
+      mv -f "$wt_tmp" "$t"
+      wt_tmp=
     else
       chmod "$mode" "$t"
     fi
   done <"$run/records"
-  tmp=$(mktemp "$cfg/.agent-sync.XXXXXX")
-  cp "$run/new" "$tmp"
-  chmod 644 "$tmp"
-  mv -f "$tmp" "$cfg/generated"
+  wt_tmp=$(mktemp "$cfg/.agent-sync.XXXXXX")
+  cp "$run/new" "$wt_tmp"
+  chmod 644 "$wt_tmp"
+  mv -f "$wt_tmp" "$cfg/generated"
+  wt_tmp=
   git -C "$root" status --short
 }
 
-user_changed() { # <相対パス>: 作業ツリーのパスが HEAD から (mode だけの違いを除いて) 変わっている・追跡していない・無視されている
-  [ -n "$(git -C "$root" -c core.fileMode=false status --porcelain --ignored -- "$1")" ]
+user_changed() { # <相対パス> [<置くものの中身のファイル>]: 同一性の表で、作業ツリーのパスが利用者の変更か
+  local t=$root/$1
+  { [ -e "$t" ] || [ -L "$t" ]; } || return 1
+  [ -n "$(git -C "$root" -c core.fileMode=false status --porcelain --ignored -- "$1")" ] || return 1
+  if [ -n "${2:-}" ] && [ ! -L "$t" ] && [ -f "$t" ] && cmp -s "$2" "$t"; then return 1; fi
 }
 
 parents_ok() { # <基点> <相対パス>: 途中のディレクトリが、無いか symlink でないディレクトリ
