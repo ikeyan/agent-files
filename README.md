@@ -31,6 +31,10 @@ skills は Claude plugin としてインストールして参照する (下記)�
 
 対応関係は `./verify.sh` が見る。`skills/` にスキルを足した・消したときの symlink の作り忘れと残骸はその場で直す。CI は `VERIFY_READONLY=1` で直さずに落とす。symlink 先の誤りと実体側の `SKILL.md` 欠落は、どちらのモードでも違反として報告する。
 
+## agent-sync で配る
+
+skills の外に各リポへ置くファイル (`hooks/pre-push`、pr-workflow、agent-sync の `sync.sh` 自身) は、ルートの `archetype.yaml` (Archetect の catalog) と `components/` の部品として配る。各リポは固定した版から `.agent-sync/sync.sh` で当てる。導入と運用は [setup-repo の 7 節](skills/setup-repo/SKILL.md#7-agent-sync-ikeyanagent-files-のファイルの配布)。
+
 ## builtin の `/code-review` を review-perspectives に向ける
 
 レビューの入口は review-perspectives に一本化する。builtin の `/code-review` とその別名 `/review` は、同名の個人スキルで置き換える。

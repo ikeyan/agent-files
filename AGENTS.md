@@ -34,6 +34,7 @@
   - review-perspectives の `target-diff.sh` の fixture (`scripts/test-target-diff.sh`) と model based test (`scripts/test-target-diff.ts`。fast-check)、`hooks/pre-push` の fixture (`scripts/test-pre-push.sh`)
   - pr-workflow の `pr.sh` の、fake GitHub を相手にした model based test (`scripts/test-pr.ts`。fast-check)
   - pr-workflow の `codex-limits.sh` の、偽の codex を相手にした fixture (`scripts/test-codex-limits.sh`)
+  - agent-sync の `sync.sh` の、このリポの catalog から作った手元の上流を相手にした fixture (`scripts/test-agent-sync.sh`)。Claude Code の sandbox の中 (`SANDBOX_RUNTIME=1`) では描画の sandbox を入れ子にできないので、描画を伴う検査を飛ばして stderr に出す。全部を検査するには sandbox の外で回す (CI は全部を回す)。
   - JSON の構文と schema
   - Markdown のリポ内リンク
   - `.claude/skills` と `skills/` の対応
@@ -43,7 +44,7 @@
     - 無ければ `hooks/pre-push` を写す。
     - `hooks/pre-push` と違えば、上書きせず落ちて置き換えのコマンドを示す。
 - `./verify.sh` は `core.hooksPath` が hook をよそへ向けていれば落ちる (設定は書かない)。
-- 必要なもの: `shellcheck`、`deno`、`curl` (7.84 以降)、`jq`、`www.schemastore.org` への到達。
+- 必要なもの: `shellcheck`、`deno`、`curl` (7.84 以降)、`jq`、`archetect` (3.6.1)、macOS では `sandbox-exec` と `otool`・Linux では `bwrap` と `ldd` (非特権の user namespace が要る)、`www.schemastore.org` への到達。
 
 ## コメントの書き方
 

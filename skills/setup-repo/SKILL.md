@@ -55,7 +55,8 @@ description: Use when creating a new repository, bringing an existing repository
     - 手元で動く (git 等): 実物
     - 手元で動かない (GitHub API 等): 状態機械の fake
 - 単一検証コマンドを用意する (AGENTS.md 設計指針)。上記すべてを 1 つの入口に集約する。
-- push は `hooks/pre-push` で、push のコマンドに `PUSH_OK=1` が付いていないものを止める (付け方は [pr-workflow/SKILL.md](pr-workflow/SKILL.md) の「push の手順」)。単一検証コマンドで `hooks/pre-push` を common git dir (`git rev-parse --git-common-dir`) の `hooks` へ写す。写す先に `hooks/pre-push` と違う pre-push があれば (旧版でも)、このリポのものかを中身から決められないので、上書きせず落として置き換えのコマンドを示す。`core.hooksPath` が hook をよそへ向けていれば落とす。common git dir の `hooks` は linked worktree も共有し、checkout で消えない。`core.hooksPath` で作業ツリーの `hooks/` を指すと、`hooks/` の無い commit を checkout した worktree から hook 無しで push が通る。
+- push は `hooks/pre-push` (agent-sync の pre-push 部品で配る。7 節) で、push のコマンドに `PUSH_OK=1` が付いていないものを止める (付け方は [pr-workflow/SKILL.md](pr-workflow/SKILL.md) の「push の手順」)。単一検証コマンドで `hooks/pre-push` を common git dir (`git rev-parse --git-common-dir`) の `hooks` へ写す。写す先に `hooks/pre-push` と違う pre-push があれば (旧版でも)、このリポのものかを中身から決められないので、上書きせず落として置き換えのコマンドを示す。`core.hooksPath` が hook をよそへ向けていれば落とす。common git dir の `hooks` は linked worktree も共有し、checkout で消えない。`core.hooksPath` で作業ツリーの `hooks/` を指すと、`hooks/` の無い commit を checkout した worktree から hook 無しで push が通る。
+- push の前のリポ固有の検査は、実行可能な `hooks/pre-push.local` に書く。`hooks/pre-push` は配るものなので書き足さない。`hooks/pre-push` は `PUSH_OK=1` の判定の後、`hooks/pre-push.local` に同じ引数と stdin で替わり、その終了コードが push の可否になる。
 - レビューは review-perspectives skill で行う。観点は plugin で配られる。
   - テストフレームワーク・ランタイム・リポ自身の終了ハンドラや資源の型の名前を、ルートの `review-perspectives/<観点>.md` に書く (review-perspectives の [repo-supplement.md](../review-perspectives/repo-supplement.md))。
   - リポの中で経緯を置くパス (標準は `retrospectives/`) を、ルートの `review-perspectives/経緯と無いことの宣言を書かない.md` に書く (同じく repo-supplement.md)。
@@ -73,11 +74,55 @@ description: Use when creating a new repository, bringing an existing repository
 
 ## 6. PR / ブランチ運用
 
-- リポ固有の PR・ブランチ運用を `.claude/skills/pr-workflow/` に置く。既定の [pr-workflow/](pr-workflow/SKILL.md) をディレクトリごとコピーする (方針の [SKILL.md](pr-workflow/SKILL.md) だけを読み、使う手段 [gh.md](pr-workflow/gh.md) / [github-mcp-server.md](pr-workflow/github-mcp-server.md) / [cc-web-github-mcp.md](pr-workflow/cc-web-github-mcp.md) だけを開く構成)。
-- `repo.md` 以外のファイルは編集しない。リポごとに違うものは [repo.md](pr-workflow/repo.md) の `<…>` を埋めて書く:
-  - push 先: 書き込めることを実測で確かめた remote (fork 運用では `origin` と限らない)。
-  - 寄稿規約: 規約が書いてあるファイルを指す。中身は写さない (`CONTRIBUTING.md` から読めるので)。文書に無いがこのリポで通っている規約だけ本文に書く。無ければ「なし」。
-  - 手段の実測: 手段のファイルは全部残す (同じリポを cc-web と local の両方から触る)。setup した環境で 1 回実測して通らなかった手段・実測できなかった手段を書く (AGENTS.md「実行時契約の実測」)。
+- リポ固有の PR・ブランチ運用を `.claude/skills/pr-workflow/` に置く。方針の [SKILL.md](pr-workflow/SKILL.md) だけを読み、使う手段 [gh.md](pr-workflow/gh.md) / [github-mcp-server.md](pr-workflow/github-mcp-server.md) / [cc-web-github-mcp.md](pr-workflow/cc-web-github-mcp.md) だけを開く構成。
+- `repo.md` 以外のファイルは agent-sync の pr-workflow 部品で配る (7 節)。編集しない。手段のファイルは全部置く (同じリポを cc-web と local の両方から触る)。
+- リポごとに違うものは `repo.md` に書く。[テンプレート](pr-workflow/repo.md) を一度写し、`<…>` を埋める (agent-sync は `repo.md` を置かない):
+  - 値:
+    - push 先: 書き込めることを実測で確かめた remote (fork 運用では `origin` と限らない)。
+    - 寄稿規約: 規約が書いてあるファイルを指す。中身は写さない (`CONTRIBUTING.md` から読めるので)。文書に無いがこのリポで通っている規約だけ本文に書く。無ければ「なし」。
+  - 手段の実測: setup した環境で 1 回実測して通らなかった手段・実測できなかった手段 (AGENTS.md「実行時契約の実測」)。
   - 方針の差分: 方針は既定を採る。リポごとに変えるならユーザーに確認して書く。リポで使っていない仕組み (Codex Review 等) もここに書く。
   - 何を本文に書くかは [authoring-skills](../authoring-skills/SKILL.md) に従う。
 - push 単位の方針は pr-workflow skill だけに書き、AGENTS.md に重ねない。
+
+## 7. agent-sync (ikeyan/agent-files のファイルの配布)
+
+- ikeyan/agent-files が配るファイルは各リポで編集しない。agent-sync で固定した版から当て、人が `git diff` で確かめてコミットする。リポごとの違いは、リポが持つファイルか、リポの archetype が自分で描画するファイルに置く。
+- 部品 (ikeyan/agent-files のルートの `archetype.yaml` の catalog):
+
+| 部品 | 置くもの | リポが持つもの |
+| --- | --- | --- |
+| `agent-sync` | `.agent-sync/sync.sh`・`.agent-sync/render.sb` | `.agent-sync/archetype/`・`.agent-sync/answers.yaml` |
+| `pre-push` | `hooks/pre-push` | `hooks/pre-push.local` (3 節) |
+| `pr-workflow` | `.claude/skills/pr-workflow/` の `repo.md` 以外 | `.claude/skills/pr-workflow/repo.md` (6 節) |
+
+- リポの `.agent-sync/`:
+  - `archetype/archetype.yaml`: catalog に ikeyan/agent-files を commit の sha (40 桁) で固定する。sha の書き換えが更新。
+  - `archetype/archetype.lua`: 使う部品を `catalog.render` で合成する。リポ自身が描画するファイルは `archetype/content/` に置き、`content/.agent-sync/files/<名前>` の一覧に `-<TAB><置き先><TAB><mode>` の行で載せる (一覧の形は [sync.sh](agent-sync/sync.sh) の先頭)。`if_exists` は `Existing.Error` にする (重なりを後勝ちにしない)。
+  - `answers.yaml`: 問いの答え。問いが無ければ `{}`。
+  - `generated`: sync.sh が置いたパスの一覧。sync.sh が書き換え、古いパスを消すのに使う。初回は空のファイル。
+  - `sync.sh`・`render.sb`: agent-sync 部品が置く。
+
+```yaml
+# .agent-sync/archetype/archetype.yaml
+description: このリポが使う ikeyan/agent-files の部品
+catalog:
+  agent-files:
+    source: https://github.com/ikeyan/agent-files.git#<40 桁の sha>
+```
+
+```lua
+-- .agent-sync/archetype/archetype.lua
+local context = Context.new()
+context:merge(catalog.render("agent-files/agent-sync", context))
+context:merge(catalog.render("agent-files/pre-push", context))
+context:merge(catalog.render("agent-files/pr-workflow", context))
+return context
+```
+
+- 起動: リポの中で `.agent-sync/sync.sh`。
+  - 描画を OS の sandbox に入れるので、Claude Code の Bash の sandbox の中 (`SANDBOX_RUNTIME=1`) では拒む。Claude は `dangerouslyDisableSandbox` で起動する (ユーザーの許可が要る)。
+  - 要るもの: `git`、`archetect` (3.6.1。`canon: facts/archetect`)、macOS では `sandbox-exec` と `otool` (Xcode Command Line Tools)、Linux では `bwrap` と `ldd` と非特権の user namespace (Ubuntu 23.10 以降は AppArmor が制限する)。
+  - 落ちたら作業ツリーは変わらない (当てている途中のファイルシステムの失敗を除く)。置き先に generated に無い違うファイル (利用者のファイル) があれば落ちるので、中身を `repo.md` などリポが持つファイルへ移してから消す。
+- 初回: 固定する sha の `skills/setup-repo/agent-sync/sync.sh` と `render.sb` を `.agent-sync/` へ手で写し (`sync.sh` は mode 755)、上の `archetype/`・`answers.yaml`・空の `generated` を作って起動する。写した `sync.sh` と `render.sb` は置くものと同じバイトなので、そのまま引き取られる。
+- 更新: `archetype.yaml` の sha を書き換えて起動し、`git diff` を確かめてコミットする。`sync.sh` 自身の更新も同じ diff に出て、次の起動から効く。
