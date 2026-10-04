@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # hooks/pre-push と verify.sh を検査する。
 # - push のコマンドの PUSH_OK=1 の有無で、push を通す・止める
+# - PUSH_OK=1 の push は、実行可能な hooks/pre-push.local があればそれに同じ引数と stdin で替わる
 # - verify.sh は hooks/pre-push を common git dir の hooks へ写す (検査に落ちる clone でも)
 # - 写す先の pre-push の状態ごとに、写す・何もしない・触らずに落とすのどれかになる
 #   - 無い・壊れた symlink: 写す (VERIFY_READONLY=1 では写さずに落ちる)
@@ -47,6 +48,36 @@ if git -C clone push origin main 2>/dev/null; then
   echo "PUSH_OK=1 の push の後、PUSH_OK 無し (push する差分も無い) が通った" >&2
   status=1
 fi
+
+# hooks/pre-push.local は、PUSH_OK=1 の push でだけ同じ引数と stdin で呼ばれ、その終了コードが push の可否になる。実行可能でなければ呼ばれない
+mkdir clone/hooks
+cat > clone/hooks/pre-push.local <<LOCAL
+#!/bin/sh
+printf '%s\n' "\$@" > "$tmp/local.args"
+cat > "$tmp/local.stdin"
+exit "\$(cat "$tmp/local.rc")"
+LOCAL
+chmod 755 clone/hooks/pre-push.local
+echo y > clone/b.txt && git -C clone add b.txt && git -C clone commit -q -m b
+echo 0 > local.rc
+git -C clone push origin main 2>/dev/null && { echo "pre-push.local があると PUSH_OK 無しで push が通った" >&2; status=1; }
+[ ! -e local.args ] || { echo "PUSH_OK 無しの push で pre-push.local が呼ばれた" >&2; status=1; }
+echo 1 > local.rc
+if PUSH_OK=1 git -C clone push origin main 2>/dev/null; then
+  echo "pre-push.local が 1 で終わったのに push が通った" >&2
+  status=1
+fi
+[ "$(cat local.args 2>/dev/null)" = "$(printf 'origin\n%s' "$tmp/remote.git")" ] || { echo "pre-push.local の引数が push の remote 名と URL でない — $(cat local.args 2>/dev/null)" >&2; status=1; }
+grep -q "^refs/heads/main $(git -C clone rev-parse HEAD) refs/heads/main " local.stdin 2>/dev/null || { echo "pre-push.local の stdin に push する ref の行が無い — $(cat local.stdin 2>/dev/null)" >&2; status=1; }
+[ "$(git -C remote.git rev-parse main)" != "$(git -C clone rev-parse HEAD)" ] || { echo "pre-push.local が 1 で終わったのに remote が進んだ" >&2; status=1; }
+echo 0 > local.rc
+PUSH_OK=1 git -C clone push -q origin main || { echo "pre-push.local が 0 で終わったのに push が失敗した" >&2; status=1; }
+chmod 644 clone/hooks/pre-push.local
+echo 1 > local.rc
+rm -f local.args
+echo z > clone/c.txt && git -C clone add c.txt && git -C clone commit -q -m c
+PUSH_OK=1 git -C clone push -q origin main || { echo "実行可能でない pre-push.local で push が止まった" >&2; status=1; }
+[ ! -e local.args ] || { echo "実行可能でない pre-push.local が呼ばれた" >&2; status=1; }
 
 # verify.sh は、検査が落ちても hooks/pre-push を common git dir の hooks に写してから落ちる (hook が無い clone から push できる期間を作らない)。
 # 作業ツリーの verify.sh と hooks/pre-push を clone に写す。
