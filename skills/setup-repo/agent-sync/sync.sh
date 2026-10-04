@@ -10,6 +10,7 @@
 #   generated                 前回の sync が置いたものの一覧。1 行 1 件 `<パス><TAB><置いたバイトの id>`、パスは LC_ALL=C の順で重複なし。初回は空のファイル。id は `git hash-object --no-filters` (git が使うオブジェクトの形式のハッシュで、sha1 のリポは 40 桁・sha256 のリポは 64 桁の小文字 16 進。改行・変換を通さないバイトそのもの。canon: facts/git/checkout-filters-vs-raw-blob)。
 #   描画に渡すのは archetype/ と answers.yaml のうち、追跡しているか無視されていないファイルの写しだけ。
 # 読む環境: PATH (git・archetect・realpath・awk と、macOS では sandbox-exec と otool、Linux では bwrap と ldd)・TMPDIR・GIT_CONFIG_*。
+#   sandbox-exec (macOS) か bwrap (Linux) が PATH に無ければ、手順 2 の最初に固定の文言 `agent-sync: 描画を起動できない` で落ちる (起動前に `command -v` で確かめる。描画の終了状態 127 では、sandbox 内の archetect の終了と区別できない)。
 #   awk は POSIX の awk で、正規表現の区間 `{n}` に頼らない (mawk 1.3.4-20200724 より前は既定で区間が無い。canon: facts/shell/awk-interval-expressions)。
 #   archetect は `archetect --version` が `archetect 3.6.1` (canon: facts/archetect と CI の verify.yml が固定する版) のものだけ。違えば落ちる。
 #   TMPDIR は書き込める既存のディレクトリの絶対パス (未設定は /tmp。相対パスだと作業ディレクトリが cwd のリポの中にできるので、最初に落ちる)。その下に作る作業ディレクトリの解決済みのパスは、A-Z a-z 0-9 . _ / - だけ (archetect の設定の YAML と render.sb に引用せずに書くため)。違えば落ちる。
@@ -126,6 +127,7 @@ main() {
     -c "$run/conf/archetect.yaml" -A "$run/ds/.agent-sync/answers.yaml")
   case $(uname -s) in
   Darwin)
+    command -v sandbox-exec >/dev/null || { echo "agent-sync: 描画を起動できない (sandbox-exec が PATH に無い)" >&2; exit 1; }
     local profile=$run/conf/render.sb lib
     cp "$here/render.sb" "$profile"
     otool -L "$bin" | sed -nE '2,$s|^[[:space:]]+(.+) \(compatibility version .*\)$|\1|p' | while IFS= read -r lib; do
@@ -141,6 +143,7 @@ main() {
       "$bin" "${args[@]}" </dev/null >&2 2>"$run/render.err") || rc=$?
     ;;
   Linux)
+    command -v bwrap >/dev/null || { echo "agent-sync: 描画を起動できない (bwrap が PATH に無い)" >&2; exit 1; }
     # namespace には archetect とその共有ライブラリと入力しか無い。/bin/sh が無いので os.execute・io.popen は何も起動できない。
     # bwrap が作る root は書き込める tmpfs なので、--remount-ro / で外れた書き込みを消えずに失敗させる。
     local b=(--unshare-all --die-with-parent --new-session --clearenv --proc /proc --dev /dev)

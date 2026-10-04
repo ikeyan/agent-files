@@ -164,6 +164,18 @@ make_ds nosb "$v1"
 expect_fail 'OS の sandbox を適用できない' nosb "$no_sandbox_msg" "PATH=$tmp/shim-sb:$PATH"
 expect_fail '文言の無い起動側の失敗は描画の失敗' nosb '描画が exit' "PATH=$tmp/shim-sb-plain:$PATH"
 ! grep -qF "$no_sandbox_msg" "$tmp/err.txt" || { echo '文言の無い起動側の失敗が、OS の sandbox を適用できないとされた' >&2; status=1; }
+# 起動コマンドだけが無い PATH (sync.sh が他に使うコマンドは残す)
+mkdir shim-nolauncher
+IFS=: read -ra path_dirs <<<"$PATH"
+for d in "${path_dirs[@]}"; do
+  for f in "$d"/*; do
+    [ -f "$f" ] && [ -x "$f" ] || continue
+    case ${f##*/} in sandbox-exec | bwrap) continue ;; esac
+    ln -s "$f" "shim-nolauncher/${f##*/}" 2>/dev/null || true
+  done
+done
+expect_fail '起動コマンドが PATH に無い' nosb '描画を起動できない' "PATH=$tmp/shim-nolauncher"
+! grep -qF "$no_sandbox_msg" "$tmp/err.txt" || { echo '起動コマンドが無い失敗が、OS の sandbox を適用できないとされた' >&2; status=1; }
 loc=
 avail=$(locale -a)
 for l in en_US.UTF-8 en_US.utf8 ja_JP.UTF-8 ja_JP.utf8 C.UTF-8 C.utf8; do
@@ -193,7 +205,7 @@ cat >shim-git/git <<SHIM
 for a in "\$@"; do
   [ "\$a" = fetch ] && echo "\${GIT_TERMINAL_PROMPT-unset}" >>"$tmp/fetch-prompt.txt"
 done
-exec $(command -v git) "\$@"
+exec "$(command -v git)" "\$@"
 SHIM
 chmod 755 shim-git/git
 make_ds prompt "$v1"
@@ -204,7 +216,7 @@ expect_fail 'fetch の GIT_TERMINAL_PROMPT' prompt 'OS の sandbox を適用で�
 expect_fail 'TMPDIR が相対パス' prompt '絶対パスでない' TMPDIR=.
 expect_fail 'TMPDIR が相対パス (ディレクトリ名)' prompt '絶対パスでない' TMPDIR=sub/dir
 
-# 初回。最初の実際の描画が OS の sandbox を適用できずに落ちたときだけ、描画を伴う残りの検査を飛ばす。
+# 初回。最初の実際の描画が OS の sandbox を適用できずに落ちたとき、CI (CI が空でない) なら落とし、そうでなければ描画を伴う残りの検査を飛ばす。
 # 外せる条件: Claude Code の sandbox の中でも入れ子の sandbox-exec が通るようになれば、この分岐は動かない。分岐ごと消す。
 make_ds ds "$v1"
 status_before=$status
@@ -253,7 +265,7 @@ cat >shim-awk/awk <<SHIM
 for a in "\$@"; do
   if printf '%s\n' "\$a" | grep -qE '[]a-z0-9)]\{[0-9]+(,[0-9]*)?\}'; then echo "awk: 区間表現を含むプログラム" >&2; exit 2; fi
 done
-exec $(command -v awk) "\$@"
+exec "$(command -v awk)" "\$@"
 SHIM
 chmod 755 shim-awk/awk
 sync_ok 'awk が区間を持たない' ds "PATH=$tmp/shim-awk:$PATH"
@@ -395,7 +407,7 @@ printf '#!/bin/sh\necho archetect 3.6.0\n' >shim-ver/archetect
 cat >shim-os/uname <<SHIM
 #!/bin/sh
 [ "\$1" = -s ] && { echo Plan9; exit 0; }
-exec $(command -v uname) "\$@"
+exec "$(command -v uname)" "\$@"
 SHIM
 chmod 755 shim-ver/archetect shim-os/uname
 expect_fail 'archetect の版' ds 'archetect 3.6.1 が PATH に無い' "PATH=$tmp/shim-ver:$PATH"
