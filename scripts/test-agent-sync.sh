@@ -169,7 +169,7 @@ mkdir shim-nolauncher
 IFS=: read -ra path_dirs <<<"$PATH"
 for d in "${path_dirs[@]}"; do
   for f in "$d"/*; do
-    [ -f "$f" ] && [ -x "$f" ] || continue
+    { [ -f "$f" ] && [ -x "$f" ]; } || continue
     case ${f##*/} in sandbox-exec | bwrap) continue ;; esac
     ln -s "$f" "shim-nolauncher/${f##*/}" 2>/dev/null || true
   done
@@ -487,7 +487,7 @@ rec_as() { # <パス> <id>: generated のそのパスの行の id を差し替�
 }
 placed_ok() { # <名前>: 通り、$dest が置くものと同じバイトの実行可能なファイルで、generated の行がその id
   sync_ok "$1" ds
-  cmp -s "$placed" "ds/$dest" && [ -x "ds/$dest" ] || { echo "$1: $dest が置くものと同じバイトの実行可能なファイルでない" >&2; status=1; }
+  { cmp -s "$placed" "ds/$dest" && [ -x "ds/$dest" ]; } || { echo "$1: $dest が置くものと同じバイトの実行可能なファイルでない" >&2; status=1; }
   grep -qxF "$(printf '%s\t%s' "$dest" "$(git hash-object --no-filters "$placed")")" ds/.agent-sync/generated || { echo "$1: generated の $dest の行が置いたバイトの id でない" >&2; status=1; }
   reset_ds
 }
@@ -642,8 +642,8 @@ rc=0
 (cd wrong && "$tmp/ds/.agent-sync/sync.sh") >/dev/null 2>"$tmp/err.txt" || rc=$?
 [ "$rc" != 0 ] || { echo '別のリポの sync.sh が通った' >&2; status=1; }
 grep -qF 'の .agent-sync/ でない' "$tmp/err.txt" || { echo "別のリポの sync.sh: 理由が無い — $(cat "$tmp/err.txt")" >&2; status=1; }
-[ "$(snapshot ds)" = "$before_ds" ] && [ "$(snapshot wrong)" = "$before_wrong" ] || { echo '別のリポの sync.sh が作業ツリーを変えた' >&2; status=1; }
-[ ! -e ds/.git/agent-sync.lock ] && [ ! -e wrong/.git/agent-sync.lock ] || { echo '別のリポの sync.sh がロックを残した' >&2; status=1; }
+{ [ "$(snapshot ds)" = "$before_ds" ] && [ "$(snapshot wrong)" = "$before_wrong" ]; } || { echo '別のリポの sync.sh が作業ツリーを変えた' >&2; status=1; }
+{ [ ! -e ds/.git/agent-sync.lock ] && [ ! -e wrong/.git/agent-sync.lock ]; } || { echo '別のリポの sync.sh がロックを残した' >&2; status=1; }
 
 # generated に無い置き先に利用者のファイルがあれば、置き換えない
 make_ds user "$v1"

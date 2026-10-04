@@ -18,7 +18,7 @@ top=$(git rev-parse --show-toplevel) || {
 }
 local_hook=$top/hooks/pre-push.local
 if [ -e "$local_hook" ] || [ -L "$local_hook" ]; then
-  [ -f "$local_hook" ] && [ -x "$local_hook" ] || {
+  { [ -f "$local_hook" ] && [ -x "$local_hook" ]; } || {
     echo "pre-push: $local_hook が実行可能な通常のファイルでない。chmod +x するか、消す" >&2
     exit 1
   }
