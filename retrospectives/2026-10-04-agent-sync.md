@@ -30,6 +30,15 @@
 | 試作の部品は `Existing.Overwrite` で、同じ出力のパスを後勝ちにする | 部品は `Existing.Error`。下流の archetype を先に描画する test で、部品側の拒否を固定した (`1b10cc7`) |
 | 試作の otool の pipeline は、非システムの dylib が無いと `grep -v` が 1 で終わり pipefail で落ちる | awk で絞るようにした (`1b10cc7`) |
 | `.claude/skills/pr-workflow/` に、`pr.sh` が同じディレクトリに探す `codex-limits.sh` が無かった | symlink を足した (`eb636ec`) |
+| generated にあるパスを、利用者が変えていても上書き・削除した | HEAD から (mode を除いて) 変わっている・追跡していない・無視されていれば手順 3 で落ちる (`dfbb1d2`) |
+| 同じ作業ツリーの sync.sh の同時の起動が、手順 4 で交わりうる | `<git dir>/agent-sync.lock` を mkdir で取る (`dfbb1d2`) |
+| archetect の標準出力が sync.sh の標準出力に混ざる | 標準エラーへ回し、標準出力を `git status --short` だけにした (`dfbb1d2`) |
+| archetect の版と TMPDIR の定義域が宣言になかった | 版は 3.6.1 だけ、TMPDIR は解決済みの作業パスの文字を宣言し、test で固定した (`dfbb1d2`) |
+| trap が mktemp の後の cd・pwd の後だった。ldd・otool の出力を単語分割していた | trap を直後に置いた。1 行ずつ読む (`dfbb1d2`、`0d50b9c`) |
+| 止まる経路 (引数・yaml の source・入力の欠け・generated・symlink・OS など) の test が無かった | fixture を足した (`dfbb1d2`) |
+| 実行可能でない `hooks/pre-push.local` を黙って無視した。作業ツリーの無い push が理由を示さず落ちた | どちらも理由を示して止める (`67456ab`) |
+| CI の sysctl と、SANDBOX_RUNTIME=1 の飛ばす分岐に外せる条件が無かった | 隣に書いた (`dfbb1d2`、`0d50b9c`) |
+| pr-workflow の `repo.md` のテンプレートに、実体のパスからたどる読者への案内が無かった。このリポの実測の欄が「記録していない。」だった | 写したら消す案内を足し、「なし」にした (`ca07bf6`) |
 
 ## 残っていること
 
