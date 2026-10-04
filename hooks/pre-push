@@ -4,9 +4,9 @@
 # git が呼ぶのは verify.sh が $GIT_COMMON_DIR/hooks (全 worktree で共有) に写した写しで、このファイルではない。githooks(5) の pre-push: push の前に呼ばれ、非 0 で終わると git push は何も push せずに止まる。
 # hook が走る場所の定義域 (canon: facts/git/local-env-vars-and-hook-env。hook の cwd は push を打った場所によらず作業ツリーのルート):
 #   - main worktree、サブディレクトリから打った push: そのルートの hooks/pre-push.local を探す。
-#   - linked worktree、そのサブディレクトリから打った push: その worktree のルートの hooks/pre-push.local を探す (main のは使わない)。
+#   - linked worktree、そのサブディレクトリから打った push: その worktree のルートの hooks/pre-push.local を探す。
 #   - bare リポジトリ、作業ツリーの .git の中から打った push: 作業ツリーのルートを得られないので、止まる。
-# 許可の後、作業ツリーに hooks/pre-push.local があれば、同じ引数と stdin でそれに替わる (実行可能な通常のファイルでなければ、無視せず落ちる)。リポ固有の検査の置き場で、このファイルは agent-sync で配るので書き足さない。
+# 許可の後、作業ツリーに hooks/pre-push.local があれば、同じ引数と stdin でそれに替わる (実行可能な通常のファイルでなければ落ちる)。リポ固有の検査の置き場で、このファイルは agent-sync で配るので書き足さない。
 set -eu
 [ "${PUSH_OK:-}" = 1 ] || {
   echo "pre-push: PUSH_OK=1 が無い。push は pr-workflow の手順で行う (PUSH_OK=1 git push ...)" >&2

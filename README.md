@@ -33,7 +33,7 @@ skills は Claude plugin としてインストールして参照する (下記)�
 
 ## agent-sync で配る
 
-skills の外に各リポへ置くファイル (`hooks/pre-push`、pr-workflow、agent-sync の `sync.sh` 自身) は、ルートの `archetype.yaml` (Archetect の catalog) と `components/` の部品として配る。各リポは固定した版から `.agent-sync/sync.sh` で当てる。導入と運用は [setup-repo の 7 節](skills/setup-repo/SKILL.md#7-agent-sync-ikeyanagent-files-のファイルの配布)。
+skills の外に各リポへ置くファイル (`hooks/pre-push`、pr-workflow、agent-sync の `sync.sh` と `render.sb`) は、ルートの `archetype.yaml` (Archetect の catalog) と `components/` の部品として配る。各リポは固定した版から `.agent-sync/sync.sh` で当てる。導入と運用は [setup-repo の 7 節](skills/setup-repo/SKILL.md#7-agent-sync-ikeyanagent-files-のファイルの配布)。
 
 ## builtin の `/code-review` を review-perspectives に向ける
 

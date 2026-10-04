@@ -1,6 +1,6 @@
 # PR / ブランチ運用: このリポの値
 
-[SKILL.md](SKILL.md) が読む、このリポ固有の値。SKILL.md と手段のファイルは `skills/setup-repo/pr-workflow/` への symlink で、他のリポへ agent-sync で配るものと同じなので、このリポに固有のものはこのファイルだけに書く。
+[SKILL.md](SKILL.md) が読む、このリポ固有の値。SKILL.md と手段のファイルは、他のリポへ agent-sync で配る `skills/setup-repo/pr-workflow/` への symlink。このリポに固有のものはこのファイルだけに書く。
 
 ## 値
 
