@@ -33,6 +33,7 @@ description: Use when pushing a branch, creating a pull request or editing its d
 - **merge の後**: ローカルの作業ブランチを消す。squash merge では先端が既定ブランチの祖先にならず `git branch -d` が断るので、次の両方を確かめてから `git branch -D <branch>` で消す。
   - PR が merged である。
   - PR の head がブランチの先端と一致する。一致しなければ PR に入っていない commit があるので消さない。
+  - git は worktree で checkout 中のブランチを `-D` でも消せない (`cannot delete branch … used by worktree`)。そのブランチを checkout している worktree (linked worktree を含む) は、先に既定ブランチへ切り替えるか `git worktree remove` で消す。
 - **PR の説明**: 最新の HEAD に関連することだけを書く。push するたびに更新するので、計測結果を書くなら計測スクリプトを用意する。
   - 書くこと (寄稿規約に PR テンプレートがあればその構成に収め、無ければ次の 3 つを見出しにする):
     - Purpose: 何を達成しようとして、何を期待し、実際に何が起きたか。
