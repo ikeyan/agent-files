@@ -56,7 +56,7 @@ description: Use when creating a new repository, bringing an existing repository
     - 手元で動かない (GitHub API 等): 状態機械の fake
 - 単一検証コマンドを用意する (AGENTS.md 設計指針)。上記すべてを 1 つの入口に集約する。
 - push は `hooks/pre-push` (agent-sync の pre-push 部品で配る。7 節) で、push のコマンドに `PUSH_OK=1` が付いていないものを止める (付け方は [pr-workflow/SKILL.md](pr-workflow/SKILL.md) の「push の手順」)。単一検証コマンドで `hooks/pre-push` を common git dir (`git rev-parse --git-common-dir`) の `hooks` へ写す。写す先に `hooks/pre-push` と違う pre-push があれば (旧版でも)、このリポのものかを中身から決められないので、上書きせず落として置き換えのコマンドを示す。`core.hooksPath` が hook をよそへ向けていれば落とす。common git dir の `hooks` は linked worktree も共有し、checkout で消えない。`core.hooksPath` で作業ツリーの `hooks/` を指すと、`hooks/` の無い commit を checkout した worktree から hook 無しで push が通る。
-- push の前のリポ固有の検査は、実行可能な `hooks/pre-push.local` に書く。`hooks/pre-push` は配るものなので書き足さない。`hooks/pre-push` は `PUSH_OK=1` の判定の後、`hooks/pre-push.local` に同じ引数と stdin で替わり、その終了コードが push の可否になる。
+- push の前のリポ固有の検査は、実行可能な `hooks/pre-push.local` に書く。`hooks/pre-push` は配るものなので書き足さない。`hooks/pre-push` は `PUSH_OK=1` の判定の後、`hooks/pre-push.local` に同じ引数と stdin で替わり、その終了コードが push の可否になる。`hooks/pre-push.local` が実行可能な通常のファイルでなければ、無視せず push を止める。
 - レビューは review-perspectives skill で行う。観点は plugin で配られる。
   - テストフレームワーク・ランタイム・リポ自身の終了ハンドラや資源の型の名前を、ルートの `review-perspectives/<観点>.md` に書く (review-perspectives の [repo-supplement.md](../review-perspectives/repo-supplement.md))。
   - リポの中で経緯を置くパス (標準は `retrospectives/`) を、ルートの `review-perspectives/経緯と無いことの宣言を書かない.md` に書く (同じく repo-supplement.md)。
