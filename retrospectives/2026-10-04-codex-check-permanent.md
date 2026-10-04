@@ -16,7 +16,7 @@
 | 問題 | 直した先 |
 | --- | --- |
 | merge 済みのローカルの作業ブランチが残っていた (ユーザーの指摘) | pr-workflow の方針に「merge の後にローカルの作業ブランチを消す」を足した。squash merge なので、PR の head とブランチの先端の一致を確かめてから `git branch -D` (`89150a9`)。既存の `retro-pr22` も消した |
-| ブランチを消す手順が、checkout 中のブランチを git が消せないことを扱っていなかった (Codex) | 散文の手順を、テストした script `cleanup-branch.sh` に置き換えた (TBD)。Codex の指摘が同じ箇所に 3 回続いたため (1: checkout 中は `-D` でも消せない、2: 既定ブランチへの切り替えは別の worktree が checkout 中だと断られ、main worktree は削除できない、3: ディレクトリだけ消した linked worktree の登録が残ると `-D` が断られ、detach するディレクトリも無い) 機構の種類を変えた。script は先端と PR の head の一致を確かめ、`git worktree prune` で古い登録を外し、そのブランチを checkout している全 worktree を `git switch --detach` してから `git branch -D` する。worktree の種類と登録の状態の組み合わせは `scripts/test-cleanup-branch.sh` で固定した |
+| ブランチを消す手順が、checkout 中のブランチを git が消せないことを扱っていなかった (Codex) | 散文の手順を、テストした script `cleanup-branch.sh` に置き換えた (`d2b21df`)。Codex の指摘が同じ箇所に 3 回続いたため (1: checkout 中は `-D` でも消せない、2: 既定ブランチへの切り替えは別の worktree が checkout 中だと断られ、main worktree は削除できない、3: ディレクトリだけ消した linked worktree の登録が残ると `-D` が断られ、detach するディレクトリも無い) 機構の種類を変えた。script は先端と PR の head の一致を確かめ、`git worktree prune` で古い登録を外し、そのブランチを checkout している全 worktree を `git switch --detach` してから `git branch -D` する。worktree の種類と登録の状態の組み合わせは `scripts/test-cleanup-branch.sh` で固定した |
 | 満たされる見込みの無い解除条件が残っていた | 解除条件を外し、前提の文にした (`2ba9ef2`) |
 
 ## 残っていること
