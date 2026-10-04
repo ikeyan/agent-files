@@ -1,18 +1,18 @@
 #!/bin/bash
 # ikeyan/agent-files の部品のうち、このリポの .agent-sync/archetype が合成するものを描画し、作業ツリーに当てる。当てた結果は人が git diff で確かめてコミットする。
 #
-# 使い方: .agent-sync/sync.sh (引数なし)。対象はカレントディレクトリの git の作業ツリー。render.sb をこのスクリプトと同じディレクトリから読む。
+# 使い方: .agent-sync/sync.sh (引数なし)。対象はカレントディレクトリの git の作業ツリーで、このスクリプトはその作業ツリーのルートの .agent-sync/ にあるものでなければならない (違えば最初に落ちる。ルートは cwd から、render.sb はこのスクリプトのディレクトリから決めるので、別のリポのものを起動すると食い違う)。
 # 標準出力は最後の `git status --short` だけ。archetect の標準出力は標準エラーへ回す。
 # 入力 (作業ツリーのルートの .agent-sync/ の下):
 #   archetype/archetype.yaml  `source: https://<host>/<path>/<名前>.git#<40 桁の小文字 16 進の sha>` の形の行がちょうど 1 つ (名前は A-Z a-z 0-9 . _ - で、. と .. でない)。この sha が上流の固定で、書き換えが更新。
 #   archetype/archetype.lua   catalog.render で上流の部品を合成する。
 #   answers.yaml              全ての問いの答え。
-#   generated                 前回の sync が置いたパスの一覧。1 行 1 件、LC_ALL=C の順で重複なし。初回は空のファイル。
+#   generated                 前回の sync が置いたものの一覧。1 行 1 件 `<パス><TAB><置いたバイトの id>`、パスは LC_ALL=C の順で重複なし。初回は空のファイル。id は `git hash-object --no-filters` (git が使うオブジェクトの形式のハッシュで、sha1 のリポは 40 桁・sha256 のリポは 64 桁の小文字 16 進。改行・変換を通さないバイトそのもの。canon: facts/git/checkout-filters-vs-raw-blob)。
 #   描画に渡すのは archetype/ と answers.yaml のうち、追跡しているか無視されていないファイルの写しだけ。
 # 読む環境: PATH (git・archetect・realpath と、macOS では sandbox-exec と otool、Linux では bwrap と ldd)・TMPDIR・GIT_CONFIG_*。
 #   archetect は `archetect --version` が `archetect 3.6.1` (canon: facts/archetect と CI の verify.yml が固定する版) のものだけ。違えば落ちる。
 #   TMPDIR は書き込める既存のディレクトリ (未設定は /tmp)。その下に作る作業ディレクトリの解決済みのパスは、A-Z a-z 0-9 . _ / - だけ (archetect の設定の YAML と render.sb に引用せずに書くため)。違えば落ちる。
-#   git は GIT_CONFIG_*・GIT_CONFIG_PARAMETERS・GIT_CONFIG_GLOBAL・GIT_CONFIG_SYSTEM と設定 (url.<base>.insteadOf など) を読む。
+#   git は GIT_CONFIG_*・GIT_CONFIG_PARAMETERS・GIT_CONFIG_GLOBAL・GIT_CONFIG_SYSTEM と設定 (url.<base>.insteadOf など) を読む。ただし core.autocrlf・core.eol・属性 (.gitattributes・info/attributes・core.attributesFile) は読まない: 手順 1 は上流の中身を blob のバイトのまま作り、生成物の id は --no-filters で取る (checkout はそれらで中身を変える。canon: facts/git/checkout-filters-vs-raw-blob)。
 #   リポジトリの場所を決める GIT_* は読まない: `git rev-parse --local-env-vars` が挙げる変数のうち GIT_CONFIG・GIT_CONFIG_PARAMETERS・GIT_CONFIG_COUNT 以外が 1 つでも設定されていれば、起動の最初に落ちる (git の hook や `git rebase --exec` から起動すると、`git -C` は GIT_DIR などに勝てず、手順 1 の init・fetch・checkout が利用者のリポジトリに当たる。canon: facts/git/local-env-vars-and-hook-env)。
 #   LANG・LC_* は読まない: 起動の最初に LC_ALL=C を export する (bash 3.2 の glob の範囲は UTF-8 の locale で非 ASCII の文字を通す。canon: facts/shell/locale-dependent-ranges)。
 #   archetect は空の環境に HOME (作業ディレクトリの下) だけを足して起動するので、ARCHETECT_*・XDG_*・git の global config は描画に届かない (canon: facts/archetect/inputs)。
@@ -20,7 +20,7 @@
 # 排他: 作業ツリーごとに `$(git rev-parse --absolute-git-dir)/agent-sync.lock` を mkdir で取り、同じ作業ツリーの同時の起動は 2 つ目が落ちる。終わるとき (落ちるときも) 消す。kill -9 などで残ったら、起動中の sync.sh が無いことを確かめて手で消す。
 #
 # 手順:
-#   1. 取得: 固定した sha を git で浅く取る。上流のコードは実行しない。
+#   1. 取得: 固定した sha を git で浅く取り、tree の通常のファイル (mode 100644・100755) を、blob のバイトのまま `git ls-tree -r -z` と `git cat-file blob` で作る (mode は tree の値)。symlink (120000) と submodule (160000) は作らない (一覧が指せば手順 3 で通常のファイルでないとして落ちる)。パスに . .. .git (大文字小文字によらない) の名前があれば落ちる。上流のコードは実行しない。
 #   2. 描画: archetect を OS の sandbox (macOS は sandbox-exec と render.sb、Linux は bwrap) で動かす。ネットワーク無し。読めるのは入力の写し・取得した上流・archetect とその共有ライブラリだけ、書けるのは空の出力ディレクトリだけ。
 #   3. 計画: 下の定義域を全て検査する。違反があれば作業ツリーに触れずに終わる。
 #   4. 適用: 古いパスを消し、新しい・変わったファイルを置き、mode を揃え、generated を書き換える。
@@ -35,26 +35,25 @@
 #   - 置き先は全ての一覧を通して、大文字小文字によらず 1 回だけ (後勝ちにしない)。別の置き先の親のディレクトリと同じ (`foo` と `foo/bar`) 置き先も許さない (大文字小文字によらない。mkdir が失敗するか、`foo` が `foo/` の中へ入る)。
 #   - 置き先の最初の名前が .agent-sync (大文字小文字によらない) なら、`.agent-sync/sync.sh` と `.agent-sync/render.sb` (agent-sync の部品が置くもの) だけを許す。archetype/・answers.yaml・generated は sync.sh の入力で、上流に書かせない。
 #   - 一覧の外の描画の出力は、`-` の行の置き先と 1 対 1 に対応する。
+#   - 置き先の中に、.agent-sync/sync.sh がある (agent-sync の部品を合成している。描画が一覧を 1 つも出さなくても成功するので、無ければ generated の全てが古いパスになり sync.sh 自身まで消える)。
 # 作業ツリーの定義域 (置き先と、generated にあって置き先に無い古いパス。generated も上のパスと .agent-sync/ の規則に従う):
 #   - 途中のディレクトリは、無いか symlink でないディレクトリ。
-#   - 既にある置き先は、generated にある通常のファイルか symlink、または置くものと同じバイトの通常のファイル (利用者のファイルを上書きしない)。
-#   - 古いパスは、無いか、通常のファイルか symlink。
-# 同一性: 生成物は作業ツリーのルートからの相対パスで同定し、generated にあるパスだけを前回の結果として扱う (generated に無い置き先は、置くものと同じバイトの通常のファイルでなければ、上の定義域で利用者のファイルとして落ちる)。
-#   generated にあるパスの現在の中身が HEAD と違い (staged・追跡していない・無視されているを含む。mode だけの違いは除く)、かつ今回置くものとも違うときだけ、利用者の変更として上書きも削除もせず落ちる。前回の結果が未コミットでも、今回置くものと同じなら利用者の変更でない (続けて起動しても、手順 4 の途中で落ちた後に起動し直しても、同じ結果に収束する)。
-#   | generated にあるパスの状態                              | 置き先                   | 古いパス (generated にあって置き先に無い) |
-#   | 無い (消した、初めから無い)                             | 置く                     | 何もしない                                |
-#   | HEAD と同じ (mode だけ違うを含む)                       | 置く (mode も揃える)     | 消す                                      |
-#   | HEAD と違う追跡ファイルで、置くものと同じバイト         | そのまま (mode は揃える) | 落ちる                                    |
-#   | HEAD と違う追跡ファイルで、置くものと違うバイト         | 落ちる                   | 落ちる                                    |
-#   | staged で、置くものと同じ / 違うバイト                  | そのまま / 落ちる        | 落ちる                                    |
-#   | 追跡していない、置くものと同じ / 違うバイト             | そのまま / 落ちる        | 落ちる                                    |
-#   | 無視されている、置くものと同じ / 違うバイト             | そのまま / 落ちる        | 落ちる                                    |
-#   | symlink で HEAD と同じ                                  | 通常のファイルに置き換える | 消す                                    |
-#   | symlink で HEAD と違う (置くものとは同じにならない)     | 落ちる                   | 落ちる                                    |
-#   | 通常のファイルでも symlink でもない                     | 落ちる                   | 落ちる                                    |
-#   置き先は、通常のファイルでないかバイトが違う (cmp) ときに置き直し、mode は毎回揃える。
+#   - generated は 1 行 `<パス><TAB><id>`、パスは LC_ALL=C の順で重複なし、id は 40 桁か 64 桁の小文字 16 進。
+#   - 置き先・古いパスの現在の中身は、無いか、通常のファイル。symlink・ディレクトリ・その他は利用者のもので、generated にあっても落ちる (id が決まらない。symlink は先のものを書き換えさせないためにも置き換えない)。
+# 同一性 (これだけが判定。git の状態・HEAD・追跡の有無・core.fileMode は見ない):
+#   対象 = 作業ツリーのルートからの相対パスの通常のファイルの中身。鍵 = パス。id = `git hash-object --no-filters` (mode は含めず、置くときに毎回揃える)。
+#   等しいとみなす = id が等しい。cur = 現在の中身の id、rec = generated に記録された id、new = 今回置くものの id。
+#   | 状態                                                          | 置き先 (今回置くもの)        | 古いパス (generated にあって置き先に無い)       |
+#   | 無い                                                          | 置く                         | 何もしない                                       |
+#   | 通常のファイルで cur = new                                    | そのまま (mode は揃える)     | (置き先なので該当しない)                         |
+#   | 通常のファイルで cur = rec かつ cur != new (前回の結果)       | 置き直す                     | cur = rec: 消す                                  |
+#   | 通常のファイルで cur が rec とも new とも違う (利用者の変更。generated に無いパスは rec が無い) | 落ちる | 落ちる                                         |
+#   | symlink・ディレクトリ・その他                                 | 落ちる                       | 落ちる                                           |
+#   利用者が生成物を編集して commit しても、cur が rec と違えば落ちる (今回置くものと同じなら利用者の変更でない)。前回の結果が未コミットでも cur = rec なので、続けて起動しても、手順 4 の途中で落ちた後に同じ入力で起動し直しても、同じ結果に収束する。
+#   手順 4 の途中で落ちた後、入力 (上流の sha など) を変えて起動すると、generated に載っていない置き済みのファイルは今回置くものと違えば落ちる (消すか戻してから起動し直す)。
+#   手順 3 を通った置き先は無いか通常のファイルなので、手順 4 の mv が symlink を通して書くことは無い。
 # 資源: 取るのは、作業ディレクトリ・ロック・手順 4 が置き先ごとと generated に 1 つずつ作る作業ツリーの一時ファイル (同じディレクトリの `.agent-sync.XXXXXX`。現在の 1 つを wt_tmp が持つ)。全て EXIT trap が解放する (cp・chmod・mv が失敗して落ちるときも、一時ファイルを作業ツリーに残さない)。
-# 失敗: 手順 2 の描画が非 0 で終わる (archetect の失敗か、別の sandbox の中などで OS の sandbox を適用できない) と、終了状態を示して落ちる。手順 1〜3 のどこで落ちても作業ツリーは変わらない。手順 4 は検査済みのパスへの rm・mv・chmod だけだが、ファイルシステムの失敗で途中まで当たることはある (git status に出る)。起動し直せば、同一性の表に従って同じ結果に収束する。
+# 失敗: 手順 2 の描画が非 0 で終わると終了状態を示して落ちる。OS の sandbox を適用できなかった場合は固定の文言 `agent-sync: OS の sandbox を適用できない` で落ちる。それは描画の終了状態が、macOS では 71 かつ stderr に `sandbox-exec: sandbox_apply:` で始まる行 (canon: facts/claude-code/sandbox-exec-nested-apply-failure)、Linux では stderr に `bwrap: ` で始まる行 (bwrap が設定の失敗を出す書式。未測定) があるとき。手順 1〜3 のどこで落ちても作業ツリーは変わらない。手順 4 は検査済みのパスへの rm・mv・chmod だけだが、ファイルシステムの失敗で途中まで当たることはある (git status に出る)。起動し直せば、同一性の表に従って同じ結果に収束する。
 set -euo pipefail
 
 # 置き先と generated のパスの .agent-sync/ の規則 (描画の出力の定義域)。awk の本体の前に連ねる。
@@ -73,9 +72,10 @@ main() {
     [ -z "${!v+x}" ] || { echo "agent-sync: $v が設定されている。git の hook や git rebase --exec の中からは起動しない (git -C は $v に勝てず、利用者のリポジトリに当たる)" >&2; exit 1; }
   done
   export LC_ALL=C
-  here=$(cd "$(dirname "$0")" && pwd)
+  here=$(cd "$(dirname "$0")" && pwd -P)
   root=$(git rev-parse --show-toplevel)
   cfg=$root/.agent-sync
+  [ "$here" = "$(cd "$root" && pwd -P)/.agent-sync" ] || { echo "agent-sync: このスクリプトの場所 $here が、カレントの作業ツリー $root の .agent-sync/ でない (そのリポの .agent-sync/sync.sh を、そのリポの中で起動する)" >&2; exit 1; }
   [ "$(archetect --version 2>/dev/null)" = "archetect 3.6.1" ] || { echo "agent-sync: archetect 3.6.1 が PATH に無い (見つかった版: $(archetect --version 2>&1 || true))" >&2; exit 1; }
   local f
   for f in archetype/archetype.yaml archetype/archetype.lua answers.yaml generated; do
@@ -100,14 +100,13 @@ main() {
   # このパスを archetect の設定の YAML と render.sb の引数に、引用せずに書く。
   case $run in *[!A-Za-z0-9._/-]*) echo "agent-sync: 作業ディレクトリ $run に A-Z a-z 0-9 . _ / - 以外の文字がある (TMPDIR を変える)" >&2; exit 1 ;; esac
   src=$run/src/$name
-  mkdir -p "$src" "$run/ds" "$run/out" "$run/conf/home"
+  mkdir -p "$src" "$run/obj" "$run/ds" "$run/out" "$run/conf/home"
 
   # 1. 取得
-  git -C "$src" init -q
-  git -C "$src" fetch -q --depth 1 "$url" "$sha"
-  git -C "$src" -c advice.detachedHead=false checkout -q FETCH_HEAD
-  [ "$(git -C "$src" rev-parse HEAD)" = "$sha" ] || { echo "agent-sync: 取得した commit が $sha でない" >&2; exit 1; }
-  rm -rf "$src/.git"
+  git -C "$run/obj" init -q
+  git -C "$run/obj" fetch -q --depth 1 "$url" "$sha"
+  [ "$(git -C "$run/obj" rev-parse FETCH_HEAD)" = "$sha" ] || { echo "agent-sync: 取得した commit が $sha でない" >&2; exit 1; }
+  git -C "$run/obj" ls-tree -r -z FETCH_HEAD | materialize "$run/obj" "$src"
 
   local p
   git -C "$root" ls-files -z -c -o --exclude-standard -- .agent-sync/archetype .agent-sync/answers.yaml |
@@ -137,7 +136,7 @@ main() {
     (cd "$run/out" && env -i HOME="$run/conf/home" \
       "$(command -v sandbox-exec)" -f "$profile" -D BIN="$bin" -D KEG="$(dirname "$(dirname "$bin")")" \
       -D DS="$run/ds" -D SRC="$run/src" -D CONF="$run/conf" -D OUT="$run/out" \
-      "$bin" "${args[@]}" </dev/null >&2) || rc=$?
+      "$bin" "${args[@]}" </dev/null >&2 2>"$run/render.err") || rc=$?
     ;;
   Linux)
     # namespace には archetect とその共有ライブラリと入力しか無い。/bin/sh が無いので os.execute・io.popen は何も起動できない。
@@ -149,7 +148,7 @@ main() {
     done < <(ldd "$bin" | sed -nE 's|^[[:space:]]*[^[:space:]]+ => (/.+) \(0x[0-9a-f]+\)$|\1|p; s|^[[:space:]]*(/.+) \(0x[0-9a-f]+\)$|\1|p')
     b+=(--ro-bind "$run/ds" "$run/ds" --ro-bind "$run/src" "$run/src" --ro-bind "$run/conf" "$run/conf"
       --bind "$run/out" "$run/out" --chdir "$run/out" --setenv HOME "$run/conf/home" --remount-ro /)
-    bwrap "${b[@]}" "$bin" "${args[@]}" </dev/null >&2 || rc=$?
+    bwrap "${b[@]}" "$bin" "${args[@]}" </dev/null >&2 2>"$run/render.err" || rc=$?
     ;;
   *)
     echo "agent-sync: 対応していない OS: $(uname -s)" >&2
@@ -157,7 +156,17 @@ main() {
     ;;
   esac
 
-  [ "$rc" = 0 ] || { echo "agent-sync: 描画が exit $rc で終わった (archetect の失敗か、OS の sandbox を適用できない。別の sandbox の中なら、その外で起動する。理由は上の出力)" >&2; exit 1; }
+  cat "$run/render.err" >&2
+  if [ "$rc" != 0 ]; then
+    # sandbox の起動が対象 (archetect) を起動する前に失敗したときの、起動側の終了状態と文言。
+    if { [ "$(uname -s)" = Darwin ] && [ "$rc" = 71 ] && grep -q '^sandbox-exec: sandbox_apply: ' "$run/render.err"; } ||
+      { [ "$(uname -s)" = Linux ] && grep -q '^bwrap: ' "$run/render.err"; }; then
+      echo "agent-sync: OS の sandbox を適用できない (exit $rc)。別の sandbox の中などでは入れ子にできないので、その外で起動する。理由は上の出力" >&2
+    else
+      echo "agent-sync: 描画が exit $rc で終わった (archetect の失敗。理由は上の出力)" >&2
+    fi
+    exit 1
+  fi
 
   # 3. 計画
   cd "$run/out"
@@ -226,37 +235,44 @@ main() {
       for (i = 1; i <= n; i++) if (a[i] !~ /^[A-Za-z0-9._-]+$/ || a[i] == "." || a[i] == ".." || tolower(a[i]) == ".git") return 1
       return 0
     }
-    bad_path($0) { print "agent-sync: generated:" NR ": パスが定義域の外: " $0 > "/dev/stderr"; bad = 1; next }
-    agent_bad($0) { print "agent-sync: generated:" NR ": .agent-sync/ の下の、置いてよい 2 つ (sync.sh・render.sb) 以外: " $0 > "/dev/stderr"; bad = 1 }
+    function fail(msg) { print "agent-sync: generated:" NR ": " msg > "/dev/stderr"; bad = 1 }
+    NF != 2 { fail("`<パス><TAB><id>` の 2 つの欄でない"); next }
+    $2 !~ /^([0-9a-f]{40}|[0-9a-f]{64})$/ { fail("id が 40 桁か 64 桁の小文字 16 進でない: " $2); next }
+    bad_path($1) { fail("パスが定義域の外: " $1); next }
+    agent_bad($1) { fail(".agent-sync/ の下の、置いてよい 2 つ (sync.sh・render.sb) 以外: " $1) }
     END { exit bad }
   ' "$cfg/generated"
-  sort -c -u "$cfg/generated" 2>/dev/null || { echo "agent-sync: $cfg/generated が LC_ALL=C の順で重複なしでない" >&2; exit 1; }
-  cut -f1 "$run/records" | sort >"$run/new"
-  comm -23 "$cfg/generated" "$run/new" >"$run/stale"
+  cut -f1 "$cfg/generated" | sort -c -u 2>/dev/null || { echo "agent-sync: $cfg/generated のパスが LC_ALL=C の順で重複なしでない" >&2; exit 1; }
+  cut -f1 "$cfg/generated" >"$run/gen_paths"
+  cut -f1 "$run/records" | sort >"$run/new_paths"
+  comm -23 "$run/gen_paths" "$run/new_paths" >"$run/stale"
+  cut -f1 "$run/records" | grep -qxF .agent-sync/sync.sh || { echo "agent-sync: 描画が .agent-sync/sync.sh を置かない (archetype が agent-sync の部品を合成していない)" >&2; errs=1; }
 
-  local dest from mode list t
+  local dest from mode list t new cur rec
+  : >"$run/new"
   while IFS=$'\t' read -r dest from mode list; do
+    new=
     if [ "$from" != - ]; then
       if ! parents_ok "$src" "$from" || [ -L "$src/$from" ] || [ ! -f "$src/$from" ]; then
         echo "agent-sync: $list: 上流のパス $from が、symlink を通らない通常のファイルでない" >&2
         errs=1
+        continue
       fi
     fi
+    new=$(id_of "$(content_of "$dest" "$from")")
+    printf '%s\t%s\n' "$dest" "$new" >>"$run/new"
     t=$root/$dest
     if ! parents_ok "$root" "$dest"; then
       echo "agent-sync: 置き先 $dest の途中に、symlink かディレクトリでないものがある" >&2
       errs=1
     elif [ -L "$t" ] || [ -e "$t" ]; then
-      if grep -qxF -- "$dest" "$cfg/generated"; then
-        if ! { [ -L "$t" ] || [ -f "$t" ]; }; then
-          echo "agent-sync: 置き先 $dest が通常のファイルでも symlink でもない" >&2
-          errs=1
-        elif user_changed "$dest" "$(content_of "$dest" "$from")"; then
-          echo "agent-sync: 置き先 $dest が generated にあるが、HEAD とも置くものとも違う (利用者の変更)。commit するか戻してから起動し直す" >&2
-          errs=1
-        fi
-      elif [ -L "$t" ] || [ ! -f "$t" ] || ! cmp -s "$(content_of "$dest" "$from")" "$t"; then
-        echo "agent-sync: 置き先 $dest に、generated に無く置くものと違うもの (利用者のファイル) がある。消すか移してから起動し直す" >&2
+      cur=$(id_of "$t")
+      rec=$(recorded_id "$dest")
+      if [ -z "$cur" ]; then
+        echo "agent-sync: 置き先 $dest が通常のファイルでない (symlink・ディレクトリなど)。消すか移してから起動し直す" >&2
+        errs=1
+      elif [ "$cur" != "$new" ] && [ "$cur" != "$rec" ]; then
+        echo "agent-sync: 置き先 $dest の中身が、前回置いたもの (generated の id) とも今回置くものとも違う (利用者のファイル・変更)。commit 済みでも同じ。移すか戻してから起動し直す" >&2
         errs=1
       fi
     fi
@@ -267,11 +283,12 @@ main() {
       echo "agent-sync: 古いパス $p の途中に、symlink かディレクトリでないものがある" >&2
       errs=1
     elif [ -e "$t" ] || [ -L "$t" ]; then
-      if [ ! -L "$t" ] && [ ! -f "$t" ]; then
-        echo "agent-sync: 古いパス $p が通常のファイルでも symlink でもない" >&2
+      cur=$(id_of "$t")
+      if [ -z "$cur" ]; then
+        echo "agent-sync: 古いパス $p が通常のファイルでない (symlink・ディレクトリなど)" >&2
         errs=1
-      elif user_changed "$p"; then
-        echo "agent-sync: 古いパス $p が HEAD から変わっている (利用者の変更)。commit するか戻してから起動し直す" >&2
+      elif [ "$cur" != "$(recorded_id "$p")" ]; then
+        echo "agent-sync: 古いパス $p の中身が、前回置いたもの (generated の id) と違う (利用者の変更)。移すか戻してから起動し直す" >&2
         errs=1
       fi
     fi
@@ -287,7 +304,8 @@ main() {
   done <"$run/stale"
   while IFS=$'\t' read -r dest from mode list; do
     t=$root/$dest
-    if [ -L "$t" ] || ! cmp -s "$(content_of "$dest" "$from")" "$t"; then
+    new=$(id_of "$(content_of "$dest" "$from")")
+    if [ "$(id_of "$t")" != "$new" ]; then
       mkdir -p "$(dirname "$t")"
       # 新しい inode に書いて rename する。動いている sync.sh 自身も置き換えるので、上書きで中身を変えない。
       wt_tmp=$(mktemp "$(dirname "$t")/.agent-sync.XXXXXX")
@@ -300,18 +318,34 @@ main() {
     fi
   done <"$run/records"
   wt_tmp=$(mktemp "$cfg/.agent-sync.XXXXXX")
-  cp "$run/new" "$wt_tmp"
+  sort "$run/new" >"$wt_tmp"
   chmod 644 "$wt_tmp"
   mv -f "$wt_tmp" "$cfg/generated"
   wt_tmp=
   git -C "$root" status --short
 }
 
-user_changed() { # <相対パス> [<置くものの中身のファイル>]: 同一性の表で、作業ツリーのパスが利用者の変更か
-  local t=$root/$1
-  { [ -e "$t" ] || [ -L "$t" ]; } || return 1
-  [ -n "$(git -C "$root" -c core.fileMode=false status --porcelain --ignored -- "$1")" ] || return 1
-  if [ -n "${2:-}" ] && [ ! -L "$t" ] && [ -f "$t" ] && cmp -s "$2" "$t"; then return 1; fi
+id_of() { # <絶対パス>: 通常のファイル (symlink でない) の中身の id。それ以外は空 (hash-object は symlink の先の中身を返すので -L を先に除く)
+  if [ -f "$1" ] && [ ! -L "$1" ]; then git -C "$root" hash-object --no-filters -- "$1"; fi
+}
+
+recorded_id() { # <パス>: generated に記録された id (無ければ空)
+  awk -F '\t' -v p="$1" '$1 == p { print $2 }' "$cfg/generated"
+}
+
+materialize() { # <リポ> <先>: stdin の `git ls-tree -r -z` の出力から、通常のファイルを blob のバイトのまま先に作る
+  local repo=$1 to=$2 e meta p mode oid
+  while IFS= read -r -d '' e; do
+    meta=${e%%$'\t'*}
+    p=${e#*$'\t'}
+    mode=${meta%% *}
+    oid=${meta##* }
+    case $mode in 120000 | 160000) continue ;; 100644 | 100755) ;; *) echo "agent-sync: 上流の $p の mode $mode が定義域の外" >&2; exit 1 ;; esac
+    case /$p/ in */./* | */../* | */[.][Gg][Ii][Tt]/*) echo "agent-sync: 上流のパス $p に . .. .git の名前がある" >&2; exit 1 ;; esac
+    mkdir -p "$to/$(dirname "$p")"
+    git -C "$repo" cat-file blob "$oid" >"$to/$p"
+    [ "$mode" = 100644 ] || chmod 755 "$to/$p"
+  done
 }
 
 parents_ok() { # <基点> <相対パス>: 途中のディレクトリが、無いか symlink でないディレクトリ

@@ -100,7 +100,7 @@ description: Use when creating a new repository, bringing an existing repository
   - `archetype/archetype.yaml`: catalog に ikeyan/agent-files を commit の sha (40 桁) で固定する。sha の書き換えが更新。
   - `archetype/archetype.lua`: 使う部品を `catalog.render` で合成する。リポ自身が描画するファイルは `archetype/content/` に置き、`content/.agent-sync/files/<名前>` の一覧に `-<TAB><置き先><TAB><mode>` の行で載せる (一覧の形は [sync.sh](agent-sync/sync.sh) の先頭)。`if_exists` は `Existing.Error` にする (重なりを後勝ちにしない)。
   - `answers.yaml`: 問いの答え。問いが無ければ `{}`。
-  - `generated`: sync.sh が置いたパスの一覧。sync.sh が書き換え、古いパスを消すのに使う。初回は空のファイル。
+  - `generated`: sync.sh が置いたものの一覧。1 行 1 件 `<パス><TAB><置いたバイトの id>` (`git hash-object --no-filters` の id)。sync.sh が書き換え、前回の結果か利用者の変更かの判定と、古いパスを消すのに使う。初回は空のファイル。
   - `sync.sh`・`render.sb`: agent-sync 部品が置く。
 
 ```yaml
@@ -121,9 +121,10 @@ return context
 ```
 
 - 起動: リポの中で `.agent-sync/sync.sh`。
-  - 描画を OS の sandbox に入れるので、別の sandbox の中 (Claude Code の Bash の sandbox など。sandbox-exec が exit 71) では描画が落ちる (終了状態を示す)。Claude は `dangerouslyDisableSandbox` で起動する (ユーザーの許可が要る)。
+  - 描画を OS の sandbox に入れるので、別の sandbox の中 (Claude Code の Bash の sandbox など。sandbox-exec が exit 71) では「OS の sandbox を適用できない」で落ちる。Claude は `dangerouslyDisableSandbox` で起動する (ユーザーの許可が要る)。
+  - そのリポの `.agent-sync/sync.sh` を、そのリポの中で起動する (別のリポの sync.sh は落ちる)。
   - 要るもの: `git`、`archetect` (3.6.1 だけ。違えば落ちる。`canon: facts/archetect`)、macOS では `sandbox-exec` と `otool` (Xcode Command Line Tools)、Linux では `bwrap` と `ldd` と非特権の user namespace (Ubuntu 23.10 以降は AppArmor が制限する)。
   - 落ちたら作業ツリーは変わらない (当てている途中のファイルシステムの失敗を除く)。置き先に generated に無い違うファイル (利用者のファイル) があれば落ちるので、中身を `repo.md` などリポが持つファイルへ移してから消す。
-  - generated にあるパスが HEAD から変わっていれば (前回の結果が未コミットの場合も) 落ちる。前回の結果は commit してから起動する。
+  - 置き先・古いパスの中身が、generated に記録した id (前回置いたもの) とも今回置くものとも違えば、利用者の変更として落ちる。commit 済みでも同じ。git の状態は見ないので、前回の結果が未コミットでも続けて起動できる。生成物を直したくなったら、置く元 (上流・リポの archetype) を直す。
 - 初回: 固定する sha の `skills/setup-repo/agent-sync/sync.sh` と `render.sb` を `.agent-sync/` へ手で写し (`sync.sh` は mode 755)、上の `archetype/`・`answers.yaml`・空の `generated` を作って起動する。写した `sync.sh` と `render.sb` は置くものと同じバイトなので、そのまま引き取られる。
 - 更新: `archetype.yaml` の sha を書き換えて起動し、`git diff` を確かめてコミットする。`sync.sh` 自身の更新も同じ diff に出て、次の起動から効く。

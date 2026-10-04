@@ -3,10 +3,10 @@
 # - 初回: 部品の一覧のファイルを、上流と同じバイトと一覧の mode で置く。一覧の mode は上流の git の mode と同じ。手で写した sync.sh と render.sb は同じバイトなので引き取る。下流の archetype が描画したファイルも置く。
 # - 2 回目は何も変えず、mode のずれと消したファイルは戻す
 # - 上流の更新 (v1 → v2): 変わったファイルを置き直し、一覧から消えたファイルを消す
-# - 作業ツリーを変えずに落ちる (理由も見る): 引数 (exit 2)、入力ファイルの欠け、archetype.yaml の source の行の定義域、generated の定義域・順序・古いパスの種類、answers の欠け、置き先の重複 (別の置き先の親のディレクトリを含む)、置き先の .agent-sync/ の下、一覧の行が定義域の外 (上流のパスの symlink、置き先の途中の symlink を含む)、一覧と描画の不一致、利用者のファイル、HEAD とも置くものとも違う生成物と HEAD から変わった古いパス、ロックが取られている、TMPDIR の文字、archetect の版、対応していない OS、OS の sandbox を適用できない (描画が非 0 で終わる)、リポジトリの場所を決める GIT_* (`git rev-parse --local-env-vars` の各変数)
-# - 環境: GIT_CONFIG* は通る (この test 自身が GIT_CONFIG_COUNT で上流へ向ける)。UTF-8 の locale (LANG・LC_ALL) でも通り、非 ASCII の文字は定義域の外として落ちる (置き先・source の名前・TMPDIR)
+# - 作業ツリーを変えずに落ちる (理由も見る): 引数 (exit 2)、入力ファイルの欠け、archetype.yaml の source の行の定義域、generated の定義域・順序・古いパスの種類、answers の欠け、置き先の重複 (別の置き先の親のディレクトリを含む)、置き先の .agent-sync/ の下、一覧の行が定義域の外 (上流のパスの symlink、置き先の途中の symlink を含む)、一覧と描画の不一致、描画が .agent-sync/sync.sh を置かない、利用者のファイル、生成物の同一性の表の落ちる行 (commit 済みの利用者の編集を含む)、ロックが取られている、別のリポの sync.sh の起動、TMPDIR の文字、archetect の版、対応していない OS、OS の sandbox を適用できない・描画が非 0 で終わる、リポジトリの場所を決める GIT_* (`git rev-parse --local-env-vars` の各変数)
+# - 環境: GIT_CONFIG* は通る (この test 自身が GIT_CONFIG_COUNT で上流へ向ける)。core.autocrlf・core.eol を変えても、置くバイトは上流の blob と同じ。UTF-8 の locale (LANG・LC_ALL) でも通り、文字の分類 (タブ・制御文字・空白・shell の特殊文字・é・あ・ｚ。canon: facts/shell/string-input-categories) ごとに、置き先・source の名前・TMPDIR の定義域の外として落ちる
 # - 標準出力は git status --short と同じ。終わった (落ちた) 後にロックが残らない
-# OS の sandbox を適用できない環境 (別の sandbox の中など) では、実際に適用を試す probe が失敗するので、描画を伴う検査を飛ばしたことを理由と一緒に stderr に出す。CI (環境変数 CI が空でない) では飛ばさず落とす。
+# OS の sandbox を適用できない環境 (別の sandbox の中など) では、最初の実際の描画 (初回) が sync.sh の固定の文言「OS の sandbox を適用できない」で落ちる。そのとき、描画を伴う残りの検査を飛ばしたことを理由と一緒に stderr に出す。CI (環境変数 CI が空でない) では落とす。
 # それ以外では archetect と、macOS では sandbox-exec と otool、Linux では bwrap と ldd が要り、無ければ落ちる。
 # ネットワークは使わない (上流は file システムの上のリポで、sync.sh が取る URL を git の insteadOf で向ける)。
 set -euo pipefail
@@ -152,26 +152,18 @@ v1=$(git -C upstream rev-parse HEAD)
 lists=$(cd upstream && find components -type f -path '*/content/.agent-sync/files/*' ! -path 'components/probe/*' | LC_ALL=C sort)
 [ -n "$lists" ] || { echo "上流に部品の一覧が無い" >&2; exit 1; }
 
-# OS の sandbox を適用できなければ、描画が非 0 で終わった状態を示して落ちる (sandbox-exec・bwrap を exit 71 で終わるものに替える)
-mkdir shim-sb
-printf '#!/bin/sh\nexit 71\n' >shim-sb/sandbox-exec
-cp shim-sb/sandbox-exec shim-sb/bwrap
-chmod 755 shim-sb/sandbox-exec shim-sb/bwrap
+# OS の sandbox を適用できなければ、固定の文言で落ちる (sandbox-exec・bwrap を、対象を起動する前に失敗する起動側の出力と終了状態の shim に替える)。文言の無い非 0 は、描画の失敗として落ちる
+mkdir shim-sb shim-sb-plain
+printf '#!/bin/sh\necho "sandbox-exec: sandbox_apply: Operation not permitted" >&2\nexit 71\n' >shim-sb/sandbox-exec
+printf '#!/bin/sh\necho "bwrap: No permissions to create new namespace" >&2\nexit 1\n' >shim-sb/bwrap
+printf '#!/bin/sh\nexit 71\n' >shim-sb-plain/sandbox-exec
+printf '#!/bin/sh\nexit 1\n' >shim-sb-plain/bwrap
+chmod 755 shim-sb/sandbox-exec shim-sb/bwrap shim-sb-plain/sandbox-exec shim-sb-plain/bwrap
+no_sandbox_msg='agent-sync: OS の sandbox を適用できない'
 make_ds nosb "$v1"
-expect_fail 'OS の sandbox を適用できない' nosb '描画が exit 71 で終わった' "PATH=$tmp/shim-sb:$PATH"
-# 描画に実際に OS の sandbox を適用できるかを、最小の probe で見る
-case $(uname -s) in
-Darwin) probe=(sandbox-exec -p '(version 1)(allow default)' /usr/bin/true) ;;
-Linux) probe=(bwrap --unshare-all --ro-bind / / --proc /proc --dev /dev /usr/bin/true) ;;
-esac
-if ! "${probe[@]}" >/dev/null 2>"$tmp/probe.err"; then
-  if [ -n "${CI:-}" ]; then
-    echo "test-agent-sync.sh: CI で OS の sandbox を適用できない (${probe[*]}) — $(cat "$tmp/probe.err")" >&2
-    exit 1
-  fi
-  echo "test-agent-sync.sh: OS の sandbox を適用できない (${probe[*]}: $(cat "$tmp/probe.err")) ので、描画を伴う検査を飛ばした。適用できる環境 (別の sandbox の外や CI) で回すと全部を検査する" >&2
-  exit "$status"
-fi
+expect_fail 'OS の sandbox を適用できない' nosb "$no_sandbox_msg" "PATH=$tmp/shim-sb:$PATH"
+expect_fail '文言の無い起動側の失敗は描画の失敗' nosb '描画が exit' "PATH=$tmp/shim-sb-plain:$PATH"
+! grep -qF "$no_sandbox_msg" "$tmp/err.txt" || { echo '文言の無い起動側の失敗が、OS の sandbox を適用できないとされた' >&2; status=1; }
 loc=
 avail=$(locale -a)
 for l in en_US.UTF-8 en_US.utf8 ja_JP.UTF-8 ja_JP.utf8 C.UTF-8 C.utf8; do
@@ -179,20 +171,40 @@ for l in en_US.UTF-8 en_US.utf8 ja_JP.UTF-8 ja_JP.utf8 C.UTF-8 C.utf8; do
 done
 [ -n "$loc" ] || echo "test-agent-sync.sh: UTF-8 の locale が無いので、locale の検査を飛ばした" >&2
 
-# 初回
+# 初回。最初の実際の描画が OS の sandbox を適用できずに落ちたときだけ、描画を伴う残りの検査を飛ばす。
+# 外せる条件: Claude Code の sandbox の中でも入れ子の sandbox-exec が通るようになれば、この分岐は動かない。分岐ごと消す。
 make_ds ds "$v1"
+status_before=$status
 sync_ok 初回 ds
-for list in $lists; do
-  while IFS=$'\t' read -r from dest mode; do
-    want_mode=$(git -C upstream ls-files -s -- "$from" | cut -c1-6)
-    [ "$want_mode" = "100$mode" ] || { echo "$list: $from の mode $mode が上流の git の mode ($want_mode) と違う" >&2; status=1; }
-    cmp -s "upstream/$from" "ds/$dest" || { echo "初回: ds/$dest が upstream/$from と違う" >&2; status=1; }
-    if [ "$mode" = 755 ]; then [ -x "ds/$dest" ]; else [ ! -x "ds/$dest" ]; fi || { echo "初回: ds/$dest の mode が $mode でない" >&2; status=1; }
-  done <"upstream/$list"
-done
+if grep -qF "$no_sandbox_msg" "$tmp/err.txt"; then
+  if [ -n "${CI:-}" ]; then
+    echo "test-agent-sync.sh: CI で OS の sandbox を適用できない — $(cat "$tmp/err.txt")" >&2
+    exit 1
+  fi
+  echo "test-agent-sync.sh: 初回の描画で OS の sandbox を適用できなかった ($(tail -n 3 "$tmp/err.txt" | tr '\n' ' ')) ので、描画を伴う残りの検査を飛ばした。適用できる環境 (別の sandbox の外や CI) で回すと全部を検査する" >&2
+  exit "$status_before"
+fi
+check_placed() { # <名前> <dir> <上流の rev>: 一覧のファイルが、その rev の blob と同じバイトと一覧の mode で置かれている
+  local list from dest mode want_mode
+  for list in $lists; do
+    while IFS=$'\t' read -r from dest mode; do
+      want_mode=$(git -C upstream ls-tree "$3" -- "$from" | cut -c1-6)
+      [ "$want_mode" = "100$mode" ] || { echo "$list: $from の mode $mode が上流の git の mode ($want_mode) と違う" >&2; status=1; }
+      git -C upstream cat-file blob "$3:$from" | cmp -s - "$2/$dest" || { echo "$1: $2/$dest が上流の $from と違う" >&2; status=1; }
+      if [ "$mode" = 755 ]; then [ -x "$2/$dest" ]; else [ ! -x "$2/$dest" ]; fi || { echo "$1: $2/$dest の mode が $mode でない" >&2; status=1; }
+    done < <(git -C upstream show "$3:$list")
+  done
+}
+check_placed 初回 ds "$v1"
 [ "$(cat ds/NOTICE.txt 2>/dev/null)" = "project demo" ] || { echo "初回: 下流の archetype が描画した NOTICE.txt が違う" >&2; status=1; }
-want_generated=$({ for list in $lists; do cut -f2 "upstream/$list"; done; echo NOTICE.txt; } | LC_ALL=C sort)
-[ "$(cat ds/.agent-sync/generated)" = "$want_generated" ] || { echo "初回: generated が置き先の一覧でない — $(cat ds/.agent-sync/generated)" >&2; status=1; }
+# generated は <置き先><TAB><置いたバイトの id>。上流のバイトの id と、下流が描画した NOTICE.txt のバイトの id
+want_generated=$({
+  for list in $lists; do
+    while IFS=$'\t' read -r from dest mode; do printf '%s\t%s\n' "$dest" "$(git hash-object --no-filters "upstream/$from")"; done <"upstream/$list"
+  done
+  printf 'NOTICE.txt\t%s\n' "$(printf 'project demo\n' | git hash-object --stdin)"
+} | LC_ALL=C sort)
+[ "$(cat ds/.agent-sync/generated)" = "$want_generated" ] || { echo "初回: generated が <置き先><TAB><id> の一覧でない — $(cat ds/.agent-sync/generated)" >&2; status=1; }
 [ -z "$(git -C ds status --porcelain -- .agent-sync/sync.sh .agent-sync/render.sb .env hooks/pre-push.local)" ] || { echo "初回: 手で写した sync.sh・render.sb か、下流のファイルが変わった" >&2; status=1; }
 [ ! -e ds/.agent-sync/files ] || { echo "初回: 一覧そのものを作業ツリーに置いた" >&2; status=1; }
 first_snap=$(snapshot ds)
@@ -285,20 +297,31 @@ for f in archetype/archetype.yaml archetype/archetype.lua answers.yaml generated
   mv missing.orig "ds/.agent-sync/$f"
 done
 
-# generated は、パスが定義域の中で、LC_ALL=C の順で重複が無く、古いパスは通常のファイルか symlink
+# generated は、1 行が <パス><TAB><id> で、パスが定義域の中で LC_ALL=C の順に重複が無く、id が 40 桁か 64 桁の小文字 16 進。古いパスは通常のファイル
 gen=ds/.agent-sync/generated
 cp "$gen" generated.orig
+id40=$(printf 'x\n' | git hash-object --stdin)
 LC_ALL=C sort -r generated.orig >"$gen"
 expect_fail 'generated が逆順' ds '重複なしでない'
 { cat generated.orig; tail -n 1 generated.orig; } >"$gen"
 expect_fail 'generated が重複' ds '重複なしでない'
-{ cat generated.orig; echo ../x; } >"$gen"
+{ cat generated.orig; printf '%s\t%s\n' "$(tail -n 1 generated.orig | cut -f1)" "$id40"; } >"$gen"
+expect_fail 'generated が同じパスで id 違いの重複' ds '重複なしでない'
+{ cat generated.orig; printf '../x\t%s\n' "$id40"; } >"$gen"
 expect_fail 'generated のパスが定義域の外' ds 'パスが定義域の外'
-{ cat generated.orig; echo .agent-sync/answers.yaml; } >"$gen"
+{ cat generated.orig; printf '.agent-sync/answers.yaml\t%s\n' "$id40"; } >"$gen"
 expect_fail 'generated に .agent-sync/ の入力' ds '置いてよい 2 つ'
-{ cat generated.orig; echo zdir; } >"$gen"
+{ cat generated.orig; echo zzz; } >"$gen"
+expect_fail 'generated の行に id が無い' ds '2 つの欄でない'
+{ cat generated.orig; printf 'zzz\t%s\textra\n' "$id40"; } >"$gen"
+expect_fail 'generated の行が 3 欄' ds '2 つの欄でない'
+for bad_id in abc "$(printf %s "$id40" | tr a-f A-F)" "${id40}0" "$(printf %s "$id40" | tr 0-9 g)"; do
+  { cat generated.orig; printf 'zzz\t%s\n' "$bad_id"; } >"$gen"
+  expect_fail "generated の id $bad_id" ds '小文字 16 進でない'
+done
+{ cat generated.orig; printf 'zdir\t%s\n' "$id40"; } >"$gen"
 mkdir ds/zdir
-expect_fail '古いパスがディレクトリ' ds '古いパス zdir が通常のファイルでも symlink でもない'
+expect_fail '古いパスがディレクトリ' ds '古いパス zdir が通常のファイルでない'
 rmdir ds/zdir
 cp generated.orig "$gen"
 
@@ -321,9 +344,8 @@ mkdir ds/.git/agent-sync.lock
 expect_fail 'ロックが取られている' ds 'agent-sync.lock がある'
 rmdir ds/.git/agent-sync.lock
 
-# TMPDIR の文字、archetect の版、OS
-mkdir "$tmp/t m p" shim-ver shim-os
-expect_fail 'TMPDIR に使えない文字' ds 'A-Z a-z 0-9 . _ / - 以外の文字がある' "TMPDIR=$tmp/t m p"
+# TMPDIR の文字の分類、archetect の版、OS
+mkdir shim-ver shim-os
 printf '#!/bin/sh\necho archetect 3.6.0\n' >shim-ver/archetect
 cat >shim-os/uname <<SHIM
 #!/bin/sh
@@ -333,18 +355,37 @@ SHIM
 chmod 755 shim-ver/archetect shim-os/uname
 expect_fail 'archetect の版' ds 'archetect 3.6.1 が PATH に無い' "PATH=$tmp/shim-ver:$PATH"
 expect_fail '対応していない OS' ds '対応していない OS: Plan9' "PATH=$tmp/shim-os:$PATH"
-if [ -n "$loc" ]; then
-  loc_env=(LC_ALL="$loc" LANG="$loc")
-  printf 'description: x\ncatalog:\n  agent-files:\n    source: https://example.com/x/é.git#%s\n' "$v1" >"$yaml"
-  expect_fail 'source の名前に非 ASCII の文字 (UTF-8 の locale)' ds '定義域の外' "${loc_env[@]}"
+
+# 文字の分類 (canon: facts/shell/string-input-categories) ごとに、置き先・source の名前・TMPDIR の定義域が拒む。UTF-8 の locale があればその下で回す。
+# 分類: 表示名 | 文字 | source の名前での文言 | 置き先での文言。タブと空白は、欄・単語の区切りの検査が先に当たる。
+loc_env=()
+[ -z "$loc" ] || loc_env=(LC_ALL="$loc" LANG="$loc")
+char_cases=(
+  "tab|$(printf '\t')|ちょうど 1 つでない|タブ区切りの 3 つの欄でない"
+  "x01|$(printf '\001')|定義域の外|置き先のパスが定義域の外"
+  "space| |ちょうど 1 つでない|置き先のパスが定義域の外"
+  "dollar|\$|定義域の外|置き先のパスが定義域の外"
+  "star|*|定義域の外|置き先のパスが定義域の外"
+  "dquote|\"|定義域の外|置き先のパスが定義域の外"
+  "squote|'|定義域の外|置き先のパスが定義域の外"
+  "backslash|\\|定義域の外|置き先のパスが定義域の外"
+  "latin-e-acute|é|定義域の外|置き先のパスが定義域の外"
+  "cjk-a|あ|定義域の外|置き先のパスが定義域の外"
+  "fullwidth-z|ｚ|定義域の外|置き先のパスが定義域の外"
+)
+tmpdir_msg='A-Z a-z 0-9 . _ / - 以外の文字がある'
+for c in "${char_cases[@]}"; do
+  IFS='|' read -r cname ch want_src want_dest <<<"$c"
+  mkdir "$tmp/t${ch}m"
+  expect_fail "TMPDIR に文字 $cname" ds "$tmpdir_msg" "TMPDIR=$tmp/t${ch}m" ${loc_env[@]+"${loc_env[@]}"}
+  printf 'description: x\ncatalog:\n  agent-files:\n    source: https://example.com/x/a%s.git#%s\n' "$ch" "$v1" >"$yaml"
+  expect_fail "source の名前に文字 $cname" ds "$want_src" ${loc_env[@]+"${loc_env[@]}"}
   cp yaml.orig "$yaml"
-  mkdir "$tmp/é"
-  expect_fail 'TMPDIR に非 ASCII の文字 (UTF-8 の locale)' ds 'A-Z a-z 0-9 . _ / - 以外の文字がある' "TMPDIR=$tmp/é" "${loc_env[@]}"
   cp "$local_list" list.orig
-  printf 'hooks/pre-push\té\t644\n' >>"$local_list"
-  expect_fail '置き先に非 ASCII の文字 (UTF-8 の locale)' ds '置き先のパスが定義域の外' "${loc_env[@]}"
+  printf 'hooks/pre-push\ta%sb\t644\n' "$ch" >>"$local_list"
+  expect_fail "置き先に文字 $cname" ds "$want_dest" ${loc_env[@]+"${loc_env[@]}"}
   cp list.orig "$local_list"
-fi
+done
 clean 定義域の検査の後 ds
 
 # 上流の更新: hooks/pre-push を変え、codex-limits.sh を一覧から消す
@@ -377,64 +418,93 @@ done
 [ "$(git -C ds rev-parse HEAD)" = "$ds_head" ] || { echo "GIT_*: ds の HEAD が変わった" >&2; status=1; }
 clean 'GIT_* の後' ds
 
-# generated にあるパスの同一性 (sync.sh の同一性の表の行ごと)。HEAD と同じ (行 2) は 2回目・v2 が見ている
+# 生成物の同一性 (sync.sh の同一性の表の行ごと)。表は git の状態・HEAD を見ないので、commit 済みの編集も、追跡していない・無視されているも、中身の id だけで決まる。
 base=$(git -C ds rev-parse HEAD)
 reset_ds() { git -C ds reset -q --hard "$base" && git -C ds clean -fdq; }
 dest=hooks/pre-push
 placed=upstream/hooks/pre-push
-head_as() { # <中身>: HEAD の $dest を <中身> にする (HEAD に無い状態は dest_untracked・dest_ignored で作る)
-  printf '%s\n' "$1" >"ds/$dest"
-  git -C ds commit -q -am "head $1"
+text_id() { printf '%s\n' "$1" | git hash-object --stdin; }
+rec_as() { # <パス> <id>: generated のそのパスの行の id を差し替える。id が - なら行を消す
+  awk -F '\t' -v OFS='\t' -v p="$1" -v id="$2" '$1 == p { if (id == "-") next; $2 = id } 1' ds/.agent-sync/generated >"$tmp/gen.new"
+  cp "$tmp/gen.new" ds/.agent-sync/generated
 }
-dest_untracked() { git -C ds rm -q "$dest" && git -C ds commit -q -m "no $dest"; }
-dest_ignored() { dest_untracked && printf '%s\n' "$dest" >>ds/.gitignore && git -C ds add .gitignore && git -C ds commit -q -m "ignore $dest"; }
-dest_ok() { # <名前>: 通り、$dest が置くものと同じバイトで実行可能
+placed_ok() { # <名前>: 通り、$dest が置くものと同じバイトの実行可能なファイルで、generated の行がその id
   sync_ok "$1" ds
   cmp -s "$placed" "ds/$dest" && [ -x "ds/$dest" ] || { echo "$1: $dest が置くものと同じバイトの実行可能なファイルでない" >&2; status=1; }
+  grep -qxF "$(printf '%s\t%s' "$dest" "$(git hash-object --no-filters "$placed")")" ds/.agent-sync/generated || { echo "$1: generated の $dest の行が置いたバイトの id でない" >&2; status=1; }
   reset_ds
 }
-dest_refused() { # <名前>: 落ち、$dest に触らない
-  expect_fail "$1" ds 'HEAD とも置くものとも違う'
+dest_refused() { # <名前> [<文言>]: 落ち、$dest に触らない
+  expect_fail "$1" ds "${2:-前回置いたもの (generated の id) とも今回置くものとも違う}"
   reset_ds
 }
-rm "ds/$dest"; dest_ok '置き先: 無い'
-head_as other; cp "$placed" "ds/$dest"; dest_ok '置き先: HEAD と違い、置くものと同じバイト'
-head_as other; printf 'mine\n' >"ds/$dest"; dest_refused '置き先: HEAD と違い、置くものと違うバイト'
-printf 'mine\n' >>"ds/$dest"; dest_refused '置き先: HEAD から変えた'
-head_as other; cp "$placed" "ds/$dest"; git -C ds add "$dest"; dest_ok '置き先: staged で、置くものと同じバイト'
-printf 'mine\n' >>"ds/$dest"; git -C ds add "$dest"; dest_refused '置き先: staged で、置くものと違うバイト'
-dest_untracked; cp "$placed" "ds/$dest"; dest_ok '置き先: 追跡していなくて、置くものと同じバイト'
-dest_untracked; printf 'mine\n' >"ds/$dest"; dest_refused '置き先: 追跡していなくて、置くものと違うバイト'
-dest_ignored; cp "$placed" "ds/$dest"; dest_ok '置き先: 無視されていて、置くものと同じバイト'
-dest_ignored; printf 'mine\n' >"ds/$dest"; dest_refused '置き先: 無視されていて、置くものと違うバイト'
-chmod 644 "ds/$dest"; dest_ok '置き先: mode だけ違う'
-rm "ds/$dest"; ln -s nowhere "ds/$dest"; git -C ds add "$dest"; git -C ds commit -q -m "symlink $dest"; dest_ok '置き先: symlink で HEAD と同じ'
-rm "ds/$dest"; ln -s nowhere "ds/$dest"; dest_refused '置き先: symlink で HEAD と違う'
-rm "ds/$dest"; mkdir "ds/$dest"; expect_fail '置き先: ディレクトリ' ds "置き先 $dest が通常のファイルでも symlink でもない"; reset_ds
+rm "ds/$dest"; placed_ok '置き先: 無い'
+rec_as "$dest" "$(text_id other)"; placed_ok '置き先: cur = new (generated の id は違う)'
+printf 'old\n' >"ds/$dest"; rec_as "$dest" "$(text_id old)"; placed_ok '置き先: cur = rec ≠ new (前回の結果)'
+printf 'old\n' >"ds/$dest"; rec_as "$dest" "$(text_id old)"; git -C ds add "$dest"; placed_ok '置き先: 前回の結果が staged'
+printf 'old\n' >"ds/$dest"; rec_as "$dest" "$(text_id old)"; printf '%s\n' "$dest" >>ds/.gitignore; git -C ds rm -q --cached "$dest"; placed_ok '置き先: 前回の結果が追跡されず無視されている'
+printf 'mine\n' >"ds/$dest"; dest_refused '置き先: 利用者の編集 (未コミット)'
+printf 'mine\n' >"ds/$dest"; git -C ds commit -q -am mine; dest_refused '置き先: 利用者の編集を commit した'
+printf 'mine\n' >"ds/$dest"; git -C ds add "$dest"; dest_refused '置き先: 利用者の編集が staged'
+printf 'mine\n' >"ds/$dest"; rec_as "$dest" -; dest_refused '置き先: generated に無く、置くものと違う'
+rec_as "$dest" -; placed_ok '置き先: generated に無く、置くものと同じ'
+chmod 644 "ds/$dest"; placed_ok '置き先: mode だけ違う'
+rm "ds/$dest"; ln -s nowhere "ds/$dest"; dest_refused '置き先: symlink' '通常のファイルでない'
+mkdir ds/linkdir; rm "ds/$dest"; ln -s ../linkdir "ds/$dest"
+expect_fail '置き先: ディレクトリへの symlink' ds '通常のファイルでない'
+[ -z "$(ls -A ds/linkdir)" ] || { echo '置き先: ディレクトリへの symlink の先に書かれた' >&2; status=1; }
+reset_ds
+rm "ds/$dest"; mkdir "ds/$dest"; dest_refused '置き先: ディレクトリ' '通常のファイルでない'
 
 old=zzz-old.txt
 printf 'old\n' >"ds/$old"
-echo "$old" >>ds/.agent-sync/generated
+printf '%s\t%s\n' "$old" "$(text_id old)" >>ds/.agent-sync/generated
 git -C ds add -A
 git -C ds commit -q -m old
 base=$(git -C ds rev-parse HEAD)
 stale_gone() { # <名前>: 通り、古いパスが無く generated にも無い
   sync_ok "$1" ds
-  if [ -e "ds/$old" ] || grep -qx "$old" ds/.agent-sync/generated; then echo "$1: 古いパス $old か generated の行が残った" >&2; status=1; fi
+  if [ -e "ds/$old" ] || grep -q "^$old$(printf '\t')" ds/.agent-sync/generated; then echo "$1: 古いパス $old か generated の行が残った" >&2; status=1; fi
   reset_ds
 }
-stale_refused() { # <名前>: 落ち、古いパスに触らない
-  expect_fail "$1" ds "古いパス $old が HEAD から変わっている"
+stale_refused() { # <名前> [<文言>]: 落ち、古いパスに触らない
+  expect_fail "$1" ds "${2:-古いパス $old の中身が、前回置いたもの (generated の id) と違う}"
   reset_ds
 }
-stale_gone '古いパス: HEAD と同じ'
+stale_gone '古いパス: cur = rec'
 rm "ds/$old"; stale_gone '古いパス: 消した'
 git -C ds rm -q "$old"; git -C ds commit -q -m "no $old"; stale_gone '古いパス: 初めから無い'
-printf 'edited\n' >>"ds/$old"; stale_refused '古いパス: HEAD から変えた'
-printf 'edited\n' >>"ds/$old"; git -C ds add "$old"; stale_refused '古いパス: staged'
-git -C ds rm -q --cached "$old"; git -C ds commit -q -m "untrack $old"; stale_refused '古いパス: 追跡していない'
-git -C ds rm -q --cached "$old"; printf '%s\n' "$old" >>ds/.gitignore; git -C ds add .gitignore; git -C ds commit -q -m "ignore $old"; stale_refused '古いパス: 無視されている'
+printf 'edited\n' >>"ds/$old"; stale_refused '古いパス: 編集 (未コミット)'
+printf 'edited\n' >>"ds/$old"; git -C ds commit -q -am "edit $old"; stale_refused '古いパス: 編集を commit した'
+printf 'edited\n' >>"ds/$old"; git -C ds add "$old"; stale_refused '古いパス: 編集が staged'
+printf 'old\n' >"ds/$old"; git -C ds rm -q --cached "$old"; git -C ds commit -q -m "untrack $old"; stale_gone '古いパス: 追跡していないが cur = rec'
+printf '%s\n' "$old" >>ds/.gitignore; git -C ds rm -q --cached "$old"; stale_gone '古いパス: 無視されているが cur = rec'
 chmod 755 "ds/$old"; stale_gone '古いパス: mode だけ違う'
+rm "ds/$old"; ln -s nowhere "ds/$old"; stale_refused '古いパス: symlink' '古いパス zzz-old.txt が通常のファイルでない'
+rm "ds/$old"; mkdir "ds/$old"; stale_refused '古いパス: ディレクトリ' '古いパス zzz-old.txt が通常のファイルでない'
+
+# 利用者が生成物を編集して commit した後、上流が同じファイルを置き続けても、一覧から消しても、落ちて何も変えない。上流が v2 に進む前の v1 の下流を作って回す。
+v1_downstream() { # <名前>: v1 の生成物を置いて commit した下流
+  make_ds "$1" "$v1"
+  sync_ok "$1 の初回" "$1"
+  git -C "$1" add -A
+  git -C "$1" commit -q -m sync
+}
+to_v2() { sed "s/#$v1\$/#$v2/" "$1/.agent-sync/archetype/archetype.yaml" >"$tmp/archetype.v2.yaml"; cp "$tmp/archetype.v2.yaml" "$1/.agent-sync/archetype/archetype.yaml"; }
+v1_downstream edit
+printf '# mine\n' >>edit/hooks/pre-push
+git -C edit commit -q -am 'user edit of a generated file'
+expect_fail '編集を commit した生成物を、上流が置き続ける (同じ pin)' edit '前回置いたもの (generated の id) とも今回置くものとも違う'
+to_v2 edit
+expect_fail '編集を commit した生成物を、上流が置き続ける (v2 で中身も変わる)' edit '前回置いたもの (generated の id) とも今回置くものとも違う'
+git -C edit checkout -q -- .agent-sync/archetype/archetype.yaml
+v1_downstream edit2
+printf '# mine\n' >>edit2/.claude/skills/pr-workflow/codex-limits.sh
+git -C edit2 commit -q -am 'user edit of a generated file'
+to_v2 edit2
+expect_fail '編集を commit した生成物を、上流が一覧から消す' edit2 '古いパス .claude/skills/pr-workflow/codex-limits.sh の中身が'
+[ -e edit2/.claude/skills/pr-workflow/codex-limits.sh ] || { echo '編集を commit した古いパスが消えた' >&2; status=1; }
+git -C edit2 checkout -q -- .agent-sync/archetype/archetype.yaml
 
 # 前回の結果を commit する前に続けて起動しても、何も変わらない
 make_ds twice "$v1"
@@ -479,7 +549,7 @@ apply_fails 'mv の失敗 (generated)' part2 'MV_FAIL_PAT=*/generated'
 
 # 上流の部品の Lua は、sandbox の外へ書けず、外を読めず、プロセスを起動できない
 make_ds hostile "$v1"
-printf 'local context = Context.new()\ncontext:merge(catalog.render("agent-files/probe", context))\nreturn context\n' >hostile/.agent-sync/archetype/archetype.lua
+printf 'local context = Context.new()\ncontext:merge(catalog.render("agent-files/agent-sync", context))\ncontext:merge(catalog.render("agent-files/probe", context))\nreturn context\n' >hostile/.agent-sync/archetype/archetype.lua
 rm -r hostile/.agent-sync/archetype/content
 git -C hostile add -A
 git -C hostile commit -q -m probe
@@ -487,6 +557,36 @@ sync_ok 'probe の部品' hostile
 want_probe=$(printf '%s: nil\n' write-outside read-outside os.execute io.popen)
 [ "$(cat hostile/probe.txt 2>/dev/null)" = "$want_probe" ] || { echo "probe の部品: sandbox の外への操作が通った — $(cat hostile/probe.txt 2>/dev/null)" >&2; status=1; }
 [ -z "$(ls -A outside)" ] || { echo "probe の部品: sandbox の外にファイルができた — $(ls -A outside)" >&2; status=1; }
+
+# 取り出しは git の設定 (core.autocrlf・core.eol) に依らず、置くバイトは上流の blob と同じ (checkout なら shebang が CRLF になる。canon: facts/git/checkout-filters-vs-raw-blob)
+make_ds crlf "$v1"
+sync_ok 'core.autocrlf=true・core.eol=crlf' crlf GIT_CONFIG_COUNT=3 GIT_CONFIG_KEY_1=core.autocrlf GIT_CONFIG_VALUE_1=true GIT_CONFIG_KEY_2=core.eol GIT_CONFIG_VALUE_2=crlf
+check_placed 'core.autocrlf=true・core.eol=crlf' crlf "$v1"
+! grep -q "$(printf '\r')" crlf/hooks/pre-push || { echo 'core.autocrlf=true: hooks/pre-push に CR がある' >&2; status=1; }
+
+# 描画が .agent-sync/sync.sh を置かなければ (agent-sync の部品を合成していない・一覧が 1 つも無い)、generated の全てを古いパスとして消さずに落ちる
+make_ds nocomp "$v1"
+sync_ok 'nocomp の初回' nocomp
+git -C nocomp add -A
+git -C nocomp commit -q -m sync
+grep -v 'agent-files/agent-sync' nocomp/.agent-sync/archetype/archetype.lua >"$tmp/lua.nocomp"
+cp "$tmp/lua.nocomp" nocomp/.agent-sync/archetype/archetype.lua
+expect_fail 'agent-sync の部品を合成していない' nocomp '.agent-sync/sync.sh を置かない'
+printf 'return Context.new()\n' >nocomp/.agent-sync/archetype/archetype.lua
+rm -r nocomp/.agent-sync/archetype/content
+expect_fail '描画が一覧を 1 つも出さない' nocomp '.agent-sync/sync.sh を置かない'
+
+# このスクリプトが、カレントの作業ツリーの .agent-sync/ のものでなければ落ちる。どちらの作業ツリーも変えない
+git init -q -b main wrong
+git -C wrong commit -q --allow-empty -m wrong
+before_ds=$(snapshot ds)
+before_wrong=$(snapshot wrong)
+rc=0
+(cd wrong && "$tmp/ds/.agent-sync/sync.sh") >/dev/null 2>"$tmp/err.txt" || rc=$?
+[ "$rc" != 0 ] || { echo '別のリポの sync.sh が通った' >&2; status=1; }
+grep -qF 'の .agent-sync/ でない' "$tmp/err.txt" || { echo "別のリポの sync.sh: 理由が無い — $(cat "$tmp/err.txt")" >&2; status=1; }
+[ "$(snapshot ds)" = "$before_ds" ] && [ "$(snapshot wrong)" = "$before_wrong" ] || { echo '別のリポの sync.sh が作業ツリーを変えた' >&2; status=1; }
+[ ! -e ds/.git/agent-sync.lock ] && [ ! -e wrong/.git/agent-sync.lock ] || { echo '別のリポの sync.sh がロックを残した' >&2; status=1; }
 
 # generated に無い置き先に利用者のファイルがあれば、置き換えない
 make_ds user "$v1"

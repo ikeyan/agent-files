@@ -2,7 +2,7 @@
 # このリポの単一検証コマンド。引数なしで全部を検査する。
 # 段は 2 種類で、その場で直す状態 (hooks/pre-push の写し (無いときだけ置く)、.claude/skills の symlink のずれ) を先に揃え、検査を後に回す。検査が落ちても状態は揃っているようにするため。VERIFY_READONLY=1 では直さず違反にする (CI 用)。
 # 事前条件: shellcheck・deno・curl (7.84 以降)・jq・archetect と、macOS では sandbox-exec と otool、Linux では bwrap と ldd が PATH にあること。ネットワーク (www.schemastore.org) に出られること。
-# agent-sync の描画の sandbox を適用できない環境 (別の sandbox の中など) では、test-agent-sync.sh は描画を伴う検査を飛ばして理由を stderr に出す (CI では落とす)。全部を検査するのは適用できる環境。
+# agent-sync の描画の sandbox を適用できない環境 (別の sandbox の中など) では、test-agent-sync.sh の最初の描画が sync.sh の「OS の sandbox を適用できない」で落ちるので、描画を伴う残りの検査を飛ばして理由を stderr に出す。CI では落とす。全部を検査するのは適用できる環境。
 # git は hook を $GIT_COMMON_DIR/hooks (linked worktree も共有し、checkout で変わらない) から呼ぶので、hooks/pre-push をそこへ写す。core.hooksPath (どの scope でも) が hook をよそへ向けていれば違反にし、設定は書かない。
 # 写す先の pre-push の状態ごとの扱い:
 # - 無い (壊れた symlink を含む。git が実行できない): 写す
