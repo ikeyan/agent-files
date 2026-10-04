@@ -1,0 +1,242 @@
+#!/usr/bin/env bash
+# skills/setup-repo/agent-sync/sync.sh を、このリポの catalog (作業ツリーのもの) から作った手元の上流と、下流のリポを相手に回す。verify.sh から呼ぶ。
+# - 初回: 部品の一覧のファイルを、上流と同じバイトと一覧の mode で置く。一覧の mode は上流の git の mode と同じ。手で写した sync.sh と render.sb は同じバイトなので引き取る。下流の archetype が描画したファイルも置く。
+# - 2 回目は何も変えず、mode のずれと消したファイルは戻す
+# - 上流の更新 (v1 → v2): 変わったファイルを置き直し、一覧から消えたファイルを消す
+# - 作業ツリーを変えずに落ちる: answers の欠け、置き先の重複、一覧の行が定義域の外、一覧と描画の不一致、利用者のファイル、SANDBOX_RUNTIME=1
+# SANDBOX_RUNTIME=1 (Claude Code の sandbox の中) では描画の sandbox を入れ子にできないので、SANDBOX_RUNTIME=1 の拒否だけを確かめ、残りを飛ばしたことを stderr に出す。
+# それ以外では archetect と、macOS では sandbox-exec と otool、Linux では bwrap と ldd が要り、無ければ落ちる。
+# ネットワークは使わない (上流は file システムの上のリポで、sync.sh が取る URL を git の insteadOf で向ける)。
+set -euo pipefail
+here=$(cd "$(dirname "$0")/.." && pwd)
+tmp=$(cd "$(mktemp -d "${TMPDIR:-/tmp}/agent-sync-test.XXXXXX")" && pwd -P)
+trap 'rm -rf "$tmp"' EXIT
+url=https://github.com/ikeyan/agent-files.git
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="url.$tmp/upstream.insteadOf" GIT_CONFIG_VALUE_0=$url
+export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
+export TMPDIR=$tmp
+status=0
+cd "$tmp"
+
+copy_tracked() { # <元> <先> <パス…>: 元の作業ツリーの、追跡しているか無視されていないファイルを先へ写す
+  local from=$1 to=$2 p
+  shift 2
+  git -C "$from" ls-files -z -c -o --exclude-standard -- "$@" | while IFS= read -r -d '' p; do
+    [ -e "$from/$p" ] || [ -L "$from/$p" ] || continue
+    mkdir -p "$to/$(dirname "$p")"
+    cp -P "$from/$p" "$to/$p"
+  done
+}
+
+make_ds() { # <名前> <上流の sha>: 手で sync.sh と render.sb を写した下流のリポを作る
+  local d=$tmp/$1
+  git init -q -b main "$d"
+  mkdir -p "$d/.agent-sync/archetype/content/.agent-sync/files" "$d/hooks"
+  printf 'description: test downstream\ncatalog:\n  agent-files:\n    source: %s#%s\n' "$url" "$2" >"$d/.agent-sync/archetype/archetype.yaml"
+  cat >"$d/.agent-sync/archetype/archetype.lua" <<'LUA'
+local context = Context.new()
+context:prompt_text("Project:", "project")
+directory.render("content", context, { if_exists = Existing.Error })
+context:merge(catalog.render("agent-files/agent-sync", context))
+context:merge(catalog.render("agent-files/pre-push", context))
+context:merge(catalog.render("agent-files/pr-workflow", context))
+return context
+LUA
+  printf 'project {{ project }}\n' >"$d/.agent-sync/archetype/content/NOTICE.txt"
+  printf -- '-\tNOTICE.txt\t644\n' >"$d/.agent-sync/archetype/content/.agent-sync/files/local"
+  printf 'project: demo\n' >"$d/.agent-sync/answers.yaml"
+  : >"$d/.agent-sync/generated"
+  cp "$here/skills/setup-repo/agent-sync/sync.sh" "$here/skills/setup-repo/agent-sync/render.sb" "$d/.agent-sync/"
+  printf '#!/bin/sh\nexit 0\n' >"$d/hooks/pre-push.local"
+  chmod 755 "$d/hooks/pre-push.local"
+  printf '.env\n' >"$d/.gitignore"
+  printf 'secret\n' >"$d/.env"
+  git -C "$d" add -A
+  git -C "$d" commit -q -m init
+}
+
+snapshot() { # <dir>: .git の外の全てのファイルの種類・実行可能か・中身
+  (cd "$1" && find . -name .git -prune -o \( -type f -o -type l \) -print | LC_ALL=C sort | while IFS= read -r f; do
+    if [ -L "$f" ]; then
+      echo "L $f $(readlink "$f")"
+    elif [ -x "$f" ]; then
+      echo "x $f $(cksum <"$f")"
+    else
+      echo "- $f $(cksum <"$f")"
+    fi
+  done)
+}
+
+expect_fail() { # <名前> <dir> <stderr に含まれる文字列> [<環境変数の代入…>]: sync.sh が落ち、作業ツリーを変えず、理由を示す
+  local name=$1 d=$2 want=$3 before
+  shift 3
+  before=$(snapshot "$d")
+  if (cd "$d" && env "$@" ./.agent-sync/sync.sh) >/dev/null 2>"$tmp/err.txt"; then
+    echo "$name: sync.sh が通った" >&2
+    status=1
+  fi
+  [ "$(snapshot "$d")" = "$before" ] || { echo "$name: 落ちた sync.sh が作業ツリーを変えた" >&2; status=1; }
+  grep -qF -- "$want" "$tmp/err.txt" || { echo "$name: stderr に「$want」が無い — $(cat "$tmp/err.txt")" >&2; status=1; }
+}
+
+sync_ok() { # <名前> <dir>
+  (cd "$2" && ./.agent-sync/sync.sh) >/dev/null 2>"$tmp/err.txt" || { echo "$1: sync.sh が落ちた — $(cat "$tmp/err.txt")" >&2; status=1; }
+}
+
+clean() { # <名前> <dir>: 作業ツリーが commit と同じ
+  [ -z "$(git -C "$2" status --porcelain)" ] || { echo "$1: 作業ツリーが変わった — $(git -C "$2" status --porcelain)" >&2; status=1; }
+}
+
+if [ "${SANDBOX_RUNTIME:-}" = 1 ]; then
+  make_ds refuse 0000000000000000000000000000000000000000
+  expect_fail 'SANDBOX_RUNTIME=1' "$tmp/refuse" SANDBOX_RUNTIME=1
+  echo "test-agent-sync.sh: SANDBOX_RUNTIME=1 (Claude Code の sandbox の中) なので、描画を伴う検査を飛ばした。sandbox の外で ./verify.sh を回すと全部を検査する (CI は全部を回す)" >&2
+  exit "$status"
+fi
+case $(uname -s) in
+Darwin) tools="archetect sandbox-exec otool" ;;
+Linux) tools="archetect bwrap ldd" ;;
+*) tools="archetect unsupported-os-$(uname -s)" ;;
+esac
+for t in $tools; do
+  command -v "$t" >/dev/null || { echo "test-agent-sync.sh: $t が PATH に無い (AGENTS.md「このリポの検証」の必要なもの)" >&2; exit 1; }
+done
+
+# 上流: このリポの作業ツリーの catalog と、一覧が指すファイルに、sandbox の外へ出ようとする検査用の部品 probe を足したもの
+mkdir upstream outside
+copy_tracked "$here" upstream archetype.yaml components hooks skills/setup-repo
+printf 'secret\n' >secret.txt
+printf '  probe:\n    source: ./components/probe\n' >>upstream/archetype.yaml
+mkdir -p upstream/components/probe/content/.agent-sync/files
+printf 'description: probe\n' >upstream/components/probe/archetype.yaml
+cat >upstream/components/probe/archetype.lua <<LUA
+local context = Context.new()
+local results = {}
+local function try(name, f)
+  local ok, r = pcall(f)
+  results[#results + 1] = name .. ": " .. tostring(ok and r)
+end
+try("write-outside", function()
+  local h = io.open("$tmp/outside/written", "w")
+  if h then h:write("x"); h:close(); return "written" end
+end)
+try("read-outside", function()
+  local h = io.open("$tmp/secret.txt")
+  if h then local s = h:read("a"); h:close(); return s end
+end)
+try("os.execute", function() return os.execute("/usr/bin/touch $tmp/outside/executed") end)
+try("io.popen", function()
+  local h = io.popen("/usr/bin/id")
+  if h then local s = h:read("a"); h:close(); if s ~= "" then return s end end
+end)
+context:set("results", table.concat(results, "\\n"))
+directory.render("content", context, { if_exists = Existing.Error })
+return context
+LUA
+printf '{{ results }}\n' >upstream/components/probe/content/probe.txt
+printf -- '-\tprobe.txt\t644\n' >upstream/components/probe/content/.agent-sync/files/probe
+git -C upstream init -q -b main
+git -C upstream add -A
+git -C upstream commit -q -m v1
+v1=$(git -C upstream rev-parse HEAD)
+lists=$(cd upstream && find components -type f -path '*/content/.agent-sync/files/*' ! -path 'components/probe/*' | LC_ALL=C sort)
+[ -n "$lists" ] || { echo "上流に部品の一覧が無い" >&2; exit 1; }
+
+# 初回
+make_ds ds "$v1"
+sync_ok 初回 ds
+for list in $lists; do
+  while IFS=$'\t' read -r from dest mode; do
+    want_mode=$(git -C upstream ls-files -s -- "$from" | cut -c1-6)
+    [ "$want_mode" = "100$mode" ] || { echo "$list: $from の mode $mode が上流の git の mode ($want_mode) と違う" >&2; status=1; }
+    cmp -s "upstream/$from" "ds/$dest" || { echo "初回: ds/$dest が upstream/$from と違う" >&2; status=1; }
+    if [ "$mode" = 755 ]; then [ -x "ds/$dest" ]; else [ ! -x "ds/$dest" ]; fi || { echo "初回: ds/$dest の mode が $mode でない" >&2; status=1; }
+  done <"upstream/$list"
+done
+[ "$(cat ds/NOTICE.txt 2>/dev/null)" = "project demo" ] || { echo "初回: 下流の archetype が描画した NOTICE.txt が違う" >&2; status=1; }
+want_generated=$({ for list in $lists; do cut -f2 "upstream/$list"; done; echo NOTICE.txt; } | LC_ALL=C sort)
+[ "$(cat ds/.agent-sync/generated)" = "$want_generated" ] || { echo "初回: generated が置き先の一覧でない — $(cat ds/.agent-sync/generated)" >&2; status=1; }
+[ -z "$(git -C ds status --porcelain -- .agent-sync/sync.sh .agent-sync/render.sb .env hooks/pre-push.local)" ] || { echo "初回: 手で写した sync.sh・render.sb か、下流のファイルが変わった" >&2; status=1; }
+[ ! -e ds/.agent-sync/files ] || { echo "初回: 一覧そのものを作業ツリーに置いた" >&2; status=1; }
+git -C ds add -A
+git -C ds commit -q -m sync
+
+sync_ok 2回目 ds
+clean 2回目 ds
+chmod 644 ds/hooks/pre-push
+chmod 755 ds/.claude/skills/pr-workflow/SKILL.md
+rm ds/.claude/skills/pr-workflow/gh.md
+sync_ok 'mode のずれと消したファイル' ds
+clean 'mode のずれと消したファイル' ds
+
+# 失敗して作業ツリーを変えない。一覧の行は下流の一覧に足す (作業ツリーの archetype を描画に渡す)
+local_list=ds/.agent-sync/archetype/content/.agent-sync/files/local
+cp ds/.agent-sync/answers.yaml answers.orig
+printf '{}\n' >ds/.agent-sync/answers.yaml
+expect_fail 'answers の欠け' ds project
+cp answers.orig ds/.agent-sync/answers.yaml
+while IFS='|' read -r line want; do
+  cp "$local_list" list.orig
+  printf '%b\n' "$line" >>"$local_list"
+  expect_fail "一覧の行 $line" ds "$want"
+  cp list.orig "$local_list"
+done <<'CASES'
+hooks/pre-push\thooks/pre-push\t755|置き先が重複している
+hooks/pre-push\tHOOKS/pre-push\t755|置き先が重複している
+-\tNOTICE.txt\t644|置き先が重複している
+/etc/passwd\tpasswd\t644|上流のパスが定義域の外
+hooks/../hooks/pre-push\tx\t644|上流のパスが定義域の外
+hooks/pre-push\t../x\t644|置き先のパスが定義域の外
+hooks/pre-push\t.git/hooks/pre-push\t755|置き先のパスが定義域の外
+hooks/pre-push\t.GIT/x\t755|置き先のパスが定義域の外
+hooks/pre-push\tx y\t644|置き先のパスが定義域の外
+hooks/pre-push\tx\t600|mode が 644 でも 755 でもない
+hooks/pre-push\tx|タブ区切りの 3 つの欄でない
+hooks/missing\tx\t644|symlink を通らない通常のファイルでない
+-\tmissing.txt\t644|描画が出していない
+CASES
+printf 'x\n' >ds/.agent-sync/archetype/content/extra.txt
+expect_fail '一覧に無い描画の出力' ds 'どの一覧にも - の行で無い'
+rm ds/.agent-sync/archetype/content/extra.txt
+printf 'hooks/pre-push\thooks/pre-push\t755\n' >ds/.agent-sync/archetype/content/.agent-sync/files/pre-push
+# 下流の archetype が先に描画するので、部品の描画の if_exists が重なりを拒むかを見る
+expect_fail '部品と同じ名前の一覧' ds 'File already exists'
+rm ds/.agent-sync/archetype/content/.agent-sync/files/pre-push
+clean 失敗の後 ds
+
+# 上流の更新: hooks/pre-push を変え、codex-limits.sh を一覧から消す
+printf '# v2\n' >>upstream/hooks/pre-push
+grep -v codex-limits.sh upstream/components/pr-workflow/content/.agent-sync/files/pr-workflow >pr-workflow.list
+cp pr-workflow.list upstream/components/pr-workflow/content/.agent-sync/files/pr-workflow
+git -C upstream commit -q -am v2
+v2=$(git -C upstream rev-parse HEAD)
+sed "s/#$v1\$/#$v2/" ds/.agent-sync/archetype/archetype.yaml >archetype.yaml
+cp archetype.yaml ds/.agent-sync/archetype/archetype.yaml
+sync_ok v2 ds
+[ ! -e ds/.claude/skills/pr-workflow/codex-limits.sh ] || { echo "v2: 一覧から消えた codex-limits.sh が残った" >&2; status=1; }
+cmp -s upstream/hooks/pre-push ds/hooks/pre-push || { echo "v2: hooks/pre-push が v2 でない" >&2; status=1; }
+! grep -q codex-limits.sh ds/.agent-sync/generated || { echo "v2: generated に codex-limits.sh が残った" >&2; status=1; }
+[ "$(git -C ds status --porcelain | LC_ALL=C sort)" = "$(printf '%s\n' ' D .claude/skills/pr-workflow/codex-limits.sh' ' M .agent-sync/archetype/archetype.yaml' ' M .agent-sync/generated' ' M hooks/pre-push' | LC_ALL=C sort)" ] ||
+  { echo "v2: 変わったものが想定と違う — $(git -C ds status --porcelain)" >&2; status=1; }
+git -C ds add -A
+git -C ds commit -q -m v2
+expect_fail 'SANDBOX_RUNTIME=1' ds SANDBOX_RUNTIME=1 SANDBOX_RUNTIME=1
+
+# 上流の部品の Lua は、sandbox の外へ書けず、外を読めず、プロセスを起動できない
+make_ds hostile "$v1"
+printf 'local context = Context.new()\ncontext:merge(catalog.render("agent-files/probe", context))\nreturn context\n' >hostile/.agent-sync/archetype/archetype.lua
+rm -r hostile/.agent-sync/archetype/content
+git -C hostile add -A
+git -C hostile commit -q -m probe
+sync_ok 'probe の部品' hostile
+want_probe=$(printf '%s: nil\n' write-outside read-outside os.execute io.popen)
+[ "$(cat hostile/probe.txt 2>/dev/null)" = "$want_probe" ] || { echo "probe の部品: sandbox の外への操作が通った — $(cat hostile/probe.txt 2>/dev/null)" >&2; status=1; }
+[ -z "$(ls -A outside)" ] || { echo "probe の部品: sandbox の外にファイルができた — $(ls -A outside)" >&2; status=1; }
+
+# generated に無い置き先に利用者のファイルがあれば、置き換えない
+make_ds user "$v1"
+printf '#!/bin/sh\necho mine\n' >user/hooks/pre-push
+expect_fail '利用者のファイル' user '利用者のファイル'
+
+exit "$status"
