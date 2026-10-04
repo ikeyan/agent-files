@@ -3,7 +3,7 @@
 # - 初回: 部品の一覧のファイルを、上流と同じバイトと一覧の mode で置く。一覧の mode は上流の git の mode と同じ。手で写した sync.sh と render.sb は同じバイトなので引き取る。下流の archetype が描画したファイルも置く。
 # - 2 回目は何も変えず、mode のずれと消したファイルは戻す
 # - 上流の更新 (v1 → v2): 変わったファイルを置き直し、一覧から消えたファイルを消す (ディレクトリは消さず、利用者の空のディレクトリが残る)
-# - 作業ツリーを変えずに落ちる (理由も見る): 引数 (exit 2)、入力ファイルの欠け、archetype.yaml の source の行の定義域、generated の定義域・順序・古いパスの種類、answers の欠け、置き先の重複 (別の置き先の親のディレクトリを含む)、置き先の .agent-sync/ の下、一覧の行が定義域の外 (上流のパスの symlink、置き先の途中の symlink を含む)、一覧と描画の不一致、描画の出力のファイル名に改行、描画が .agent-sync/sync.sh を置かない、利用者のファイル、置き先・古いパスの綴り (途中のディレクトリを含む) が既存のものと大文字小文字だけ違う (一時ディレクトリが大文字小文字を区別しないときだけ。区別するときは別のファイルとして通ることを見る。上流の大文字小文字だけの改名は、古い綴りを消すまで前回の出力だと示して落ちる)、途中のディレクトリの一覧が取れない (root では飛ばす)、置き先のディレクトリの綴りが大文字小文字だけ違う、生成物の同一性の表の落ちる行 (commit 済みの利用者の編集を含む)、ロックが取られている、別のリポの sync.sh の起動、TMPDIR の文字と絶対パス、上流のパスの大文字小文字の衝突、fetch の GIT_TERMINAL_PROMPT、archetect の版、対応していない OS、OS の sandbox を適用できない・描画が非 0 で終わる、リポジトリの場所を決める GIT_* (`git rev-parse --local-env-vars` の各変数)
+# - 作業ツリーを変えずに落ちる (理由も見る): 引数 (exit 2)、入力ファイルの欠け、archetype.yaml の source の行の定義域、generated の定義域・順序・古いパスの種類、answers の欠け、置き先の重複 (別の置き先の親のディレクトリを含む)、置き先の .agent-sync/ の下、一覧の行が定義域の外 (上流のパスの symlink、置き先の途中の symlink を含む)、一覧と描画の不一致、描画の出力のファイル名に改行、描画が .agent-sync/sync.sh を置かない、利用者のファイル、置き先・古いパスの綴り (途中のディレクトリを含む) が既存のものと大文字小文字だけ違う・KELVIN SIGN など Unicode で同じものに当たる、上流の tree が同じものに当たる別のパスを持つ (NFC と NFD を含む) (一時ディレクトリが大文字小文字を区別しないときだけ。区別するときは別のファイルとして通ることを見る。上流の大文字小文字だけの改名は、古い綴りを消すまで前回の出力だと示して落ちる)、途中のディレクトリの一覧が取れない (root では飛ばす)、置き先のディレクトリの綴りが大文字小文字だけ違う、生成物の同一性の表の落ちる行 (commit 済みの利用者の編集を含む)、ロックが取られている、別のリポの sync.sh の起動、TMPDIR の文字と絶対パス、上流のパスの大文字小文字の衝突、fetch の GIT_TERMINAL_PROMPT、archetect の版、対応していない OS、OS の sandbox を適用できない・描画が非 0 で終わる、リポジトリの場所を決める GIT_* (`git rev-parse --local-env-vars` の各変数)
 # - 環境: awk が正規表現の区間を持たなくても通る。GIT_CONFIG* は通る (この test 自身が GIT_CONFIG_COUNT で上流へ向ける)。core.autocrlf・core.eol を変えても、置くバイトは上流の blob と同じ。UTF-8 の locale (LANG・LC_ALL) でも通り、文字の分類 (タブ・制御文字・空白・shell の特殊文字・é・あ・ｚ。canon: facts/shell/string-input-categories) ごとに、置き先・source の名前・TMPDIR の定義域の外として落ちる
 # - 標準出力は git status --short と同じ。終わった (落ちた) 後にロックが残らない
 # OS の sandbox を適用できない環境 (別の sandbox の中など) では、最初の実際の描画 (初回) が sync.sh の固定の文言「OS の sandbox を適用できない」で落ちる。そのとき、描画を伴う残りの検査を飛ばしたことを理由と一緒に stderr に出す。CI (環境変数 CI が空でない) では落とす。
@@ -187,21 +187,40 @@ for l in en_US.UTF-8 en_US.utf8 ja_JP.UTF-8 ja_JP.utf8 C.UTF-8 C.utf8; do
 done
 [ -n "$loc" ] || echo "test-agent-sync.sh: UTF-8 の locale が無いので、locale の検査を飛ばした" >&2
 
-# 上流の tree が大文字小文字によらず衝突するパスを持てば、何も作らずに落ちる (macOS の APFS の既定のように大文字小文字を区別しないファイルシステムでは、後の blob が先のものを上書きする)。
-# macOS の作業ツリーでは両方を置けないので、git のオブジェクトを直接作る。どの ref からも届かない commit を sha で取る。
+# 上流の tree が、ファイルシステムの同じものに当たる別のパスを持てば、何も残さず落ちる (macOS の APFS の既定のように大文字小文字と Unicode の正規化を同一視するファイルシステムでは、後の blob が先のものを上書きする)。綴りの規則を再現せず、置く前に在るかをファイルシステムに聞くので、KELVIN SIGN (U+212A) の K と ASCII の K、NFC と NFD の é も落ちる。
+# macOS の作業ツリーでは両方を置けないので、git のオブジェクトを直接作る。どの ref からも届かない commit を sha で取る。区別するファイルシステムでは別のパスとして置かれるので、衝突の fixture は同一視するときだけ。
 blob_a=$(printf 'a\n' | git -C upstream hash-object -w --stdin)
 blob_b=$(printf 'b\n' | git -C upstream hash-object -w --stdin)
-sub=$(printf '100644 blob %s\tREADME.md\n100644 blob %s\treadme.md\n' "$blob_a" "$blob_b" | git -C upstream mktree)
-c_file=$(printf '040000 tree %s\tx\n' "$sub" | git -C upstream mktree | xargs -I{} git -C upstream commit-tree {} -m file-file)
+kelvin=$(printf '\xe2\x84\xaa')
+nfc=$(printf '\xc3\xa9')
+nfd=$(printf 'e\xcc\x81')
+tree_commit() { # <名前> <mktree の入力>: 入力の tree の commit を作る
+  printf '%s' "$2" | git -C upstream mktree | xargs -I{} git -C upstream commit-tree {} -m "$1"
+}
+two_files() { # <x の下の 1 つ目の名前> <2 つ目の名前>: 中身の違う 2 つのファイルを x の下に持つ tree の入力
+  printf '040000 tree %s\tx\n' "$(printf '100644 blob %s\t%s\n100644 blob %s\t%s\n' "$blob_a" "$1" "$blob_b" "$2" | git -C upstream mktree)"
+}
 sub_dir=$(printf '100644 blob %s\tx\n' "$blob_b" | git -C upstream mktree)
-c_dir=$(printf '100644 blob %s\tFoo\n040000 tree %s\tfoo\n' "$blob_a" "$sub_dir" | git -C upstream mktree | xargs -I{} git -C upstream commit-tree {} -m file-dir)
 c_nl=$(printf '100644 blob %s\ta\nb\0' "$blob_a" | git -C upstream mktree -z | xargs -I{} git -C upstream commit-tree {} -m newline)
-for c in "file-file|$c_file|上流のパス x/readme.md と x/README.md が大文字小文字で衝突する" "file-dir|$c_dir|上流のパス Foo と foo/x が大文字小文字で衝突する" "newline|$c_nl|に改行がある"; do
-  IFS='|' read -r cname csha cwant <<<"$c"
+collisions="newline|$c_nl|に改行がある"
+if [ "$ci_fs" = 1 ]; then
+  c_file=$(tree_commit file-file "$(two_files README.md readme.md)")
+  c_dir=$(tree_commit file-dir "$(printf '100644 blob %s\tFoo\n040000 tree %s\tfoo\n' "$blob_a" "$sub_dir")")
+  c_dir_first=$(tree_commit dir-file "$(printf '040000 tree %s\tFoo\n100644 blob %s\tfoo\n' "$sub_dir" "$blob_a")")
+  c_kelvin=$(tree_commit kelvin "$(two_files K.txt "$kelvin.txt")")
+  c_norm=$(tree_commit nfc-nfd "$(two_files "$nfc.txt" "$nfd.txt")")
+  collisions="file-file|$c_file|上流のパス x/readme.md がファイルシステム上で別のパスと同じものに当たる
+file-dir|$c_dir|の親のディレクトリを作れない
+dir-file|$c_dir_first|上流のパス foo がファイルシステム上で別のパスと同じものに当たる
+kelvin|$c_kelvin|がファイルシステム上で別のパスと同じものに当たる
+nfc-nfd|$c_norm|がファイルシステム上で別のパスと同じものに当たる
+$collisions"
+fi
+while IFS='|' read -r cname csha cwant; do
   make_ds collide "$csha"
   expect_fail "上流のパスの衝突 $cname" collide "$cwant"
   rm -rf collide
-done
+done <<<"$collisions"
 # fetch は GIT_TERMINAL_PROMPT=0 で呼ばれる (環境に GIT_TERMINAL_PROMPT=1 があっても。排他を握ったまま端末で資格情報を待たない)。git を、fetch のときの環境変数を記録する shim に替える
 mkdir shim-git
 cat >shim-git/git <<SHIM
@@ -524,7 +543,7 @@ reset_ds
 rm "ds/$dest"; mkdir "ds/$dest"; dest_refused '置き先: ディレクトリ' '通常のファイルでない'
 
 # 作業ツリーの既存のパスの綴りは、要求した綴りと完全に等しくなければならない。大文字小文字を区別しないファイルシステムでは、別の綴りの利用者のファイルや途中のディレクトリに当たるので落ちる。区別するファイルシステムでは別のファイルなので通る。
-clash=大文字小文字だけ違う
+clash=綴りの違う既存の
 if [ "$ci_fs" = 1 ]; then
   rm ds/NOTICE.txt; printf 'project demo\n' >ds/notice.txt; dest_refused '置き先: 大文字小文字だけ違う利用者のファイル (中身が同じ、generated に id がある)' "$clash"
   rm ds/NOTICE.txt; printf 'project demo\n' >ds/notice.txt; rec_as NOTICE.txt -; dest_refused '置き先: 大文字小文字だけ違う利用者のファイル (中身が同じ、generated に無い)' "$clash"
@@ -533,6 +552,9 @@ if [ "$ci_fs" = 1 ]; then
   rm -rf ds/hooks; git -C ds checkout -q -- hooks
   mv ds/hooks ds/Hooks; dest_refused '置き先: 途中のディレクトリが大文字小文字だけ違う' "$clash"
   rm -rf ds/Hooks; git -C ds checkout -q -- hooks
+  # 綴りの規則を再現せず、一覧の完全一致で見るので、大文字小文字の畳み込みでない同一視 (KELVIN SIGN と K) も落ちる
+  mv ds/hooks "ds/hoo${kelvin}s"; dest_refused '置き先: 途中のディレクトリが KELVIN SIGN の別名' "$clash"
+  rm -rf "ds/hoo${kelvin}s"; git -C ds checkout -q -- hooks
 else
   printf 'mine\n' >ds/notice.txt; sync_ok '置き先: 大文字小文字だけ違うファイルが別にある' ds
   [ "$(cat ds/notice.txt)" = mine ] || { echo '置き先: 別のファイル notice.txt が変わった' >&2; status=1; }
@@ -585,6 +607,8 @@ if [ "$ci_fs" = 1 ]; then
   rm "ds/$old"; printf 'old\n' >ds/ZZZ-old.txt; stale_refused '古いパス: 大文字小文字だけ違う利用者のファイル (中身が同じ)' "$clash"
   printf 'zzzdir/o.txt\t%s\n' "$(text_id old)" >>ds/.agent-sync/generated
   mkdir ds/Zzzdir; printf 'old\n' >ds/Zzzdir/o.txt; stale_refused '古いパス: 途中のディレクトリが大文字小文字だけ違う' "$clash"
+  printf 'zzzk.txt\t%s\n' "$(text_id old)" >>ds/.agent-sync/generated
+  printf 'old\n' >"ds/zzz${kelvin}.txt"; stale_refused '古いパス: KELVIN SIGN の別名のファイル (中身が同じ)' "$clash"
 else
   printf 'old\n' >ds/ZZZ-old.txt; sync_ok '古いパス: 大文字小文字だけ違うファイルが別にある' ds
   { [ ! -e "ds/$old" ] && [ -f ds/ZZZ-old.txt ]; } || { echo '古いパス: 別のファイル ZZZ-old.txt を消したか、古いパスが残った' >&2; status=1; }
@@ -607,7 +631,7 @@ if [ "$ci_fs" = 1 ]; then
   mv "$content/NOTICE.txt" "$content/rename.tmp"; mv "$content/rename.tmp" "$content/notice.txt"
   printf -- '-\tnotice.txt\t644\n' >"$content/.agent-sync/files/local"
   git -C ren add -A
-  expect_fail '上流の大文字小文字だけの改名' ren '前回 sync が置いた NOTICE.txt と大文字小文字だけ違う。NOTICE.txt を消してから起動し直す'
+  expect_fail '上流の大文字小文字だけの改名' ren '前回 sync が置いた NOTICE.txt と綴りが違う (ファイルシステム上は同じもの)。NOTICE.txt を消してから起動し直す'
   rm ren/NOTICE.txt
   sync_ok '上流の大文字小文字だけの改名の後、古い綴りを消した' ren
   { [ -n "$(find ren -maxdepth 1 -name notice.txt)" ] && ! grep -q NOTICE.txt ren/.agent-sync/generated && grep -q "^notice.txt$(printf '\t')" ren/.agent-sync/generated; } || { echo '上流の大文字小文字だけの改名: notice.txt が置かれず generated が改名後の綴りでない' >&2; status=1; }

@@ -22,7 +22,7 @@
 # 排他: 作業ツリーごとに `$(git rev-parse --absolute-git-dir)/agent-sync.lock` を mkdir で取り、同じ作業ツリーの同時の起動は 2 つ目が落ちる。終わるとき (落ちるときも) 消す。kill -9 などで残ったら、起動中の sync.sh が無いことを確かめて手で消す。
 #
 # 手順:
-#   1. 取得: 固定した sha を git で浅く取り、tree の通常のファイル (mode 100644・100755) を、blob のバイトのまま `git ls-tree -r -z` と `git cat-file blob` で作る (mode は tree の値)。symlink (120000) と submodule (160000) は作らない (一覧が指せば手順 3 で通常のファイルでないとして落ちる)。パスに . .. .git (大文字小文字によらない) の名前か改行があれば落ちる。通常のファイルの 2 つのパスが大文字小文字によらず等しい (`README.md` と `readme.md`)、または一方が他方の親のディレクトリ (`Foo` と `foo/x`) でも落ちる (大文字小文字を区別しないファイルシステムでは後の blob が先のものを黙って上書きし、一覧が指した中身が別のものになる)。上流のコードは実行しない。
+#   1. 取得: 固定した sha を git で浅く取り、tree の通常のファイル (mode 100644・100755) を、blob のバイトのまま `git ls-tree -r -z` と `git cat-file blob` で作る (mode は tree の値)。symlink (120000) と submodule (160000) は作らない (一覧が指せば手順 3 で通常のファイルでないとして落ちる)。パスに . .. .git (大文字小文字によらない) の名前か改行があれば落ちる。上流のパスは非 ASCII でもよい (日本語の名前など)。tree のパスは互いに別だが、ファイルシステムが別のパスを同じものとみなす (APFS の既定は大文字小文字と Unicode の正規化を同一視する。`README.md` と `readme.md`、KELVIN SIGN U+212A の `K` と ASCII の `K`、NFC と NFD の `é`) と、後の blob が先のものを黙って上書きして一覧が指した中身が別のものになる。この別名を綴りの規則 (大文字小文字の畳み込み) の再現で探さず、ファイルシステム自身の答えで見つける: blob を置く前に置き先のパス (途中のディレクトリを作る前の親のパスを含む) が既に在れば、別名と見て落ちる (取り出し先は空で、tree のパスは互いに別なので、在るのは別名だけ)。ディレクトリ同士の別名 (`Docs/a.md` と `docs/b.md`) は黙って 1 つに合わさるが、バイトは各ファイルが持つので害はなく、ファイルの衝突は上の検査が落とす。区別するファイルシステムでは別名が無く、`README.md` と `readme.md` は両方置かれる。上流のコードは実行しない。
 #   2. 描画: archetect を OS の sandbox (macOS は sandbox-exec と render.sb、Linux は bwrap) で動かす。ネットワーク無し。読めるのは入力の写し・取得した上流・archetect とその共有ライブラリだけ、書けるのは空の出力ディレクトリだけ。
 #   3. 計画: 下の定義域を全て検査する。違反があれば作業ツリーに触れずに終わる。
 #   4. 適用: 古いパスを消し、新しい・変わったファイルを置き、mode を揃え、generated を書き換える。古いパスの削除は記録したファイルだけで、ディレクトリは消さない (generated はファイルしか記録せず、git は空のディレクトリを追跡しないので、空になったものが前回の出力か利用者のものか区別できない)。
@@ -42,8 +42,8 @@
 #   - 置き先の中に、.agent-sync/sync.sh がある (agent-sync の部品を合成している。描画が一覧を 1 つも出さなくても成功するので、無ければ generated の全てが古いパスになり sync.sh 自身まで消える)。
 # 作業ツリーの定義域 (置き先と、generated にあって置き先に無い古いパス。generated も上のパスと .agent-sync/ の規則に従う):
 #   - 途中のディレクトリは、無いか symlink でないディレクトリ。
-#   - 既存の成分 (途中のディレクトリも最後の名前も) の綴りは、要求した綴りと完全に等しい。大文字小文字を区別しないファイルシステム (macOS の APFS の既定) では、`[ -e ]` も open も別の綴りの既存のものに当たる。親の一覧と突き合わせ、大文字小文字だけ違うものにしか当たらなければ落ちる (`readme.md` に利用者の `README.md`、`docs/` に `Docs/`)。区別するファイルシステムでは別のファイルで、どちらも許す (canon: facts/shell/case-insensitive-filesystem-path-resolution)。
-#     - 上流が置き先を大文字小文字だけ改名すると (`README.md` → `readme.md`)、大文字小文字を区別しないファイルシステムでは、前回 sync が置いた古い綴りに当たって落ち続ける。古い綴りを消してから起動し直す (落ちる文言は、当たった既存のパスが generated にあって中身が記録した id と同じなら、利用者のファイルでなく前回の出力だと示す)。
+#   - 既存の成分 (途中のディレクトリも最後の名前も) の綴りは、要求した綴りと完全に等しい。大文字小文字・Unicode の正規化を同一視するファイルシステム (macOS の APFS の既定) では、`[ -e ]` も open も別の綴りの既存のものに当たる (`readme.md` に利用者の `README.md`、`docs/` に `Docs/`、ASCII の `K` に KELVIN SIGN)。綴りの規則は再現せず、親の一覧に要求した綴りと完全に等しい名前が在るかをファイルシステムに聞き、無ければ別名として落ちる (別名の項目は、同じファイルに当たる (`-ef`) 一覧の項目から示す。特定できなければ固定の文言)。置き先の名前は ASCII だけなので、完全一致は find の -name (バイトの比較) で足りる。区別するファイルシステムでは別のファイルで、どちらも許す (canon: facts/shell/case-insensitive-filesystem-path-resolution)。
+#     - 上流が置き先を綴りだけ改名すると (`README.md` → `readme.md`)、別名を同一視するファイルシステムでは、前回 sync が置いた古い綴りに当たって落ち続ける。古い綴りを消してから起動し直す (落ちる文言は、別名の項目が generated にあって中身が記録した id と同じなら、利用者のファイルでなく前回の出力だと示す)。
 #   - 成分の親のディレクトリは一覧が取れる (読めないディレクトリは、綴りを突き合わせられないので落ちる)。
 #   - generated は 1 行 `<パス><TAB><id>`、パスは LC_ALL=C の順で重複なし、id は 40 桁か 64 桁の小文字 16 進。
 #   - 空のディレクトリも含め、ディレクトリが置き先・古いパスにあれば落ちる (利用者のもの。置き先の途中のディレクトリは空でも使う)。
@@ -57,7 +57,7 @@
 #   | 通常のファイルで cur = rec かつ cur != new (前回の結果)       | 置き直す                     | cur = rec: 消す                                  |
 #   | 通常のファイルで cur が rec とも new とも違う (利用者の変更。generated に無いパスは rec が無い) | 落ちる | 落ちる                                         |
 #   | symlink・ディレクトリ・その他                                 | 落ちる                       | 落ちる                                           |
-#   | パスの綴りが既存のものと大文字小文字だけ違う                  | 落ちる (中身が同じでも)      | 落ちる (中身が同じでも)                          |
+#   | パスの綴りが既存のものと別 (ファイルシステムは同じものとみなす) | 落ちる (中身が同じでも)    | 落ちる (中身が同じでも)                          |
 #   利用者が生成物を編集して commit しても、cur が rec と違えば落ちる (今回置くものと同じなら利用者の変更でない)。前回の結果が未コミットでも cur = rec なので、続けて起動しても、手順 4 の途中で落ちた後に同じ入力で起動し直しても、同じ結果に収束する。
 #   手順 4 の途中で落ちた後、入力 (上流の sha など) を変えて起動すると、generated に載っていない置き済みのファイルは今回置くものと違えば落ちる (消すか戻してから起動し直す)。
 #   sync は既存の inode を書き換えない (中身も mode も)。手順 4 は新しい inode を rename で置くので、置き先が別のパスとの hard link でも、そのパスのバイトと mode は変わらない。
@@ -299,9 +299,9 @@ main() {
     elif [ -n "$actual" ]; then
       rec=$(recorded_id "$actual")
       if [ -n "$rec" ] && [ "$(id_of "$root/$actual")" = "$rec" ]; then
-        echo "agent-sync: 置き先 $dest が、前回 sync が置いた $actual と大文字小文字だけ違う。$actual を消してから起動し直す" >&2
+        echo "agent-sync: 置き先 $dest が、前回 sync が置いた $actual と綴りが違う (ファイルシステム上は同じもの)。$actual を消してから起動し直す" >&2
       else
-        echo "agent-sync: 置き先 $dest が、大文字小文字だけ違う既存の $actual に当たる (大文字小文字を区別しないファイルシステム)。移すか綴りを戻してから起動し直す" >&2
+        echo "agent-sync: 置き先 $dest が、綴りの違う既存の $actual に当たる (大文字小文字・Unicode の正規化を同一視するファイルシステム)。移すか綴りを戻してから起動し直す" >&2
       fi
       errs=1
     elif [ -L "$t" ] || [ -e "$t" ]; then
@@ -324,7 +324,7 @@ main() {
     elif ! actual=$(case_clash "$root" "$p"); then
       errs=1
     elif [ -n "$actual" ]; then
-      echo "agent-sync: 古いパス $p が、大文字小文字だけ違う既存の $actual に当たる (大文字小文字を区別しないファイルシステム)。移すか綴りを戻してから起動し直す" >&2
+      echo "agent-sync: 古いパス $p が、綴りの違う既存の $actual に当たる (大文字小文字・Unicode の正規化を同一視するファイルシステム)。移すか綴りを戻してから起動し直す" >&2
       errs=1
     elif [ -e "$t" ] || [ -L "$t" ]; then
       cur=$(id_of "$t")
@@ -372,10 +372,9 @@ recorded_id() { # <パス>: generated に記録された id (無ければ空)
   awk -F '\t' -v p="$1" '$1 == p { print $2 }' "$cfg/generated"
 }
 
-materialize() { # <リポ> <先>: stdin の `git ls-tree -r -z` の出力から、通常のファイルを blob のバイトのまま先に作る。パスの検査を全部済ませてから作る
+materialize() { # <リポ> <先>: stdin の `git ls-tree -r -z` の出力から、通常のファイルを blob のバイトのまま先に作る。mode と名前の検査を済ませてから作り始める (別名の検査は作る途中。取り出し先は捨てる作業ディレクトリ)
   local repo=$1 to=$2 e meta p mode oid
   cat >"$run/tree"
-  : >"$run/tree-paths"
   while IFS= read -r -d '' e; do
     meta=${e%%$'\t'*}
     p=${e#*$'\t'}
@@ -384,33 +383,19 @@ materialize() { # <リポ> <先>: stdin の `git ls-tree -r -z` の出力から�
     case $mode in 120000 | 160000) continue ;; 100644 | 100755) ;; *) echo "agent-sync: 上流の $p の mode $mode が定義域の外" >&2; exit 1 ;; esac
     case /$p/ in */./* | */../* | */[.][Gg][Ii][Tt]/*) echo "agent-sync: 上流のパス $p に . .. .git の名前がある" >&2; exit 1 ;; esac
     case $p in *$'\n'*) echo "agent-sync: 上流のパス $p に改行がある" >&2; exit 1 ;; esac
-    printf '%s\n' "$p" >>"$run/tree-paths"
   done <"$run/tree"
-  # 大文字小文字を区別しないファイルシステムで、後の blob が先のものを上書きするか mkdir が理由なく落ちるパスの組。
-  awk '
-    {
-      k = tolower($0)
-      if (k in seen) { print "agent-sync: 上流のパス " $0 " と " seen[k] " が大文字小文字で衝突する" > "/dev/stderr"; bad = 1; next }
-      seen[k] = $0
-      n = split(k, a, "/")
-      pre = ""
-      for (i = 1; i < n; i++) {
-        pre = pre (i > 1 ? "/" : "") a[i]
-        if (!(pre in under)) under[pre] = $0
-      }
-    }
-    END {
-      for (k in under) if (k in seen) { print "agent-sync: 上流のパス " seen[k] " と " under[k] " が大文字小文字で衝突する" > "/dev/stderr"; bad = 1 }
-      exit bad
-    }
-  ' "$run/tree-paths" || exit 1
   while IFS= read -r -d '' e; do
     meta=${e%%$'\t'*}
     p=${e#*$'\t'}
     mode=${meta%% *}
     oid=${meta##* }
     case $mode in 120000 | 160000) continue ;; esac
-    mkdir -p "$to/$(dirname "$p")"
+    # 取り出し先は空で tree のパスは互いに別なので、在るのはファイルシステムが同じものとみなす別のパス (別名)。
+    mkdir -p "$to/$(dirname "$p")" || { echo "agent-sync: 上流のパス $p の親のディレクトリを作れない (ファイルシステム上で別のパスと同じものに当たるファイルがあるか、ファイルシステムの失敗)" >&2; exit 1; }
+    if [ -e "$to/$p" ] || [ -L "$to/$p" ]; then
+      echo "agent-sync: 上流のパス $p がファイルシステム上で別のパスと同じものに当たる" >&2
+      exit 1
+    fi
     git -C "$repo" cat-file blob "$oid" >"$to/$p"
     [ "$mode" = 100644 ] || chmod 755 "$to/$p"
   done <"$run/tree"
@@ -425,17 +410,19 @@ parents_ok() { # <基点> <相対パス>: 途中のディレクトリが、無�
   done
 }
 
-case_clash() { # <基点> <相対パス>: 既存の成分が、要求と大文字小文字だけ違う綴りでしか無ければ、その実際のパスを出す (無ければ空)。親の一覧が取れなければ文言を出して 1 を返す。大文字小文字を区別しないファイルシステムでは [ -e ] が別の綴りに当たるので、親の一覧 (find) と綴りを完全一致で突き合わせる
-  local cur=$1 rest=$2 name actual list pre=
+case_clash() { # <基点> <相対パス>: 既存の成分のうち、親の一覧に要求した綴りと完全に等しい名前が無い (ファイルシステムが別の綴りの項目に当てている) ものがあれば、その別名の実際のパスを出す (特定できなければ固定の文言。無ければ空)。親の一覧が取れなければ文言を出して 1 を返す。綴りの規則は再現せず、find の -name (置き先の名前は ASCII で、バイトの比較) と、同じファイルに当たる (-ef) 項目で聞く
+  local cur=$1 rest=$2 name exact alias pre=
   while [ -n "$rest" ]; do
     name=${rest%%/*}
     if [ "$name" = "$rest" ]; then rest=; else rest=${rest#*/}; fi
     { [ -e "$cur/$name" ] || [ -L "$cur/$name" ]; } || return 0
-    list=$(find "$cur" -mindepth 1 -maxdepth 1) || { echo "agent-sync: $cur の一覧を取れない" >&2; return 1; }
-    actual=$(printf '%s\n' "$list" | awk -v c="${#cur}" -v n="$name" '{ f = substr($0, c + 2) } f == n { e = 1 } tolower(f) == tolower(n) && f != n { a = f } END { if (!e && a != "") print a }')
-    if [ -n "$actual" ]; then
-      [ -z "$rest" ] || actual=$actual/$rest
-      printf '%s\n' "$pre$actual"
+    exact=$(find "$cur" -mindepth 1 -maxdepth 1 -name "$name") || { echo "agent-sync: $cur の一覧を取れない" >&2; return 1; }
+    if [ -z "$exact" ]; then
+      alias=$(find "$cur" -mindepth 1 -maxdepth 1 -exec test {} -ef "$cur/$name" \; -print | awk 'NR == 1 { print }') || { echo "agent-sync: $cur の一覧を取れない" >&2; return 1; }
+      alias=${alias#"$cur"/}
+      [ -n "$alias" ] || alias=一覧のどれか
+      [ -z "$rest" ] || alias=$alias/$rest
+      printf '%s\n' "$pre$alias"
       return 0
     fi
     pre=$pre$name/
