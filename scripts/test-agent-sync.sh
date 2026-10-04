@@ -3,7 +3,7 @@
 # - 初回: 部品の一覧のファイルを、上流と同じバイトと一覧の mode で置く。一覧の mode は上流の git の mode と同じ。手で写した sync.sh と render.sb は同じバイトなので引き取る。下流の archetype が描画したファイルも置く。
 # - 2 回目は何も変えず、mode のずれと消したファイルは戻す
 # - 上流の更新 (v1 → v2): 変わったファイルを置き直し、一覧から消えたファイルを消す
-# - 作業ツリーを変えずに落ちる (理由も見る): 引数 (exit 2)、入力ファイルの欠け、archetype.yaml の source の行の定義域、generated の定義域・順序・古いパスの種類、answers の欠け、置き先の重複 (別の置き先の親のディレクトリを含む)、置き先の .agent-sync/ の下、一覧の行が定義域の外 (上流のパスの symlink、置き先の途中の symlink を含む)、一覧と描画の不一致、描画が .agent-sync/sync.sh を置かない、利用者のファイル、置き先・古いパスの綴り (途中のディレクトリを含む) が既存のものと大文字小文字だけ違う (一時ディレクトリが大文字小文字を区別しないときだけ。区別するときは別のファイルとして通ることを見る)、生成物の同一性の表の落ちる行 (commit 済みの利用者の編集を含む)、ロックが取られている、別のリポの sync.sh の起動、TMPDIR の文字と絶対パス、上流のパスの大文字小文字の衝突、fetch の GIT_TERMINAL_PROMPT、archetect の版、対応していない OS、OS の sandbox を適用できない・描画が非 0 で終わる、リポジトリの場所を決める GIT_* (`git rev-parse --local-env-vars` の各変数)
+# - 作業ツリーを変えずに落ちる (理由も見る): 引数 (exit 2)、入力ファイルの欠け、archetype.yaml の source の行の定義域、generated の定義域・順序・古いパスの種類、answers の欠け、置き先の重複 (別の置き先の親のディレクトリを含む)、置き先の .agent-sync/ の下、一覧の行が定義域の外 (上流のパスの symlink、置き先の途中の symlink を含む)、一覧と描画の不一致、描画が .agent-sync/sync.sh を置かない、利用者のファイル、置き先・古いパスの綴り (途中のディレクトリを含む) が既存のものと大文字小文字だけ違う (一時ディレクトリが大文字小文字を区別しないときだけ。区別するときは別のファイルとして通ることを見る。上流の大文字小文字だけの改名は、古い綴りを消すまで前回の出力だと示して落ちる)、途中のディレクトリの一覧が取れない (root では飛ばす)、置き先のディレクトリの綴りが大文字小文字だけ違う、生成物の同一性の表の落ちる行 (commit 済みの利用者の編集を含む)、ロックが取られている、別のリポの sync.sh の起動、TMPDIR の文字と絶対パス、上流のパスの大文字小文字の衝突、fetch の GIT_TERMINAL_PROMPT、archetect の版、対応していない OS、OS の sandbox を適用できない・描画が非 0 で終わる、リポジトリの場所を決める GIT_* (`git rev-parse --local-env-vars` の各変数)
 # - 環境: awk が正規表現の区間を持たなくても通る。GIT_CONFIG* は通る (この test 自身が GIT_CONFIG_COUNT で上流へ向ける)。core.autocrlf・core.eol を変えても、置くバイトは上流の blob と同じ。UTF-8 の locale (LANG・LC_ALL) でも通り、文字の分類 (タブ・制御文字・空白・shell の特殊文字・é・あ・ｚ。canon: facts/shell/string-input-categories) ごとに、置き先・source の名前・TMPDIR の定義域の外として落ちる
 # - 標準出力は git status --short と同じ。終わった (落ちた) 後にロックが残らない
 # OS の sandbox を適用できない環境 (別の sandbox の中など) では、最初の実際の描画 (初回) が sync.sh の固定の文言「OS の sandbox を適用できない」で落ちる。そのとき、描画を伴う残りの検査を飛ばしたことを理由と一緒に stderr に出す。CI (環境変数 CI が空でない) では落とす。
@@ -68,7 +68,7 @@ LUA
 }
 
 snapshot() { # <dir>: .git の外の全てのファイルの種類・実行可能か・中身
-  (cd "$1" && find . -name .git -prune -o \( -type f -o -type l \) -print | LC_ALL=C sort | while IFS= read -r f; do
+  (cd "$1" && { find . -name .git -prune -o \( -type f -o -type l \) -print 2>/dev/null || true; } | LC_ALL=C sort | while IFS= read -r f; do
     if [ -L "$f" ]; then
       echo "L $f $(readlink "$f")"
     elif [ -x "$f" ]; then
@@ -305,6 +305,8 @@ hooks/pre-push\tx y\t644|置き先のパスが定義域の外
 hooks/pre-push\tfoo\t644\nhooks/pre-push\tfoo/bar\t644|の親のディレクトリ
 hooks/pre-push\tfoo/bar\t644\nhooks/pre-push\tfoo\t644|の親のディレクトリ
 hooks/pre-push\tFOO/bar\t644\nhooks/pre-push\tfoo\t644|の親のディレクトリ
+hooks/pre-push\tDocs/b.md\t644\nhooks/pre-push\tdocs/a.md\t644|ディレクトリの綴りが大文字小文字だけ違う
+hooks/pre-push\tdocs/a.md\t644\nhooks/pre-push\tDOCS/b/c.md\t644|ディレクトリの綴りが大文字小文字だけ違う
 hooks/pre-push\thooks\t644|の親のディレクトリ
 hooks/pre-push\tNOTICE.txt/x\t644|の親のディレクトリ
 hooks/pre-push\t.agent-sync/answers.yaml\t644|置いてよい 2 つ
@@ -536,6 +538,18 @@ else
   reset_ds
 fi
 
+# 途中のディレクトリの一覧が取れなければ (中身を開けない mode 111)、綴りを突き合わせられないので落ちる。大文字小文字を区別するかによらない。
+if [ "$(id -u)" = 0 ]; then
+  echo 'test-agent-sync.sh: root は mode 111 のディレクトリも一覧できるので、一覧が取れない検査を飛ばした' >&2
+else
+  unreadable_before=$(snapshot ds)
+  chmod 111 ds/hooks
+  expect_fail '置き先: 途中のディレクトリの一覧が取れない' ds 'の一覧を取れない'
+  chmod 755 ds/hooks
+  [ "$(snapshot ds)" = "$unreadable_before" ] || { echo '置き先: 一覧が取れずに落ちた sync.sh が作業ツリーを変えた' >&2; status=1; }
+  reset_ds
+fi
+
 old=zzz-old.txt
 printf 'old\n' >"ds/$old"
 printf '%s\t%s\n' "$old" "$(text_id old)" >>ds/.agent-sync/generated
@@ -581,6 +595,20 @@ v1_downstream() { # <名前>: v1 の生成物を置いて commit した下流
   git -C "$1" commit -q -m sync
 }
 to_v2() { sed "s/#$v1\$/#$v2/" "$1/.agent-sync/archetype/archetype.yaml" >"$tmp/archetype.v2.yaml"; cp "$tmp/archetype.v2.yaml" "$1/.agent-sync/archetype/archetype.yaml"; }
+# 上流が置き先を大文字小文字だけ改名すると、大文字小文字を区別しないファイルシステムでは前回の出力の古い綴りに当たって落ちる。文言は前回の出力だと示し、古い綴りを消せば通る (描画の出力の改名で再現する)。
+if [ "$ci_fs" = 1 ]; then
+  v1_downstream ren
+  content=ren/.agent-sync/archetype/content
+  git -C ren rm -q --cached .agent-sync/archetype/content/NOTICE.txt
+  mv "$content/NOTICE.txt" "$content/rename.tmp"; mv "$content/rename.tmp" "$content/notice.txt"
+  printf -- '-\tnotice.txt\t644\n' >"$content/.agent-sync/files/local"
+  git -C ren add -A
+  expect_fail '上流の大文字小文字だけの改名' ren '前回 sync が置いた NOTICE.txt と大文字小文字だけ違う。NOTICE.txt を消してから起動し直す'
+  rm ren/NOTICE.txt
+  sync_ok '上流の大文字小文字だけの改名の後、古い綴りを消した' ren
+  { [ -n "$(find ren -maxdepth 1 -name notice.txt)" ] && ! grep -q NOTICE.txt ren/.agent-sync/generated && grep -q "^notice.txt$(printf '\t')" ren/.agent-sync/generated; } || { echo '上流の大文字小文字だけの改名: notice.txt が置かれず generated が改名後の綴りでない' >&2; status=1; }
+fi
+
 v1_downstream edit
 printf '# mine\n' >>edit/hooks/pre-push
 git -C edit commit -q -am 'user edit of a generated file'

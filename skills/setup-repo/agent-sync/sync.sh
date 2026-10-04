@@ -35,12 +35,15 @@
 #     - mode: 644 か 755。
 #   - パスは / で区切った 1 つ以上の名前。名前は POSIX の可搬なファイル名の文字 (A-Z a-z 0-9 . _ -) だけで、. と .. でない。置き先は大文字小文字によらず .git の名前を含まない。
 #   - 置き先は全ての一覧を通して、大文字小文字によらず 1 回だけ (後勝ちにしない)。別の置き先の親のディレクトリと同じ (`foo` と `foo/bar`) 置き先も許さない (大文字小文字によらない。mkdir が失敗するか、`foo` が `foo/` の中へ入る)。
+#   - 大文字小文字によらず等しいディレクトリの成分は、全ての置き先で同じ綴り (`Docs/b.md` と `docs/a.md` は落ちる。大文字小文字を区別しないファイルシステムでは 1 つのディレクトリに入り、以後の起動が手順 3 の綴りの検査で落ち続ける)。
 #   - 置き先の最初の名前が .agent-sync (大文字小文字によらない) なら、`.agent-sync/sync.sh` と `.agent-sync/render.sb` (agent-sync の部品が置くもの) だけを許す。archetype/・answers.yaml・generated は sync.sh の入力で、上流に書かせない。
 #   - 一覧の外の描画の出力は、`-` の行の置き先と 1 対 1 に対応する。
 #   - 置き先の中に、.agent-sync/sync.sh がある (agent-sync の部品を合成している。描画が一覧を 1 つも出さなくても成功するので、無ければ generated の全てが古いパスになり sync.sh 自身まで消える)。
 # 作業ツリーの定義域 (置き先と、generated にあって置き先に無い古いパス。generated も上のパスと .agent-sync/ の規則に従う):
 #   - 途中のディレクトリは、無いか symlink でないディレクトリ。
 #   - 既存の成分 (途中のディレクトリも最後の名前も) の綴りは、要求した綴りと完全に等しい。大文字小文字を区別しないファイルシステム (macOS の APFS の既定) では、`[ -e ]` も open も別の綴りの既存のものに当たる。親の一覧と突き合わせ、大文字小文字だけ違うものにしか当たらなければ落ちる (`readme.md` に利用者の `README.md`、`docs/` に `Docs/`)。区別するファイルシステムでは別のファイルで、どちらも許す (canon: facts/shell/case-insensitive-filesystem-path-resolution)。
+#     - 上流が置き先を大文字小文字だけ改名すると (`README.md` → `readme.md`)、大文字小文字を区別しないファイルシステムでは、前回 sync が置いた古い綴りに当たって落ち続ける。古い綴りを消してから起動し直す (落ちる文言は、当たった既存のパスが generated にあって中身が記録した id と同じなら、利用者のファイルでなく前回の出力だと示す)。
+#   - 成分の親のディレクトリは一覧が取れる (読めないディレクトリは、綴りを突き合わせられないので落ちる)。
 #   - generated は 1 行 `<パス><TAB><id>`、パスは LC_ALL=C の順で重複なし、id は 40 桁か 64 桁の小文字 16 進。
 #   - 置き先・古いパスの現在の中身は、無いか、通常のファイル。symlink・ディレクトリ・その他は利用者のもので、generated にあっても落ちる (id が決まらない。symlink は先のものを書き換えさせないためにも置き換えない)。
 # 同一性 (これだけが判定。git の状態・HEAD・追跡の有無・core.fileMode は見ない):
@@ -213,10 +216,13 @@ main() {
     {
       seen[k] = $1 " (" $4 ")"
       n = split(k, a, "/")
+      split($1, o, "/")
       pre = ""
       for (i = 1; i < n; i++) {
         pre = pre (i > 1 ? "/" : "") a[i]
         parent[pre] = $1 " (" $4 ")"
+        if (!(pre in spell)) { spell[pre] = o[i]; spelled[pre] = $1 " (" $4 ")" }
+        else if (spell[pre] != o[i]) { print "agent-sync: 置き先のディレクトリの綴りが大文字小文字だけ違う: " $1 " (" $4 ") と " spelled[pre] > "/dev/stderr"; bad = 1 }
       }
     }
     END {
@@ -272,8 +278,15 @@ main() {
     if ! parents_ok "$root" "$dest"; then
       echo "agent-sync: 置き先 $dest の途中に、symlink かディレクトリでないものがある" >&2
       errs=1
-    elif actual=$(case_clash "$root" "$dest") && [ -n "$actual" ]; then
-      echo "agent-sync: 置き先 $dest が、大文字小文字だけ違う既存の $actual に当たる (大文字小文字を区別しないファイルシステム)。移すか綴りを戻してから起動し直す" >&2
+    elif ! actual=$(case_clash "$root" "$dest"); then
+      errs=1
+    elif [ -n "$actual" ]; then
+      rec=$(recorded_id "$actual")
+      if [ -n "$rec" ] && [ "$(id_of "$root/$actual")" = "$rec" ]; then
+        echo "agent-sync: 置き先 $dest が、前回 sync が置いた $actual と大文字小文字だけ違う。$actual を消してから起動し直す" >&2
+      else
+        echo "agent-sync: 置き先 $dest が、大文字小文字だけ違う既存の $actual に当たる (大文字小文字を区別しないファイルシステム)。移すか綴りを戻してから起動し直す" >&2
+      fi
       errs=1
     elif [ -L "$t" ] || [ -e "$t" ]; then
       cur=$(id_of "$t")
@@ -292,7 +305,9 @@ main() {
     if ! parents_ok "$root" "$p"; then
       echo "agent-sync: 古いパス $p の途中に、symlink かディレクトリでないものがある" >&2
       errs=1
-    elif actual=$(case_clash "$root" "$p") && [ -n "$actual" ]; then
+    elif ! actual=$(case_clash "$root" "$p"); then
+      errs=1
+    elif [ -n "$actual" ]; then
       echo "agent-sync: 古いパス $p が、大文字小文字だけ違う既存の $actual に当たる (大文字小文字を区別しないファイルシステム)。移すか綴りを戻してから起動し直す" >&2
       errs=1
     elif [ -e "$t" ] || [ -L "$t" ]; then
@@ -399,13 +414,14 @@ parents_ok() { # <基点> <相対パス>: 途中のディレクトリが、無�
   done
 }
 
-case_clash() { # <基点> <相対パス>: 既存の成分が、要求と大文字小文字だけ違う綴りでしか無ければ、その実際のパスを出す (無ければ空)。大文字小文字を区別しないファイルシステムでは [ -e ] が別の綴りに当たるので、親の一覧 (find) と綴りを完全一致で突き合わせる
-  local cur=$1 rest=$2 name actual pre=
+case_clash() { # <基点> <相対パス>: 既存の成分が、要求と大文字小文字だけ違う綴りでしか無ければ、その実際のパスを出す (無ければ空)。親の一覧が取れなければ文言を出して 1 を返す。大文字小文字を区別しないファイルシステムでは [ -e ] が別の綴りに当たるので、親の一覧 (find) と綴りを完全一致で突き合わせる
+  local cur=$1 rest=$2 name actual list pre=
   while [ -n "$rest" ]; do
     name=${rest%%/*}
     if [ "$name" = "$rest" ]; then rest=; else rest=${rest#*/}; fi
     { [ -e "$cur/$name" ] || [ -L "$cur/$name" ]; } || return 0
-    actual=$(find "$cur" -mindepth 1 -maxdepth 1 | awk -v c="${#cur}" -v n="$name" '{ f = substr($0, c + 2) } f == n { e = 1 } tolower(f) == tolower(n) && f != n { a = f } END { if (!e && a != "") print a }')
+    list=$(find "$cur" -mindepth 1 -maxdepth 1) || { echo "agent-sync: $cur の一覧を取れない" >&2; return 1; }
+    actual=$(printf '%s\n' "$list" | awk -v c="${#cur}" -v n="$name" '{ f = substr($0, c + 2) } f == n { e = 1 } tolower(f) == tolower(n) && f != n { a = f } END { if (!e && a != "") print a }')
     if [ -n "$actual" ]; then
       [ -z "$rest" ] || actual=$actual/$rest
       printf '%s\n' "$pre$actual"
