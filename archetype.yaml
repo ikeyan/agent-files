@@ -1,0 +1,11 @@
+# agent-sync で配る部品の catalog。下流の .agent-sync/archetype が catalog.render("agent-files/<部品名>", context) で合成する (skills/setup-repo/SKILL.md の 7 節)。
+# 部品は .agent-sync/files/<部品名> に置くファイルの一覧を出すだけで、中身は sync.sh がこのリポの固定した版からそのまま写す。archetect はテキストを全てテンプレートとして描画し、そのまま写す手段が無い (canon: facts/archetect/rendering-and-existing-files)。
+# 部品の問いには既定値を書かない。headless の描画は answers に無い問いを既定値で黙って埋める (canon: facts/archetect/composition-and-answers)。
+description: ikeyan/agent-files の agent-sync の部品
+catalog:
+  agent-sync:
+    source: ./components/agent-sync
+  pre-push:
+    source: ./components/pre-push
+  pr-workflow:
+    source: ./components/pr-workflow

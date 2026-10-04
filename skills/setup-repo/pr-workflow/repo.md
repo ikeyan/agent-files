@@ -1,0 +1,18 @@
+# PR / ブランチ運用: このリポの値
+
+<これは setup-repo のテンプレートで、リポごとの値ではない。写したらこの行を消す。ikeyan/agent-files 自身の値は [.claude/skills/pr-workflow/repo.md](../../../.claude/skills/pr-workflow/repo.md)>
+
+[SKILL.md](SKILL.md) が読む、このリポ固有の値。SKILL.md と手段のファイルは agent-sync で ikeyan/agent-files からそのまま写すので、リポごとに違うものはこのファイルだけに書く。
+
+## 値
+
+- push 先: `<remote>`
+- 寄稿規約: <PR テンプレート・ブランチ命名・コミットメッセージ規約・DCO sign-off / CLA が書いてあるファイル。文書に無いがこのリポで通っている規約があればそれも>
+
+## 手段の実測
+
+<setup した環境で 1 回実測して通らなかった手段と、実測できなかった手段。無ければ「なし」>
+
+## 方針の差分
+
+<SKILL.md の方針から変えるもの (ユーザーに確認したもの) と、このリポで使っていない仕組み (Codex Review 等)。無ければ「なし」>

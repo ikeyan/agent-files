@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # hooks/pre-push と verify.sh を検査する。
 # - push のコマンドの PUSH_OK=1 の有無で、push を通す・止める
+# - PUSH_OK=1 の push は、hooks/pre-push.local があればそれに同じ引数と stdin で替わる。実行可能な通常のファイルでなければ (実行可能でない・ディレクトリ・壊れた symlink) 止まる
+# - 作業ツリーが無い (bare) リポジトリと .git の中からの push は止まる (git 自身のエラーも見える)
+# - main worktree と linked worktree、そのサブディレクトリからの push は、その作業ツリーのルートの pre-push.local を呼ぶ
 # - verify.sh は hooks/pre-push を common git dir の hooks へ写す (検査に落ちる clone でも)
 # - 写す先の pre-push の状態ごとに、写す・何もしない・触らずに落とすのどれかになる
 #   - 無い・壊れた symlink: 写す (VERIFY_READONLY=1 では写さずに落ちる)
@@ -12,8 +15,9 @@
 # ネットワークは使わない (bare リポジトリを file システム上に作って push する)。
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
-tmp=$(cd "$(mktemp -d "${TMPDIR:-/tmp}/pre-push.XXXXXX")" && pwd -P)
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/pre-push.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
+tmp=$(cd "$tmp" && pwd -P)
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
 status=0
@@ -47,6 +51,100 @@ if git -C clone push origin main 2>/dev/null; then
   echo "PUSH_OK=1 の push の後、PUSH_OK 無し (push する差分も無い) が通った" >&2
   status=1
 fi
+
+# hooks/pre-push.local は、PUSH_OK=1 の push でだけ同じ引数と stdin で呼ばれ、その終了コードが push の可否になる
+mkdir clone/hooks
+cat > clone/hooks/pre-push.local <<LOCAL
+#!/bin/sh
+printf '%s\n' "\$@" > "$tmp/local.args"
+cat > "$tmp/local.stdin"
+exit "\$(cat "$tmp/local.rc")"
+LOCAL
+chmod 755 clone/hooks/pre-push.local
+echo y > clone/b.txt && git -C clone add b.txt && git -C clone commit -q -m b
+echo 0 > local.rc
+git -C clone push origin main 2>/dev/null && { echo "pre-push.local があると PUSH_OK 無しで push が通った" >&2; status=1; }
+[ ! -e local.args ] || { echo "PUSH_OK 無しの push で pre-push.local が呼ばれた" >&2; status=1; }
+echo 1 > local.rc
+if PUSH_OK=1 git -C clone push origin main 2>/dev/null; then
+  echo "pre-push.local が 1 で終わったのに push が通った" >&2
+  status=1
+fi
+[ "$(cat local.args 2>/dev/null)" = "$(printf 'origin\n%s' "$tmp/remote.git")" ] || { echo "pre-push.local の引数が push の remote 名と URL でない — $(cat local.args 2>/dev/null)" >&2; status=1; }
+grep -q "^refs/heads/main $(git -C clone rev-parse HEAD) refs/heads/main " local.stdin 2>/dev/null || { echo "pre-push.local の stdin に push する ref の行が無い — $(cat local.stdin 2>/dev/null)" >&2; status=1; }
+[ "$(git -C remote.git rev-parse main)" != "$(git -C clone rev-parse HEAD)" ] || { echo "pre-push.local が 1 で終わったのに remote が進んだ" >&2; status=1; }
+echo 0 > local.rc
+PUSH_OK=1 git -C clone push -q origin main || { echo "pre-push.local が 0 で終わったのに push が失敗した" >&2; status=1; }
+# 実行可能な通常のファイルでない pre-push.local は、無視せず push を止めて示す (検査が黙って外れない)。実行可能にすれば通る
+check_bad_local() { # <名前>: PUSH_OK=1 の push が止まり、pre-push.local の問題を示し、remote が進まないこと
+  local name=$1
+  rm -f local.args
+  echo "$name" > "clone/$name.txt" && git -C clone add "$name.txt" && git -C clone commit -q -m "$name"
+  if PUSH_OK=1 git -C clone push -q origin main 2>err10.txt; then
+    echo "$name: pre-push.local が実行可能な通常のファイルでないのに push が通った" >&2
+    status=1
+  fi
+  grep -q '実行可能な通常のファイルでない' err10.txt || { echo "$name: pre-push.local の問題を示さない — $(cat err10.txt)" >&2; status=1; }
+  [ ! -e local.args ] || { echo "$name: 実行可能でない pre-push.local が呼ばれた" >&2; status=1; }
+  [ "$(git -C remote.git rev-parse main)" != "$(git -C clone rev-parse HEAD)" ] || { echo "$name: push が止まらず remote が進んだ" >&2; status=1; }
+}
+chmod 644 clone/hooks/pre-push.local
+echo 0 > local.rc
+check_bad_local 実行可能でない
+chmod 755 clone/hooks/pre-push.local
+mv clone/hooks/pre-push.local clone/hooks/real.local
+mkdir clone/hooks/pre-push.local
+check_bad_local ディレクトリ
+rmdir clone/hooks/pre-push.local
+ln -s "$tmp/nowhere" clone/hooks/pre-push.local
+check_bad_local 壊れた_symlink
+rm clone/hooks/pre-push.local
+mv clone/hooks/real.local clone/hooks/pre-push.local
+PUSH_OK=1 git -C clone push -q origin main || { echo "pre-push.local を実行可能な通常のファイルに戻しても push が止まる" >&2; status=1; }
+rm -r clone/hooks
+
+# 作業ツリーが無い (bare リポジトリ) からの push は、pre-push.local を探せないので止まる
+git clone -q --bare remote.git bare.git
+install -m 755 "$here/hooks/pre-push" bare.git/hooks/pre-push
+git init -q -b main --bare remote2.git
+if PUSH_OK=1 git -C bare.git push "$tmp/remote2.git" main 2>err11.txt; then
+  echo "bare リポジトリから push が通った" >&2
+  status=1
+fi
+grep -q 'bare リポジトリ' err11.txt || { echo "bare リポジトリからの push のエラーに理由が無い — $(cat err11.txt)" >&2; status=1; }
+[ -z "$(git -C remote2.git for-each-ref)" ] || { echo "bare リポジトリからの push で remote に ref ができた" >&2; status=1; }
+
+# hook は push を打った場所によらず作業ツリーのルートで走るので、そのルートの hooks/pre-push.local を呼ぶ。linked worktree は main のものを使わない。
+# 作業ツリーのルートを得られない .git の中からの push は、git 自身のエラーを隠さず止まる
+write_local() { # <dir> <名前>: <dir>/hooks/pre-push.local が、呼ばれたら who に <名前> を書く
+  mkdir -p "$1/hooks"
+  printf '#!/bin/sh\necho %s > "%s/who"\n' "$2" "$tmp" > "$1/hooks/pre-push.local"
+  chmod 755 "$1/hooks/pre-push.local"
+}
+who_pushes() { # <cwd> <branch>: <cwd> から PUSH_OK=1 で push し、呼ばれた pre-push.local の名前を出す (呼ばれなければ空)
+  rm -f who
+  (cd "$1" && PUSH_OK=1 git push -q "$tmp/remote.git" "HEAD:refs/heads/$2") || echo "$1 からの push が失敗した" >&2
+  cat who 2>/dev/null || true
+}
+git -C clone worktree add -q --detach ../lwt
+mkdir -p clone/sub/deep lwt/sub/deep
+write_local clone main
+write_local lwt linked
+[ "$(who_pushes clone w1)" = main ] || { echo "main worktree のルートからの push が、そのルートの pre-push.local を呼ばない" >&2; status=1; }
+[ "$(who_pushes clone/sub/deep w2)" = main ] || { echo "main worktree のサブディレクトリからの push が、そのルートの pre-push.local を呼ばない" >&2; status=1; }
+[ "$(who_pushes lwt w3)" = linked ] || { echo "linked worktree のルートからの push が、その worktree の pre-push.local を呼ばない" >&2; status=1; }
+[ "$(who_pushes lwt/sub/deep w4)" = linked ] || { echo "linked worktree のサブディレクトリからの push が、その worktree の pre-push.local を呼ばない" >&2; status=1; }
+rm lwt/hooks/pre-push.local
+[ -z "$(who_pushes lwt w5)" ] || { echo "linked worktree に pre-push.local が無いのに、main のものが呼ばれた" >&2; status=1; }
+if (cd clone/.git && PUSH_OK=1 git push "$tmp/remote.git" HEAD:refs/heads/w6) 2>err12.txt; then
+  echo ".git の中からの push が通った" >&2
+  status=1
+fi
+grep -q 'must be run in a work tree' err12.txt || { echo ".git の中からの push で git 自身のエラーが見えない — $(cat err12.txt)" >&2; status=1; }
+grep -q 'ルートを得られない' err12.txt || { echo ".git の中からの push のエラーに理由が無い — $(cat err12.txt)" >&2; status=1; }
+[ -z "$(git -C remote.git for-each-ref refs/heads/w6)" ] || { echo ".git の中からの push で remote に ref ができた" >&2; status=1; }
+git -C clone worktree remove --force ../lwt
+rm -r clone/hooks clone/sub
 
 # verify.sh は、検査が落ちても hooks/pre-push を common git dir の hooks に写してから落ちる (hook が無い clone から push できる期間を作らない)。
 # 作業ツリーの verify.sh と hooks/pre-push を clone に写す。

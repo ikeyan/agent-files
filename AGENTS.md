@@ -35,6 +35,10 @@
   - pr-workflow の `cleanup-branch.sh` の fixture (`scripts/test-cleanup-branch.sh`)
   - pr-workflow の `pr.sh` の、fake GitHub を相手にした model based test (`scripts/test-pr.ts`。fast-check)
   - pr-workflow の `codex-limits.sh` の、偽の codex を相手にした fixture (`scripts/test-codex-limits.sh`)
+  - agent-sync の `sync.sh` の、このリポの catalog から作った手元の上流を相手にした fixture (`scripts/test-agent-sync.sh`):
+    - OS の sandbox を適用できない環境 (別の sandbox の中など) では、最初の描画が sync.sh の「OS の sandbox を適用できない」で落ちるので、描画を伴う残りの検査を飛ばして理由を stderr に出す。
+    - 全部を検査するには、適用できる環境で回す。
+    - CI では落とす。
   - JSON の構文と schema
   - Markdown のリポ内リンク
   - `.claude/skills` と `skills/` の対応
@@ -44,7 +48,11 @@
     - 無ければ `hooks/pre-push` を写す。
     - `hooks/pre-push` と違えば、上書きせず落ちて置き換えのコマンドを示す。
 - `./verify.sh` は `core.hooksPath` が hook をよそへ向けていれば落ちる (設定は書かない)。
-- 必要なもの: `shellcheck`、`deno`、`curl` (7.84 以降)、`jq`、`www.schemastore.org` への到達。
+- 必要なもの:
+  - 共通のツール: `shellcheck`、`deno`、`curl` (7.84 以降)、`jq`、`archetect` (3.6.1)。
+  - macOS: `sandbox-exec`、`otool`。
+  - Linux: `bwrap`、`ldd` (非特権の user namespace が要る)。
+  - ネットワーク: `www.schemastore.org` への到達。
 
 ## コメントの書き方
 

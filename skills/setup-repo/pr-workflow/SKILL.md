@@ -7,8 +7,7 @@ description: Use when pushing a branch, creating a pull request or editing its d
 
 ## このリポの値
 
-- push 先: `<remote>`
-- 寄稿規約: <PR テンプレート・ブランチ命名・コミットメッセージ規約・DCO sign-off / CLA が書いてあるファイル。文書に無いがこのリポで通っている規約があればそれも>
+push 先・寄稿規約・手段の実測・方針の差分は、同じディレクトリの [repo.md](repo.md) にある。先に読む。repo.md の方針の差分は、下の方針より優先する。repo.md が無い (またはテンプレートの `<…>` が残っている) なら、push も PR の作成もせず、repo.md を埋めるようユーザーに伝えて止まる。
 
 ## 手段
 
