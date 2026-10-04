@@ -294,6 +294,14 @@ chmod 755 shim-awk/awk
 sync_ok 'awk が区間を持たない' ds "PATH=$tmp/shim-awk:$PATH"
 clean 'awk が区間を持たない' ds
 [ -z "$loc" ] || { sync_ok "locale $loc" ds LC_ALL="$loc" LANG="$loc"; clean "locale $loc" ds; }
+sync_ok 'GIT_DEFAULT_HASH=sha256' ds GIT_DEFAULT_HASH=sha256
+clean 'GIT_DEFAULT_HASH=sha256' ds
+tpl=$tmp/git-template
+mkdir -p "$tpl/hooks"
+printf '#!/bin/sh\nexit 1\n' >"$tpl/hooks/reference-transaction"
+chmod 755 "$tpl/hooks/reference-transaction"
+sync_ok 'GIT_TEMPLATE_DIR' ds GIT_TEMPLATE_DIR="$tpl"
+clean 'GIT_TEMPLATE_DIR' ds
 chmod 644 ds/hooks/pre-push
 chmod 755 ds/.claude/skills/pr-workflow/SKILL.md
 rm ds/.claude/skills/pr-workflow/gh.md

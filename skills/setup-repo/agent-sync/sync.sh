@@ -9,7 +9,7 @@
 #   answers.yaml              全ての問いの答え。
 #   generated                 前回の sync が置いたものの一覧。1 行 1 件 `<パス><TAB><置いたバイトの id>`、パスは LC_ALL=C の順で重複なし。初回は空のファイル。id は `git hash-object --no-filters` (git が使うオブジェクトの形式のハッシュで、sha1 のリポは 40 桁・sha256 のリポは 64 桁の小文字 16 進。改行・変換を通さないバイトそのもの。canon: facts/git/checkout-filters-vs-raw-blob)。
 #   描画に渡すのは archetype/ と answers.yaml のうち、追跡しているか無視されていないファイルの写しだけ。
-# 読む環境: PATH (git・archetect・realpath・awk・find と、macOS では sandbox-exec と otool、Linux では bwrap と ldd)・TMPDIR・GIT_CONFIG_*。
+# 読む環境: PATH (git・archetect・realpath・awk・find と、macOS では sandbox-exec と otool、Linux では bwrap と ldd)・TMPDIR・GIT_CONFIG_*。取り出し用の作業リポジトリは `git init --object-format=sha1 --template=` で作るので、GIT_DEFAULT_HASH・init.defaultObjectFormat・GIT_TEMPLATE_DIR・init.templateDir は結果に効かない (上流の固定は 40 桁の SHA-1。canon: facts/git/local-env-vars-and-hook-env)。
 #   sandbox-exec (macOS) か bwrap (Linux) が PATH に無ければ、手順 2 の最初に固定の文言 `agent-sync: 描画を起動できない` で落ちる (起動前に `command -v` で確かめる。描画の終了状態 127 では、sandbox 内の archetect の終了と区別できない)。
 #   awk は POSIX の awk で、正規表現の区間 `{n}` に頼らない (mawk 1.3.4-20200724 より前は既定で区間が無い。canon: facts/shell/awk-interval-expressions)。
 #   archetect は `archetect --version` が `archetect 3.6.1` (canon: facts/archetect と CI の verify.yml が固定する版) のものだけ。違えば落ちる。
@@ -114,7 +114,7 @@ main() {
   mkdir -p "$src" "$run/obj" "$run/ds" "$run/out" "$run/conf/home"
 
   # 1. 取得
-  git -C "$run/obj" init -q
+  git -C "$run/obj" init -q --object-format=sha1 --template=
   GIT_TERMINAL_PROMPT=0 git -C "$run/obj" fetch -q --depth 1 "$url" "$sha"
   [ "$(git -C "$run/obj" rev-parse FETCH_HEAD)" = "$sha" ] || { echo "agent-sync: 取得した commit が $sha でない" >&2; exit 1; }
   git -C "$run/obj" ls-tree -r -z FETCH_HEAD | materialize "$run/obj" "$src"
