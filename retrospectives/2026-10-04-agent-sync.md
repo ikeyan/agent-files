@@ -47,6 +47,10 @@
 | `foo` と `foo/bar` の両方を置く一覧が手順 3 を通り、手順 4 で途中まで当たった。`.agent-sync/` の下へ上流が sync.sh の入力を書けた | 別の置き先の親のディレクトリと、`.agent-sync/sync.sh`・`.agent-sync/render.sb` 以外の `.agent-sync/` の下を手順 3 で止める (generated のパスにも同じ規則) (`b4e7435`) |
 | pre-push の `git rev-parse --show-toplevel 2>/dev/null` が git のエラーを隠し、どの原因でも bare と断じた | stderr を見せ、メッセージは原因を決めつけない。走る場所 (main・linked worktree・サブディレクトリ・bare・.git の中) を宣言し、linked worktree・サブディレクトリ・.git の中の fixture を足した (`2670e74`) |
 | setup-repo の「編集しない。」が直前の文の帰結の重複だった | 消した (`062fa2d`) |
+| 3 回目のレビューが、同じ箇所 (生成物の同一性・test の skip・取り出し) に点の指摘を重ねた。generated の判定は HEAD との差を代理にしており、利用者が生成物を編集して commit すると黙って消された・上書きされた。test の probe は実際の描画と別の操作だった。`git checkout` は core.autocrlf で配るスクリプトの shebang を CRLF にする | 機構の種類を変えた (`fe8420f`): (1) generated を `<パス><TAB><置いたバイトの id>` にして、判定を git の状態でなく中身の id だけにした (git hash-object --no-filters)。(2) 取り出しを checkout から ls-tree -r -z と cat-file blob にした (git の設定・属性に依らない)。(3) skip を probe でなく最初の実際の描画の失敗 (sync.sh の固定の文言) で決める。canon に checkout と cat-file・hash-object の実測、sandbox-exec の入れ子の失敗、文字の分類の目録を足した (canon `e7449da`) |
+| 一覧を 1 つも出さない描画が成功し、generated の全てが古いパスとして消え、sync.sh 自身も消えた。別のリポの sync.sh を cwd で起動すると、root は cwd・render.sb は `$0` から決まり食い違った | 描画が `.agent-sync/sync.sh` を置かなければ、`$0` がカレントの作業ツリーの `.agent-sync/` のものでなければ、手順 3 の前に落とす (`fe8420f`) |
+| 置き先・source の名前・TMPDIR の検査が、悪い例 1 つだけの test だった | 文字の分類 (タブ・制御文字・空白・shell の特殊文字・é・あ・ｚ) のループにした (`fe8420f`) |
+| pre-push の注記の重複 (「(main のは使わない)」「無視せず」)、README が render.sb を挙げない、repo.md の導入文 | 直した (`2c33721`) |
 
 ## 残っていること
 
@@ -54,13 +58,19 @@
   - sysctl の後に bwrap が user namespace を作れること。通らなければ、`/usr/share/apparmor/extra-profiles/bwrap-userns-restrict` を読み込む形を試す。
   - `ldd` が出す共有ライブラリだけで archetect が namespace の中で動くこと (Debian trixie arm64 では動いた)。
   - archetect の linux の release は glibc 2.39 を要る (Debian bookworm では動かなかった)。ubuntu-latest が上がっても満たすかは、上がったときに CI で分かる。
-- OS の sandbox を適用できない環境 (Claude Code の sandbox の中など) の `./verify.sh` は描画を伴う検査を飛ばす (理由を stderr に出す)。sync.sh・部品・render.sb を変えたら、sandbox の外で `scripts/test-agent-sync.sh` を回す。
+- OS の sandbox を適用できない環境 (Claude Code の sandbox の中など) の `./verify.sh` は、最初の描画が「OS の sandbox を適用できない」で落ちたとき、描画を伴う残りの検査を飛ばす (理由を stderr に出す)。sync.sh・部品・render.sb を変えたら、sandbox の外で `scripts/test-agent-sync.sh` を回す。
 - パスの文字を POSIX の可搬なファイル名の文字に絞った。日本語のファイル名 (review-perspectives の観点など) を配るなら、Unicode の正規化で同じになる名前の重複も検査に足してから広げる。
 - 当てる手順 (手順 4) はトランザクションでない。検査は全部先に済ませるが、ファイルシステムの失敗では途中まで当たる。
 - 実際の下流のリポへの導入と、GitHub の HTTPS から sha で取る経路はまだ回していない (test は insteadOf で手元のリポに向ける)。
 - `render.sb` の KEG は archetect の実行ファイルの 2 つ上のディレクトリで、Homebrew の Cellar では keg だが、`/usr/local/bin` に置いた archetect では `/usr/local` 全体の読み取りを許す。
 - 2 回目のレビューの修正の実測と未測定:
-  - Linux (bwrap) の描画の probe (`bwrap --unshare-all --ro-bind / / --proc /proc --dev /dev /usr/bin/true`) は、この環境 (macOS) で動かしていない。CI が最初の実測になる。通らなければ CI は飛ばさず落ちる。
+  - Linux (bwrap) の描画は、この環境 (macOS) で動かしていない。CI が最初の実測になる。通らなければ CI は落ちる。
   - Linux の bwrap が入れ子の sandbox の中で動くかも未測定。
   - sandbox-exec の入れ子が exit 71 で落ちるのは、Claude Code の Bash の sandbox の中で probe が `Operation not permitted` で落ちる形で確かめた (描画の test は飛ばして理由を出す)。
   - bash の glob の範囲の locale 依存は macOS の bash 3.2 だけ測った。Linux の bash 5 は未測定で、`LC_ALL=C` の固定はどちらでも害が無いので測らずに入れた。
+- 3 回目のレビューの修正の実測と未測定 (`fe8420f`):
+  - 実測した: `git hash-object --no-filters` が autocrlf・属性に依らず中身そのものの id を返すこと、symlink は先の中身の id になること、`git checkout` が autocrlf=true で CRLF にして `cat-file blob` は LF のままなこと (canon `e7449da`)。sandbox-exec が Claude Code の sandbox の中で exit 71 と `sandbox_apply: Operation not permitted` になること。検査を外すと、取り出し・合成の検査・cwd の検査・利用者の変更の検査のそれぞれで fixture が落ちること。
+  - 未測定: Linux の bwrap が OS の sandbox を適用できないときの終了状態と文言。sync.sh は stderr の `bwrap: ` で始まる行で判定していて、bubblewrap のソースの書式に基づくが実測していない (CI が最初の実測)。判定を外れた失敗は「描画が exit N で終わった」として落ちるので、見逃しても止まる。
+  - 手順 4 の途中で落ちた後、入力 (sha) を変えて起動すると、generated に載っていない置き済みのファイルは今回置くものと違えば利用者のファイルとして落ちる (手で消す)。generated を先に書く形は、記録と実体のずれる窓を移すだけなので採らなかった。
+  - generated の id は git のオブジェクトの形式 (sha1・sha256) で決まる。リポの形式を変えると、全ての生成物が利用者の変更として落ちる (未実測の経路)。
+  - 取り出し (ls-tree と cat-file を blob ごとに起動) の所要時間は、大きい上流では未測定。
