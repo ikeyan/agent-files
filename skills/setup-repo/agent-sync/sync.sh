@@ -9,18 +9,19 @@
 #   answers.yaml              全ての問いの答え。
 #   generated                 前回の sync が置いたものの一覧。1 行 1 件 `<パス><TAB><置いたバイトの id>`、パスは LC_ALL=C の順で重複なし。初回は空のファイル。id は `git hash-object --no-filters` (git が使うオブジェクトの形式のハッシュで、sha1 のリポは 40 桁・sha256 のリポは 64 桁の小文字 16 進。改行・変換を通さないバイトそのもの。canon: facts/git/checkout-filters-vs-raw-blob)。
 #   描画に渡すのは archetype/ と answers.yaml のうち、追跡しているか無視されていないファイルの写しだけ。
-# 読む環境: PATH (git・archetect・realpath と、macOS では sandbox-exec と otool、Linux では bwrap と ldd)・TMPDIR・GIT_CONFIG_*。
+# 読む環境: PATH (git・archetect・realpath・awk と、macOS では sandbox-exec と otool、Linux では bwrap と ldd)・TMPDIR・GIT_CONFIG_*。
+#   awk は POSIX の awk で、正規表現の区間 `{n}` に頼らない (mawk 1.3.4-20200724 より前は既定で区間が無い。canon: facts/shell/awk-interval-expressions)。
 #   archetect は `archetect --version` が `archetect 3.6.1` (canon: facts/archetect と CI の verify.yml が固定する版) のものだけ。違えば落ちる。
-#   TMPDIR は書き込める既存のディレクトリ (未設定は /tmp)。その下に作る作業ディレクトリの解決済みのパスは、A-Z a-z 0-9 . _ / - だけ (archetect の設定の YAML と render.sb に引用せずに書くため)。違えば落ちる。
+#   TMPDIR は書き込める既存のディレクトリの絶対パス (未設定は /tmp。相対パスだと作業ディレクトリが cwd のリポの中にできるので、最初に落ちる)。その下に作る作業ディレクトリの解決済みのパスは、A-Z a-z 0-9 . _ / - だけ (archetect の設定の YAML と render.sb に引用せずに書くため)。違えば落ちる。
 #   git は GIT_CONFIG_*・GIT_CONFIG_PARAMETERS・GIT_CONFIG_GLOBAL・GIT_CONFIG_SYSTEM と設定 (url.<base>.insteadOf など) を読む。ただし core.autocrlf・core.eol・属性 (.gitattributes・info/attributes・core.attributesFile) は読まない: 手順 1 は上流の中身を blob のバイトのまま作り、生成物の id は --no-filters で取る (checkout はそれらで中身を変える。canon: facts/git/checkout-filters-vs-raw-blob)。
 #   リポジトリの場所を決める GIT_* は読まない: `git rev-parse --local-env-vars` が挙げる変数のうち GIT_CONFIG・GIT_CONFIG_PARAMETERS・GIT_CONFIG_COUNT 以外が 1 つでも設定されていれば、起動の最初に落ちる (git の hook や `git rebase --exec` から起動すると、`git -C` は GIT_DIR などに勝てず、手順 1 の init・fetch・checkout が利用者のリポジトリに当たる。canon: facts/git/local-env-vars-and-hook-env)。
 #   LANG・LC_* は読まない: 起動の最初に LC_ALL=C を export する (bash 3.2 の glob の範囲は UTF-8 の locale で非 ASCII の文字を通す。canon: facts/shell/locale-dependent-ranges)。
 #   archetect は空の環境に HOME (作業ディレクトリの下) だけを足して起動するので、ARCHETECT_*・XDG_*・git の global config は描画に届かない (canon: facts/archetect/inputs)。
-# ネットワーク: 手順 1 の git fetch だけ。
+# ネットワーク: 手順 1 の git fetch だけ。上流は対話的な資格情報なしで取れること (公開の https)。fetch には GIT_TERMINAL_PROMPT=0 を付け、端末で問い合わせて排他を握ったまま待たない。プロキシ・CA・credential helper・GIT_ASKPASS は利用者の環境のもので、git が読む (GIT_ASKPASS が設定されていれば GIT_TERMINAL_PROMPT=0 でも askpass は問い合わせうる。canon: facts/git/fetch-credential-prompts-and-env)。
 # 排他: 作業ツリーごとに `$(git rev-parse --absolute-git-dir)/agent-sync.lock` を mkdir で取り、同じ作業ツリーの同時の起動は 2 つ目が落ちる。終わるとき (落ちるときも) 消す。kill -9 などで残ったら、起動中の sync.sh が無いことを確かめて手で消す。
 #
 # 手順:
-#   1. 取得: 固定した sha を git で浅く取り、tree の通常のファイル (mode 100644・100755) を、blob のバイトのまま `git ls-tree -r -z` と `git cat-file blob` で作る (mode は tree の値)。symlink (120000) と submodule (160000) は作らない (一覧が指せば手順 3 で通常のファイルでないとして落ちる)。パスに . .. .git (大文字小文字によらない) の名前があれば落ちる。上流のコードは実行しない。
+#   1. 取得: 固定した sha を git で浅く取り、tree の通常のファイル (mode 100644・100755) を、blob のバイトのまま `git ls-tree -r -z` と `git cat-file blob` で作る (mode は tree の値)。symlink (120000) と submodule (160000) は作らない (一覧が指せば手順 3 で通常のファイルでないとして落ちる)。パスに . .. .git (大文字小文字によらない) の名前か改行があれば落ちる。通常のファイルの 2 つのパスが大文字小文字によらず等しい (`README.md` と `readme.md`)、または一方が他方の親のディレクトリ (`Foo` と `foo/x`) でも落ちる (大文字小文字を区別しないファイルシステムでは後の blob が先のものを黙って上書きし、一覧が指した中身が別のものになる)。上流のコードは実行しない。
 #   2. 描画: archetect を OS の sandbox (macOS は sandbox-exec と render.sb、Linux は bwrap) で動かす。ネットワーク無し。読めるのは入力の写し・取得した上流・archetect とその共有ライブラリだけ、書けるのは空の出力ディレクトリだけ。
 #   3. 計画: 下の定義域を全て検査する。違反があれば作業ツリーに触れずに終わる。
 #   4. 適用: 古いパスを消し、新しい・変わったファイルを置き、mode を揃え、generated を書き換える。
@@ -72,6 +73,7 @@ main() {
     [ -z "${!v+x}" ] || { echo "agent-sync: $v が設定されている。git の hook や git rebase --exec の中からは起動しない (git -C は $v に勝てず、利用者のリポジトリに当たる)" >&2; exit 1; }
   done
   export LC_ALL=C
+  case ${TMPDIR:-/tmp} in /*) ;; *) echo "agent-sync: TMPDIR ${TMPDIR} が絶対パスでない" >&2; exit 1 ;; esac
   here=$(cd "$(dirname "$0")" && pwd -P)
   root=$(git rev-parse --show-toplevel)
   cfg=$root/.agent-sync
@@ -104,7 +106,7 @@ main() {
 
   # 1. 取得
   git -C "$run/obj" init -q
-  git -C "$run/obj" fetch -q --depth 1 "$url" "$sha"
+  GIT_TERMINAL_PROMPT=0 git -C "$run/obj" fetch -q --depth 1 "$url" "$sha"
   [ "$(git -C "$run/obj" rev-parse FETCH_HEAD)" = "$sha" ] || { echo "agent-sync: 取得した commit が $sha でない" >&2; exit 1; }
   git -C "$run/obj" ls-tree -r -z FETCH_HEAD | materialize "$run/obj" "$src"
 
@@ -237,7 +239,7 @@ main() {
     }
     function fail(msg) { print "agent-sync: generated:" NR ": " msg > "/dev/stderr"; bad = 1 }
     NF != 2 { fail("`<パス><TAB><id>` の 2 つの欄でない"); next }
-    $2 !~ /^([0-9a-f]{40}|[0-9a-f]{64})$/ { fail("id が 40 桁か 64 桁の小文字 16 進でない: " $2); next }
+    $2 !~ /^[0-9a-f]+$/ || (length($2) != 40 && length($2) != 64) { fail("id が 40 桁か 64 桁の小文字 16 進でない: " $2); next }
     bad_path($1) { fail("パスが定義域の外: " $1); next }
     agent_bad($1) { fail(".agent-sync/ の下の、置いてよい 2 つ (sync.sh・render.sb) 以外: " $1) }
     END { exit bad }
@@ -333,8 +335,10 @@ recorded_id() { # <パス>: generated に記録された id (無ければ空)
   awk -F '\t' -v p="$1" '$1 == p { print $2 }' "$cfg/generated"
 }
 
-materialize() { # <リポ> <先>: stdin の `git ls-tree -r -z` の出力から、通常のファイルを blob のバイトのまま先に作る
+materialize() { # <リポ> <先>: stdin の `git ls-tree -r -z` の出力から、通常のファイルを blob のバイトのまま先に作る。パスの検査を全部済ませてから作る
   local repo=$1 to=$2 e meta p mode oid
+  cat >"$run/tree"
+  : >"$run/tree-paths"
   while IFS= read -r -d '' e; do
     meta=${e%%$'\t'*}
     p=${e#*$'\t'}
@@ -342,10 +346,37 @@ materialize() { # <リポ> <先>: stdin の `git ls-tree -r -z` の出力から�
     oid=${meta##* }
     case $mode in 120000 | 160000) continue ;; 100644 | 100755) ;; *) echo "agent-sync: 上流の $p の mode $mode が定義域の外" >&2; exit 1 ;; esac
     case /$p/ in */./* | */../* | */[.][Gg][Ii][Tt]/*) echo "agent-sync: 上流のパス $p に . .. .git の名前がある" >&2; exit 1 ;; esac
+    case $p in *$'\n'*) echo "agent-sync: 上流のパス $p に改行がある" >&2; exit 1 ;; esac
+    printf '%s\n' "$p" >>"$run/tree-paths"
+  done <"$run/tree"
+  # 大文字小文字を区別しないファイルシステムで、後の blob が先のものを上書きするか mkdir が理由なく落ちるパスの組。
+  awk '
+    {
+      k = tolower($0)
+      if (k in seen) { print "agent-sync: 上流のパス " $0 " と " seen[k] " が大文字小文字で衝突する" > "/dev/stderr"; bad = 1; next }
+      seen[k] = $0
+      n = split(k, a, "/")
+      pre = ""
+      for (i = 1; i < n; i++) {
+        pre = pre (i > 1 ? "/" : "") a[i]
+        if (!(pre in under)) under[pre] = $0
+      }
+    }
+    END {
+      for (k in under) if (k in seen) { print "agent-sync: 上流のパス " seen[k] " と " under[k] " が大文字小文字で衝突する" > "/dev/stderr"; bad = 1 }
+      exit bad
+    }
+  ' "$run/tree-paths" || exit 1
+  while IFS= read -r -d '' e; do
+    meta=${e%%$'\t'*}
+    p=${e#*$'\t'}
+    mode=${meta%% *}
+    oid=${meta##* }
+    case $mode in 120000 | 160000) continue ;; esac
     mkdir -p "$to/$(dirname "$p")"
     git -C "$repo" cat-file blob "$oid" >"$to/$p"
     [ "$mode" = 100644 ] || chmod 755 "$to/$p"
-  done
+  done <"$run/tree"
 }
 
 parents_ok() { # <基点> <相対パス>: 途中のディレクトリが、無いか symlink でないディレクトリ

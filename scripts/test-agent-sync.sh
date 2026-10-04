@@ -3,8 +3,8 @@
 # - 初回: 部品の一覧のファイルを、上流と同じバイトと一覧の mode で置く。一覧の mode は上流の git の mode と同じ。手で写した sync.sh と render.sb は同じバイトなので引き取る。下流の archetype が描画したファイルも置く。
 # - 2 回目は何も変えず、mode のずれと消したファイルは戻す
 # - 上流の更新 (v1 → v2): 変わったファイルを置き直し、一覧から消えたファイルを消す
-# - 作業ツリーを変えずに落ちる (理由も見る): 引数 (exit 2)、入力ファイルの欠け、archetype.yaml の source の行の定義域、generated の定義域・順序・古いパスの種類、answers の欠け、置き先の重複 (別の置き先の親のディレクトリを含む)、置き先の .agent-sync/ の下、一覧の行が定義域の外 (上流のパスの symlink、置き先の途中の symlink を含む)、一覧と描画の不一致、描画が .agent-sync/sync.sh を置かない、利用者のファイル、生成物の同一性の表の落ちる行 (commit 済みの利用者の編集を含む)、ロックが取られている、別のリポの sync.sh の起動、TMPDIR の文字、archetect の版、対応していない OS、OS の sandbox を適用できない・描画が非 0 で終わる、リポジトリの場所を決める GIT_* (`git rev-parse --local-env-vars` の各変数)
-# - 環境: GIT_CONFIG* は通る (この test 自身が GIT_CONFIG_COUNT で上流へ向ける)。core.autocrlf・core.eol を変えても、置くバイトは上流の blob と同じ。UTF-8 の locale (LANG・LC_ALL) でも通り、文字の分類 (タブ・制御文字・空白・shell の特殊文字・é・あ・ｚ。canon: facts/shell/string-input-categories) ごとに、置き先・source の名前・TMPDIR の定義域の外として落ちる
+# - 作業ツリーを変えずに落ちる (理由も見る): 引数 (exit 2)、入力ファイルの欠け、archetype.yaml の source の行の定義域、generated の定義域・順序・古いパスの種類、answers の欠け、置き先の重複 (別の置き先の親のディレクトリを含む)、置き先の .agent-sync/ の下、一覧の行が定義域の外 (上流のパスの symlink、置き先の途中の symlink を含む)、一覧と描画の不一致、描画が .agent-sync/sync.sh を置かない、利用者のファイル、生成物の同一性の表の落ちる行 (commit 済みの利用者の編集を含む)、ロックが取られている、別のリポの sync.sh の起動、TMPDIR の文字と絶対パス、上流のパスの大文字小文字の衝突、fetch の GIT_TERMINAL_PROMPT、archetect の版、対応していない OS、OS の sandbox を適用できない・描画が非 0 で終わる、リポジトリの場所を決める GIT_* (`git rev-parse --local-env-vars` の各変数)
+# - 環境: awk が正規表現の区間を持たなくても通る。GIT_CONFIG* は通る (この test 自身が GIT_CONFIG_COUNT で上流へ向ける)。core.autocrlf・core.eol を変えても、置くバイトは上流の blob と同じ。UTF-8 の locale (LANG・LC_ALL) でも通り、文字の分類 (タブ・制御文字・空白・shell の特殊文字・é・あ・ｚ。canon: facts/shell/string-input-categories) ごとに、置き先・source の名前・TMPDIR の定義域の外として落ちる
 # - 標準出力は git status --short と同じ。終わった (落ちた) 後にロックが残らない
 # OS の sandbox を適用できない環境 (別の sandbox の中など) では、最初の実際の描画 (初回) が sync.sh の固定の文言「OS の sandbox を適用できない」で落ちる。そのとき、描画を伴う残りの検査を飛ばしたことを理由と一緒に stderr に出す。CI (環境変数 CI が空でない) では落とす。
 # それ以外では archetect と、macOS では sandbox-exec と otool、Linux では bwrap と ldd が要り、無ければ落ちる。
@@ -171,6 +171,39 @@ for l in en_US.UTF-8 en_US.utf8 ja_JP.UTF-8 ja_JP.utf8 C.UTF-8 C.utf8; do
 done
 [ -n "$loc" ] || echo "test-agent-sync.sh: UTF-8 の locale が無いので、locale の検査を飛ばした" >&2
 
+# 上流の tree が大文字小文字によらず衝突するパスを持てば、何も作らずに落ちる (macOS の APFS の既定のように大文字小文字を区別しないファイルシステムでは、後の blob が先のものを上書きする)。
+# macOS の作業ツリーでは両方を置けないので、git のオブジェクトを直接作る。どの ref からも届かない commit を sha で取る。
+blob_a=$(printf 'a\n' | git -C upstream hash-object -w --stdin)
+blob_b=$(printf 'b\n' | git -C upstream hash-object -w --stdin)
+sub=$(printf '100644 blob %s\tREADME.md\n100644 blob %s\treadme.md\n' "$blob_a" "$blob_b" | git -C upstream mktree)
+c_file=$(printf '040000 tree %s\tx\n' "$sub" | git -C upstream mktree | xargs -I{} git -C upstream commit-tree {} -m file-file)
+sub_dir=$(printf '100644 blob %s\tx\n' "$blob_b" | git -C upstream mktree)
+c_dir=$(printf '100644 blob %s\tFoo\n040000 tree %s\tfoo\n' "$blob_a" "$sub_dir" | git -C upstream mktree | xargs -I{} git -C upstream commit-tree {} -m file-dir)
+c_nl=$(printf '100644 blob %s\ta\nb\0' "$blob_a" | git -C upstream mktree -z | xargs -I{} git -C upstream commit-tree {} -m newline)
+for c in "file-file|$c_file|上流のパス x/readme.md と x/README.md が大文字小文字で衝突する" "file-dir|$c_dir|上流のパス Foo と foo/x が大文字小文字で衝突する" "newline|$c_nl|に改行がある"; do
+  IFS='|' read -r cname csha cwant <<<"$c"
+  make_ds collide "$csha"
+  expect_fail "上流のパスの衝突 $cname" collide "$cwant"
+  rm -rf collide
+done
+# fetch は GIT_TERMINAL_PROMPT=0 で呼ばれる (環境に GIT_TERMINAL_PROMPT=1 があっても。排他を握ったまま端末で資格情報を待たない)。git を、fetch のときの環境変数を記録する shim に替える
+mkdir shim-git
+cat >shim-git/git <<SHIM
+#!/bin/sh
+for a in "\$@"; do
+  [ "\$a" = fetch ] && echo "\${GIT_TERMINAL_PROMPT-unset}" >>"$tmp/fetch-prompt.txt"
+done
+exec $(command -v git) "\$@"
+SHIM
+chmod 755 shim-git/git
+make_ds prompt "$v1"
+expect_fail 'fetch の GIT_TERMINAL_PROMPT' prompt 'OS の sandbox を適用できない' "PATH=$tmp/shim-git:$tmp/shim-sb:$PATH" GIT_TERMINAL_PROMPT=1
+[ "$(cat "$tmp/fetch-prompt.txt" 2>/dev/null)" = 0 ] || { echo "fetch の GIT_TERMINAL_PROMPT が 0 でない — $(cat "$tmp/fetch-prompt.txt" 2>/dev/null)" >&2; status=1; }
+
+# TMPDIR は絶対パス。相対パスなら、作業ディレクトリが cwd (リポの中) にできる前に落ちる
+expect_fail 'TMPDIR が相対パス' prompt '絶対パスでない' TMPDIR=.
+expect_fail 'TMPDIR が相対パス (ディレクトリ名)' prompt '絶対パスでない' TMPDIR=sub/dir
+
 # 初回。最初の実際の描画が OS の sandbox を適用できずに落ちたときだけ、描画を伴う残りの検査を飛ばす。
 # 外せる条件: Claude Code の sandbox の中でも入れ子の sandbox-exec が通るようになれば、この分岐は動かない。分岐ごと消す。
 make_ds ds "$v1"
@@ -213,6 +246,18 @@ git -C ds commit -q -m sync
 
 sync_ok 2回目 ds
 clean 2回目 ds
+# awk が正規表現の区間 {n} を持たなくても (mawk 1.3.4-20200724 より前。canon: facts/shell/awk-interval-expressions) 通る。区間を含むプログラムを拒む awk の shim で回す
+mkdir shim-awk
+cat >shim-awk/awk <<SHIM
+#!/bin/sh
+for a in "\$@"; do
+  if printf '%s\n' "\$a" | grep -qE '[]a-z0-9)]\{[0-9]+(,[0-9]*)?\}'; then echo "awk: 区間表現を含むプログラム" >&2; exit 2; fi
+done
+exec $(command -v awk) "\$@"
+SHIM
+chmod 755 shim-awk/awk
+sync_ok 'awk が区間を持たない' ds "PATH=$tmp/shim-awk:$PATH"
+clean 'awk が区間を持たない' ds
 [ -z "$loc" ] || { sync_ok "locale $loc" ds LC_ALL="$loc" LANG="$loc"; clean "locale $loc" ds; }
 chmod 644 ds/hooks/pre-push
 chmod 755 ds/.claude/skills/pr-workflow/SKILL.md
