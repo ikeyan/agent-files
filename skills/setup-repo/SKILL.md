@@ -75,7 +75,7 @@ description: Use when creating a new repository, bringing an existing repository
 ## 6. PR / ブランチ運用
 
 - リポ固有の PR・ブランチ運用を `.claude/skills/pr-workflow/` に置く。方針の [SKILL.md](pr-workflow/SKILL.md) だけを読み、使う手段 [gh.md](pr-workflow/gh.md) / [github-mcp-server.md](pr-workflow/github-mcp-server.md) / [cc-web-github-mcp.md](pr-workflow/cc-web-github-mcp.md) だけを開く構成。
-- `repo.md` 以外のファイルは agent-sync の pr-workflow 部品で配る (7 節)。編集しない。手段のファイルは全部置く (同じリポを cc-web と local の両方から触る)。
+- `repo.md` 以外のファイルは agent-sync の pr-workflow 部品で配る (7 節)。手段のファイルは全部置く (同じリポを cc-web と local の両方から触る)。
 - リポごとに違うものは `repo.md` に書く。[テンプレート](pr-workflow/repo.md) を一度写し、`<…>` を埋める (agent-sync は `repo.md` を置かない):
   - 値:
     - push 先: 書き込めることを実測で確かめた remote (fork 運用では `origin` と限らない)。
