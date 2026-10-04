@@ -2,7 +2,8 @@
 # hooks/pre-push と verify.sh を検査する。
 # - push のコマンドの PUSH_OK=1 の有無で、push を通す・止める
 # - PUSH_OK=1 の push は、hooks/pre-push.local があればそれに同じ引数と stdin で替わる。実行可能な通常のファイルでなければ (実行可能でない・ディレクトリ・壊れた symlink) 止まる
-# - 作業ツリーが無い (bare) リポジトリからの push は止まる
+# - 作業ツリーが無い (bare) リポジトリと .git の中からの push は止まる (git 自身のエラーも見える)
+# - main worktree と linked worktree、そのサブディレクトリからの push は、その作業ツリーのルートの pre-push.local を呼ぶ
 # - verify.sh は hooks/pre-push を common git dir の hooks へ写す (検査に落ちる clone でも)
 # - 写す先の pre-push の状態ごとに、写す・何もしない・触らずに落とすのどれかになる
 #   - 無い・壊れた symlink: 写す (VERIFY_READONLY=1 では写さずに落ちる)
@@ -112,6 +113,38 @@ if PUSH_OK=1 git -C bare.git push "$tmp/remote2.git" main 2>err11.txt; then
 fi
 grep -q 'bare リポジトリ' err11.txt || { echo "bare リポジトリからの push のエラーに理由が無い — $(cat err11.txt)" >&2; status=1; }
 [ -z "$(git -C remote2.git for-each-ref)" ] || { echo "bare リポジトリからの push で remote に ref ができた" >&2; status=1; }
+
+# hook は push を打った場所によらず作業ツリーのルートで走るので、そのルートの hooks/pre-push.local を呼ぶ。linked worktree は main のものを使わない。
+# 作業ツリーのルートを得られない .git の中からの push は、git 自身のエラーを隠さず止まる
+write_local() { # <dir> <名前>: <dir>/hooks/pre-push.local が、呼ばれたら who に <名前> を書く
+  mkdir -p "$1/hooks"
+  printf '#!/bin/sh\necho %s > "%s/who"\n' "$2" "$tmp" > "$1/hooks/pre-push.local"
+  chmod 755 "$1/hooks/pre-push.local"
+}
+who_pushes() { # <cwd> <branch>: <cwd> から PUSH_OK=1 で push し、呼ばれた pre-push.local の名前を出す (呼ばれなければ空)
+  rm -f who
+  (cd "$1" && PUSH_OK=1 git push -q "$tmp/remote.git" "HEAD:refs/heads/$2") || echo "$1 からの push が失敗した" >&2
+  cat who 2>/dev/null || true
+}
+git -C clone worktree add -q --detach ../lwt
+mkdir -p clone/sub/deep lwt/sub/deep
+write_local clone main
+write_local lwt linked
+[ "$(who_pushes clone w1)" = main ] || { echo "main worktree のルートからの push が、そのルートの pre-push.local を呼ばない" >&2; status=1; }
+[ "$(who_pushes clone/sub/deep w2)" = main ] || { echo "main worktree のサブディレクトリからの push が、そのルートの pre-push.local を呼ばない" >&2; status=1; }
+[ "$(who_pushes lwt w3)" = linked ] || { echo "linked worktree のルートからの push が、その worktree の pre-push.local を呼ばない" >&2; status=1; }
+[ "$(who_pushes lwt/sub/deep w4)" = linked ] || { echo "linked worktree のサブディレクトリからの push が、その worktree の pre-push.local を呼ばない" >&2; status=1; }
+rm lwt/hooks/pre-push.local
+[ -z "$(who_pushes lwt w5)" ] || { echo "linked worktree に pre-push.local が無いのに、main のものが呼ばれた" >&2; status=1; }
+if (cd clone/.git && PUSH_OK=1 git push "$tmp/remote.git" HEAD:refs/heads/w6) 2>err12.txt; then
+  echo ".git の中からの push が通った" >&2
+  status=1
+fi
+grep -q 'must be run in a work tree' err12.txt || { echo ".git の中からの push で git 自身のエラーが見えない — $(cat err12.txt)" >&2; status=1; }
+grep -q 'ルートを得られない' err12.txt || { echo ".git の中からの push のエラーに理由が無い — $(cat err12.txt)" >&2; status=1; }
+[ -z "$(git -C remote.git for-each-ref refs/heads/w6)" ] || { echo ".git の中からの push で remote に ref ができた" >&2; status=1; }
+git -C clone worktree remove --force ../lwt
+rm -r clone/hooks clone/sub
 
 # verify.sh は、検査が落ちても hooks/pre-push を common git dir の hooks に写してから落ちる (hook が無い clone から push できる期間を作らない)。
 # 作業ツリーの verify.sh と hooks/pre-push を clone に写す。
