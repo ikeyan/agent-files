@@ -2,15 +2,20 @@
 # ikeyan/agent-files の部品のうち、このリポの .agent-sync/archetype が合成するものを描画し、作業ツリーに当てる。当てた結果は人が git diff で確かめてコミットする。
 #
 # 使い方: .agent-sync/sync.sh (引数なし)。対象はカレントディレクトリの git の作業ツリー。render.sb をこのスクリプトと同じディレクトリから読む。
+# 標準出力は最後の `git status --short` だけ。archetect の標準出力は標準エラーへ回す。
 # 入力 (作業ツリーのルートの .agent-sync/ の下):
 #   archetype/archetype.yaml  `source: https://<host>/<path>/<名前>.git#<40 桁の小文字 16 進の sha>` の形の行がちょうど 1 つ (名前は A-Z a-z 0-9 . _ - で、. と .. でない)。この sha が上流の固定で、書き換えが更新。
 #   archetype/archetype.lua   catalog.render で上流の部品を合成する。
 #   answers.yaml              全ての問いの答え。
 #   generated                 前回の sync が置いたパスの一覧。1 行 1 件、LC_ALL=C の順で重複なし。初回は空のファイル。
 #   描画に渡すのは archetype/ と answers.yaml のうち、追跡しているか無視されていないファイルの写しだけ。
-# 読む環境: PATH (git・archetect・realpath と、macOS では sandbox-exec と otool、Linux では bwrap と ldd)・TMPDIR・SANDBOX_RUNTIME。git は自分の環境変数 (GIT_*) と設定 (url.<base>.insteadOf など) を読む。
+# 読む環境: PATH (git・archetect・realpath と、macOS では sandbox-exec と otool、Linux では bwrap と ldd)・TMPDIR・SANDBOX_RUNTIME。
+#   archetect は `archetect --version` が `archetect 3.6.1` (canon: facts/archetect と CI の verify.yml が固定する版) のものだけ。違えば落ちる。
+#   TMPDIR は書き込める既存のディレクトリ (未設定は /tmp)。その下に作る作業ディレクトリの解決済みのパスは、A-Z a-z 0-9 . _ / - だけ (archetect の設定の YAML と render.sb に引用せずに書くため)。違えば落ちる。
+#   git は自分の環境変数 (GIT_*) と設定 (url.<base>.insteadOf など) を読む。
 #   archetect は空の環境に HOME (作業ディレクトリの下) だけを足して起動するので、ARCHETECT_*・XDG_*・git の global config は描画に届かない (canon: facts/archetect/inputs)。
 # ネットワーク: 手順 1 の git fetch だけ。
+# 排他: 作業ツリーごとに `$(git rev-parse --absolute-git-dir)/agent-sync.lock` を mkdir で取り、同じ作業ツリーの同時の起動は 2 つ目が落ちる。終わるとき (落ちるときも) 消す。kill -9 などで残ったら、起動中の sync.sh が無いことを確かめて手で消す。
 #
 # 手順:
 #   1. 取得: 固定した sha を git で浅く取る。上流のコードは実行しない。
@@ -32,8 +37,10 @@
 #   - 既にある置き先は、generated にある通常のファイルか symlink、または置くものと同じバイトの通常のファイル (利用者のファイルを上書きしない)。
 #   - 古いパスは、無いか、通常のファイルか symlink。
 # 同一性: 生成物は作業ツリーのルートからの相対パスで同定する。置き先は、通常のファイルでないかバイトが違う (cmp) ときに置き直し、mode は毎回揃える。
+#   generated にあるパス (置き先と古いパス) は、あるとき HEAD から (mode だけの違いを除いて) 変わっている・追跡していない・無視されている (`git status --porcelain --ignored` が何か出す) なら、利用者の変更と前回の結果が区別できないので、上書きも削除もせず落ちる。前回の結果は commit してから起動する。
 # 失敗: 手順 1〜3 のどこで落ちても作業ツリーは変わらない。手順 4 は検査済みのパスへの rm・mv・chmod だけだが、ファイルシステムの失敗で途中まで当たることはある (git status に出る)。
 # Claude Code の Bash の sandbox の中 (SANDBOX_RUNTIME=1) では描画の sandbox を入れ子にできない (sandbox-exec が exit 71) ので、起動を拒む。
+# 一時的な拒否: Claude Code の sandbox が入れ子の sandbox-exec を許し、SANDBOX_RUNTIME=1 でも描画できるようになったら、この拒否 (と scripts/test-agent-sync.sh の飛ばす分岐) を消す。
 set -euo pipefail
 
 main() {
@@ -45,6 +52,7 @@ main() {
   here=$(cd "$(dirname "$0")" && pwd)
   root=$(git rev-parse --show-toplevel)
   cfg=$root/.agent-sync
+  [ "$(archetect --version 2>/dev/null)" = "archetect 3.6.1" ] || { echo "agent-sync: archetect 3.6.1 が PATH に無い (見つかった版: $(archetect --version 2>&1 || true))" >&2; exit 1; }
   local f
   for f in archetype/archetype.yaml archetype/archetype.lua answers.yaml generated; do
     [ -f "$cfg/$f" ] || { echo "agent-sync: $cfg/$f が無い" >&2; exit 1; }
@@ -57,10 +65,14 @@ main() {
   name=$(basename "$url" .git)
   case $name in . | .. | *[!A-Za-z0-9._-]*) echo "agent-sync: source の URL のファイル名 $name.git が定義域の外" >&2; exit 1 ;; esac
 
+  trap '[ -z "${run:-}" ] || rm -rf "$run"; [ -z "${held:-}" ] || rmdir "$held"' EXIT
+  local lock
+  lock=$(git -C "$root" rev-parse --absolute-git-dir)/agent-sync.lock
+  mkdir "$lock" 2>/dev/null || { echo "agent-sync: $lock がある (別の sync.sh が動いているか、強制終了の跡)。動いていなければ消す" >&2; exit 1; }
+  held=$lock
   run=$(mktemp -d "${TMPDIR:-/tmp}/agent-sync.XXXXXX")
   # Seatbelt は解決済みのパスで照合する (macOS の /tmp は /private/tmp)。
   run=$(cd "$run" && pwd -P)
-  trap 'rm -rf "$run"' EXIT
   # このパスを archetect の設定の YAML と render.sb の引数に、引用せずに書く。
   case $run in *[!A-Za-z0-9._/-]*) echo "agent-sync: 作業ディレクトリ $run に A-Z a-z 0-9 . _ / - 以外の文字がある (TMPDIR を変える)" >&2; exit 1 ;; esac
   src=$run/src/$name
@@ -91,7 +103,8 @@ main() {
   Darwin)
     local profile=$run/conf/render.sb lib
     cp "$here/render.sb" "$profile"
-    otool -L "$bin" | awk 'NR > 1 && $1 !~ /^\/(usr\/lib|System)\// {print $1}' | while read -r lib; do
+    otool -L "$bin" | sed -nE '2,$s|^[[:space:]]+(.+) \(compatibility version .*\)$|\1|p' | while IFS= read -r lib; do
+      case $lib in /usr/lib/* | /System/*) continue ;; esac
       for p in "$lib" "$(realpath "$lib")"; do
         case $p in *[\"\\]*) echo "agent-sync: profile に書けないパス: $p" >&2; exit 1 ;; esac
         printf '(allow file-read* file-map-executable (literal "%s"))\n' "$p"
@@ -100,18 +113,19 @@ main() {
     (cd "$run/out" && env -i HOME="$run/conf/home" \
       sandbox-exec -f "$profile" -D BIN="$bin" -D KEG="$(dirname "$(dirname "$bin")")" \
       -D DS="$run/ds" -D SRC="$run/src" -D CONF="$run/conf" -D OUT="$run/out" \
-      "$bin" "${args[@]}" </dev/null)
+      "$bin" "${args[@]}" </dev/null >&2)
     ;;
   Linux)
     # namespace には archetect とその共有ライブラリと入力しか無い。/bin/sh が無いので os.execute・io.popen は何も起動できない。
     # bwrap が作る root は書き込める tmpfs なので、--remount-ro / で外れた書き込みを消えずに失敗させる。
     local b=(--unshare-all --die-with-parent --new-session --clearenv --proc /proc --dev /dev)
-    for f in "$bin" $(ldd "$bin" | awk '$2 == "=>" && $3 ~ /^\// {print $3} $1 ~ /^\// && $2 ~ /^\(0x/ {print $1}'); do
+    b+=(--ro-bind "$bin" "$bin")
+    while IFS= read -r f; do
       b+=(--ro-bind "$f" "$f")
-    done
+    done < <(ldd "$bin" | sed -nE 's|^[[:space:]]*[^[:space:]]+ => (/.+) \(0x[0-9a-f]+\)$|\1|p; s|^[[:space:]]*(/.+) \(0x[0-9a-f]+\)$|\1|p')
     b+=(--ro-bind "$run/ds" "$run/ds" --ro-bind "$run/src" "$run/src" --ro-bind "$run/conf" "$run/conf"
       --bind "$run/out" "$run/out" --chdir "$run/out" --setenv HOME "$run/conf/home" --remount-ro /)
-    bwrap "${b[@]}" "$bin" "${args[@]}" </dev/null
+    bwrap "${b[@]}" "$bin" "${args[@]}" </dev/null >&2
     ;;
   *)
     echo "agent-sync: 対応していない OS: $(uname -s)" >&2
@@ -195,7 +209,13 @@ main() {
       errs=1
     elif [ -L "$t" ] || [ -e "$t" ]; then
       if grep -qxF -- "$dest" "$cfg/generated"; then
-        { [ -L "$t" ] || [ -f "$t" ]; } || { echo "agent-sync: 置き先 $dest が通常のファイルでも symlink でもない" >&2; errs=1; }
+        if ! { [ -L "$t" ] || [ -f "$t" ]; }; then
+          echo "agent-sync: 置き先 $dest が通常のファイルでも symlink でもない" >&2
+          errs=1
+        elif user_changed "$dest"; then
+          echo "agent-sync: 置き先 $dest が generated にあるが HEAD から変わっている (利用者の変更か、前回の結果が未コミット)。commit するか戻してから起動し直す" >&2
+          errs=1
+        fi
       elif [ -L "$t" ] || [ ! -f "$t" ] || ! cmp -s "$(content_of "$dest" "$from")" "$t"; then
         echo "agent-sync: 置き先 $dest に、generated に無く置くものと違うもの (利用者のファイル) がある。消すか移してから起動し直す" >&2
         errs=1
@@ -207,9 +227,14 @@ main() {
     if ! parents_ok "$root" "$p"; then
       echo "agent-sync: 古いパス $p の途中に、symlink かディレクトリでないものがある" >&2
       errs=1
-    elif [ -e "$t" ] && [ ! -L "$t" ] && [ ! -f "$t" ]; then
-      echo "agent-sync: 古いパス $p が通常のファイルでも symlink でもない" >&2
-      errs=1
+    elif [ -e "$t" ] || [ -L "$t" ]; then
+      if [ ! -L "$t" ] && [ ! -f "$t" ]; then
+        echo "agent-sync: 古いパス $p が通常のファイルでも symlink でもない" >&2
+        errs=1
+      elif user_changed "$p"; then
+        echo "agent-sync: 古いパス $p が HEAD から変わっている (利用者の変更か、前回の結果が未コミット)。commit するか戻してから起動し直す" >&2
+        errs=1
+      fi
     fi
   done <"$run/stale"
   [ "$errs" = 0 ] || exit 1
@@ -239,6 +264,10 @@ main() {
   chmod 644 "$tmp"
   mv -f "$tmp" "$cfg/generated"
   git -C "$root" status --short
+}
+
+user_changed() { # <相対パス>: 作業ツリーのパスが HEAD から (mode だけの違いを除いて) 変わっている・追跡していない・無視されている
+  [ -n "$(git -C "$root" -c core.fileMode=false status --porcelain --ignored -- "$1")" ]
 }
 
 parents_ok() { # <基点> <相対パス>: 途中のディレクトリが、無いか symlink でないディレクトリ

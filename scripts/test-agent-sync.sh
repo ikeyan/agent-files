@@ -3,14 +3,17 @@
 # - 初回: 部品の一覧のファイルを、上流と同じバイトと一覧の mode で置く。一覧の mode は上流の git の mode と同じ。手で写した sync.sh と render.sb は同じバイトなので引き取る。下流の archetype が描画したファイルも置く。
 # - 2 回目は何も変えず、mode のずれと消したファイルは戻す
 # - 上流の更新 (v1 → v2): 変わったファイルを置き直し、一覧から消えたファイルを消す
-# - 作業ツリーを変えずに落ちる: answers の欠け、置き先の重複、一覧の行が定義域の外、一覧と描画の不一致、利用者のファイル、SANDBOX_RUNTIME=1
+# - 作業ツリーを変えずに落ちる (理由も見る): 引数 (exit 2)、入力ファイルの欠け、archetype.yaml の source の行の定義域、generated の定義域・順序・古いパスの種類、answers の欠け、置き先の重複、一覧の行が定義域の外 (上流のパスの symlink、置き先の途中の symlink を含む)、一覧と描画の不一致、利用者のファイル、HEAD から変わった生成物と古いパス、ロックが取られている、TMPDIR の文字、archetect の版、対応していない OS、SANDBOX_RUNTIME=1
+# - 標準出力は git status --short と同じ。終わった (落ちた) 後にロックが残らない
 # SANDBOX_RUNTIME=1 (Claude Code の sandbox の中) では描画の sandbox を入れ子にできないので、SANDBOX_RUNTIME=1 の拒否だけを確かめ、残りを飛ばしたことを stderr に出す。
+# 一時的な飛ばし: Claude Code の sandbox が入れ子の sandbox-exec を許し、SANDBOX_RUNTIME=1 でも描画できるようになったら、この分岐を消す (sync.sh の拒否と同時に)。
 # それ以外では archetect と、macOS では sandbox-exec と otool、Linux では bwrap と ldd が要り、無ければ落ちる。
 # ネットワークは使わない (上流は file システムの上のリポで、sync.sh が取る URL を git の insteadOf で向ける)。
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
-tmp=$(cd "$(mktemp -d "${TMPDIR:-/tmp}/agent-sync-test.XXXXXX")" && pwd -P)
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/agent-sync-test.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
+tmp=$(cd "$tmp" && pwd -P)
 url=https://github.com/ikeyan/agent-files.git
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="url.$tmp/upstream.insteadOf" GIT_CONFIG_VALUE_0=$url
@@ -69,19 +72,24 @@ snapshot() { # <dir>: .git の外の全てのファイルの種類・実行可�
 }
 
 expect_fail() { # <名前> <dir> <stderr に含まれる文字列> [<環境変数の代入…>]: sync.sh が落ち、作業ツリーを変えず、理由を示す
-  local name=$1 d=$2 want=$3 before
+  local name=$1 d=$2 want=$3 before had=0
   shift 3
   before=$(snapshot "$d")
+  [ ! -e "$d/.git/agent-sync.lock" ] || had=1
   if (cd "$d" && env "$@" ./.agent-sync/sync.sh) >/dev/null 2>"$tmp/err.txt"; then
     echo "$name: sync.sh が通った" >&2
     status=1
   fi
   [ "$(snapshot "$d")" = "$before" ] || { echo "$name: 落ちた sync.sh が作業ツリーを変えた" >&2; status=1; }
+  [ -e "$d/.git/agent-sync.lock" ] && [ "$had" = 0 ] && { echo "$name: 落ちた sync.sh がロックを残した" >&2; status=1; }
+  [ -e "$d/.git/agent-sync.lock" ] || [ "$had" = 0 ] || { echo "$name: 他の起動のロックを消した" >&2; status=1; }
   grep -qF -- "$want" "$tmp/err.txt" || { echo "$name: stderr に「$want」が無い — $(cat "$tmp/err.txt")" >&2; status=1; }
 }
 
-sync_ok() { # <名前> <dir>
-  (cd "$2" && ./.agent-sync/sync.sh) >/dev/null 2>"$tmp/err.txt" || { echo "$1: sync.sh が落ちた — $(cat "$tmp/err.txt")" >&2; status=1; }
+sync_ok() { # <名前> <dir>: 通り、標準出力が git status --short と同じで、ロックを残さない
+  (cd "$2" && ./.agent-sync/sync.sh) >"$tmp/out.txt" 2>"$tmp/err.txt" || { echo "$1: sync.sh が落ちた — $(cat "$tmp/err.txt")" >&2; status=1; }
+  [ "$(cat "$tmp/out.txt")" = "$(git -C "$2" status --short)" ] || { echo "$1: 標準出力が git status --short と違う — $(cat "$tmp/out.txt")" >&2; status=1; }
+  [ ! -e "$2/.git/agent-sync.lock" ] || { echo "$1: ロックが残った" >&2; status=1; }
 }
 
 clean() { # <名前> <dir>: 作業ツリーが commit と同じ
@@ -112,6 +120,7 @@ mkdir -p upstream/components/probe/content/.agent-sync/files
 printf 'description: probe\n' >upstream/components/probe/archetype.yaml
 cat >upstream/components/probe/archetype.lua <<LUA
 local context = Context.new()
+print("lua-stdout")
 local results = {}
 local function try(name, f)
   local ok, r = pcall(f)
@@ -136,6 +145,8 @@ return context
 LUA
 printf '{{ results }}\n' >upstream/components/probe/content/probe.txt
 printf -- '-\tprobe.txt\t644\n' >upstream/components/probe/content/.agent-sync/files/probe
+ln -s pre-push upstream/hooks/link
+ln -s hooks upstream/hlink
 git -C upstream init -q -b main
 git -C upstream add -A
 git -C upstream commit -q -m v1
@@ -205,6 +216,86 @@ expect_fail '部品と同じ名前の一覧' ds 'File already exists'
 rm ds/.agent-sync/archetype/content/.agent-sync/files/pre-push
 clean 失敗の後 ds
 
+# 引数があれば exit 2 で何もしない
+rc=0
+(cd ds && ./.agent-sync/sync.sh extra) >/dev/null 2>"$tmp/err.txt" || rc=$?
+[ "$rc" = 2 ] || { echo "引数: exit $rc (2 のはず)" >&2; status=1; }
+grep -q usage "$tmp/err.txt" || { echo "引数: usage が無い — $(cat "$tmp/err.txt")" >&2; status=1; }
+
+# archetype.yaml の source の行は、sha で固定した https の URL がちょうど 1 つで、名前が定義域の中
+yaml=ds/.agent-sync/archetype/archetype.yaml
+cp "$yaml" yaml.orig
+{ cat yaml.orig; printf '  other:\n    source: %s#%s\n' "$url" "$v1"; } >"$yaml"
+expect_fail 'source の行が 2 つ' ds 'ちょうど 1 つでない'
+while IFS='|' read -r src want; do
+  printf 'description: x\ncatalog:\n  agent-files:\n%b' "$src" >"$yaml"
+  expect_fail "source $src" ds "$want"
+done <<CASES
+|ちょうど 1 つでない
+    source: $url#abc\n|ちょうど 1 つでない
+    source: ${v1}0\n|ちょうど 1 つでない
+    source: $(printf %s "$v1" | tr a-f A-F)\n|ちょうど 1 つでない
+    source: http://github.com/ikeyan/agent-files.git#$v1\n|ちょうど 1 つでない
+    source: https://example.com/x/...git#$v1\n|定義域の外
+    source: https://example.com/x/a%20b.git#$v1\n|定義域の外
+CASES
+cp yaml.orig "$yaml"
+
+# 入力ファイルが無い
+for f in archetype/archetype.yaml archetype/archetype.lua answers.yaml generated; do
+  mv "ds/.agent-sync/$f" missing.orig
+  expect_fail "入力 $f が無い" ds "$f が無い"
+  mv missing.orig "ds/.agent-sync/$f"
+done
+
+# generated は、パスが定義域の中で、LC_ALL=C の順で重複が無く、古いパスは通常のファイルか symlink
+gen=ds/.agent-sync/generated
+cp "$gen" generated.orig
+LC_ALL=C sort -r generated.orig >"$gen"
+expect_fail 'generated が逆順' ds '重複なしでない'
+{ cat generated.orig; tail -n 1 generated.orig; } >"$gen"
+expect_fail 'generated が重複' ds '重複なしでない'
+{ cat generated.orig; echo ../x; } >"$gen"
+expect_fail 'generated のパスが定義域の外' ds 'パスが定義域の外'
+{ cat generated.orig; echo zdir; } >"$gen"
+mkdir ds/zdir
+expect_fail '古いパスがディレクトリ' ds '古いパス zdir が通常のファイルでも symlink でもない'
+rmdir ds/zdir
+cp generated.orig "$gen"
+
+# 上流のパスの symlink と、置き先の途中の symlink
+ln -s hooks ds/link
+while IFS='|' read -r line want; do
+  cp "$local_list" list.orig
+  printf '%b\n' "$line" >>"$local_list"
+  expect_fail "一覧の行 $line" ds "$want"
+  cp list.orig "$local_list"
+done <<'CASES'
+hooks/link\tx\t644|symlink を通らない通常のファイルでない
+hlink/pre-push\tx\t644|symlink を通らない通常のファイルでない
+hooks/pre-push\tlink/x\t644|途中に、symlink
+CASES
+rm ds/link
+
+# 他の起動がロックを取っていれば落ちる。そのロックは消さない
+mkdir ds/.git/agent-sync.lock
+expect_fail 'ロックが取られている' ds 'agent-sync.lock がある'
+rmdir ds/.git/agent-sync.lock
+
+# TMPDIR の文字、archetect の版、OS
+mkdir "$tmp/t m p" shim-ver shim-os
+expect_fail 'TMPDIR に使えない文字' ds 'A-Z a-z 0-9 . _ / - 以外の文字がある' "TMPDIR=$tmp/t m p"
+printf '#!/bin/sh\necho archetect 3.6.0\n' >shim-ver/archetect
+cat >shim-os/uname <<SHIM
+#!/bin/sh
+[ "\$1" = -s ] && { echo Plan9; exit 0; }
+exec $(command -v uname) "\$@"
+SHIM
+chmod 755 shim-ver/archetect shim-os/uname
+expect_fail 'archetect の版' ds 'archetect 3.6.1 が PATH に無い' "PATH=$tmp/shim-ver:$PATH"
+expect_fail '対応していない OS' ds '対応していない OS: Plan9' "PATH=$tmp/shim-os:$PATH"
+clean 定義域の検査の後 ds
+
 # 上流の更新: hooks/pre-push を変え、codex-limits.sh を一覧から消す
 printf '# v2\n' >>upstream/hooks/pre-push
 grep -v codex-limits.sh upstream/components/pr-workflow/content/.agent-sync/files/pr-workflow >pr-workflow.list
@@ -222,6 +313,20 @@ cmp -s upstream/hooks/pre-push ds/hooks/pre-push || { echo "v2: hooks/pre-push �
 git -C ds add -A
 git -C ds commit -q -m v2
 expect_fail 'SANDBOX_RUNTIME=1' ds SANDBOX_RUNTIME=1 SANDBOX_RUNTIME=1
+
+# generated にある置き先と古いパスが HEAD から変わっていれば (利用者の変更と区別できない)、上書きも削除もしない。戻せば古いパスは消える
+printf 'mine\n' >>ds/hooks/pre-push
+expect_fail '変えた生成物' ds 'HEAD から変わっている'
+git -C ds checkout -q -- hooks/pre-push
+printf 'old\n' >ds/zzz-old.txt
+echo zzz-old.txt >>ds/.agent-sync/generated
+git -C ds add -A
+git -C ds commit -q -m old
+printf 'edited\n' >>ds/zzz-old.txt
+expect_fail '変えた古いパス' ds 'HEAD から変わっている'
+git -C ds checkout -q -- zzz-old.txt
+sync_ok 古いパスの削除 ds
+[ ! -e ds/zzz-old.txt ] || { echo "古いパスの削除: zzz-old.txt が残った" >&2; status=1; }
 
 # 上流の部品の Lua は、sandbox の外へ書けず、外を読めず、プロセスを起動できない
 make_ds hostile "$v1"
