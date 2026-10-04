@@ -513,7 +513,7 @@ printf 'mine\n' >"ds/$dest"; rec_as "$dest" -; dest_refused '置き先: generate
 rec_as "$dest" -; placed_ok '置き先: generated に無く、置くものと同じ'
 chmod 644 "ds/$dest"; placed_ok '置き先: mode だけ違う'
 ln "ds/$dest" hl; chmod 644 "ds/$dest"; sync_ok '置き先: hard link で mode だけ違う' ds
-{ [ -x "ds/$dest" ] && [ "$(ls -i "ds/$dest" | cut -d' ' -f1)" != "$(ls -i hl | cut -d' ' -f1)" ]; } || { echo "置き先: hard link で mode だけ違う: $dest が新しい inode の実行可能なファイルでない" >&2; status=1; }
+{ [ -x "ds/$dest" ] && [ ! "ds/$dest" -ef hl ]; } || { echo "置き先: hard link で mode だけ違う: $dest が新しい inode の実行可能なファイルでない" >&2; status=1; }
 { [ ! -x hl ] && cmp -s "$placed" hl && [ -n "$(find hl -perm 644)" ]; } || { echo '置き先: hard link で mode だけ違う: 別の hard link の mode かバイトが変わった' >&2; status=1; }
 rm hl; reset_ds
 rm "ds/$dest"; ln -s nowhere "ds/$dest"; dest_refused '置き先: symlink' '通常のファイルでない'
