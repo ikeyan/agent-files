@@ -39,6 +39,14 @@
 | 実行可能でない `hooks/pre-push.local` を黙って無視した。作業ツリーの無い push が理由を示さず落ちた | どちらも理由を示して止める (`67456ab`) |
 | CI の sysctl と、SANDBOX_RUNTIME=1 の飛ばす分岐に外せる条件が無かった | 隣に書いた (`dfbb1d2`、`0d50b9c`) |
 | pr-workflow の `repo.md` のテンプレートに、実体のパスからたどる読者への案内が無かった。このリポの実測の欄が「記録していない。」だった | 写したら消す案内を足し、「なし」にした (`ca07bf6`) |
+| `SANDBOX_RUNTIME=1` の事前拒否は入れ子の可否の代理の検査で、Claude Code が入れ子を許しても拒み続け、Linux の bwrap の入れ子は未測定だった (レビュー 2 回目の指摘) | 拒否と test の飛ばす分岐を消し、描画の失敗に終了状態と「OS の sandbox を適用できない」を添えた。test は実際に OS の sandbox を適用する probe が通らないときだけ飛ばす (CI では落とす)。sandbox-exec は `env -i` の下で PATH を引かず shim が効かなかったので `command -v` の絶対パスで呼ぶ (`7e951c1`) |
+| `GIT_DIR` などが残る環境 (hook・`git rebase --exec`) で、手順 1 の `git -C` が利用者のリポジトリに当たりうる | `git rev-parse --local-env-vars` (GIT_CONFIG* を除く) が 1 つでも設定されていれば最初に落とす。変数ごとの fixture を同じ一覧から生成する。canon に目録と hook に渡る変数の実測を足した (`7e951c1`、canon `86628a7`) |
+| bash 3.2 の glob の範囲 (`[A-Za-z]`) は UTF-8 の locale で非 ASCII を通す (awk・sed は通さない)。LC_ALL=C は sort・comm にしか付けていなかった | 起動の最初に `export LC_ALL=C` する 1 か所に集め、コマンドごとの指定を消した。UTF-8 の locale での通過と非 ASCII の拒否の fixture を足した。外すと `sort -c` も落ちることを確かめた (`7e951c1`、canon `86628a7`) |
+| 手順 4 の cp・chmod・mv の失敗で、作業ツリーの一時ファイル (`.agent-sync.XXXXXX`) が残った | 取得する資源を先頭に列挙し、現在の一時ファイルを `wt_tmp` に持たせて EXIT trap で消す。mv の shim で途中失敗させる fixture (`eeb5552`) |
+| generated にあるパスを「HEAD と違えば利用者の変更」としたため、前回の結果の commit 前の再起動と、手順 4 の途中で落ちた後の再起動が拒まれ、収束しなかった | 「HEAD とも今回置くものとも違うときだけ」に変え、状態ごとの扱いを先頭の表にして行ごとに fixture を足した。commit 前の連続起動と、途中失敗の後の起動し直しが初回と同じ作業ツリーになる fixture も足した (`eeb5552`) |
+| `foo` と `foo/bar` の両方を置く一覧が手順 3 を通り、手順 4 で途中まで当たった。`.agent-sync/` の下へ上流が sync.sh の入力を書けた | 別の置き先の親のディレクトリと、`.agent-sync/sync.sh`・`.agent-sync/render.sb` 以外の `.agent-sync/` の下を手順 3 で止める (generated のパスにも同じ規則) (`b4e7435`) |
+| pre-push の `git rev-parse --show-toplevel 2>/dev/null` が git のエラーを隠し、どの原因でも bare と断じた | stderr を見せ、メッセージは原因を決めつけない。走る場所 (main・linked worktree・サブディレクトリ・bare・.git の中) を宣言し、linked worktree・サブディレクトリ・.git の中の fixture を足した (`2670e74`) |
+| setup-repo の「編集しない。」が直前の文の帰結の重複だった | 消した (`062fa2d`) |
 
 ## 残っていること
 
@@ -46,8 +54,13 @@
   - sysctl の後に bwrap が user namespace を作れること。通らなければ、`/usr/share/apparmor/extra-profiles/bwrap-userns-restrict` を読み込む形を試す。
   - `ldd` が出す共有ライブラリだけで archetect が namespace の中で動くこと (Debian trixie arm64 では動いた)。
   - archetect の linux の release は glibc 2.39 を要る (Debian bookworm では動かなかった)。ubuntu-latest が上がっても満たすかは、上がったときに CI で分かる。
-- Claude Code の sandbox の中の `./verify.sh` は描画を伴う検査を飛ばす (stderr に出す)。sync.sh・部品・render.sb を変えたら、sandbox の外で `scripts/test-agent-sync.sh` を回す。
+- OS の sandbox を適用できない環境 (Claude Code の sandbox の中など) の `./verify.sh` は描画を伴う検査を飛ばす (理由を stderr に出す)。sync.sh・部品・render.sb を変えたら、sandbox の外で `scripts/test-agent-sync.sh` を回す。
 - パスの文字を POSIX の可搬なファイル名の文字に絞った。日本語のファイル名 (review-perspectives の観点など) を配るなら、Unicode の正規化で同じになる名前の重複も検査に足してから広げる。
 - 当てる手順 (手順 4) はトランザクションでない。検査は全部先に済ませるが、ファイルシステムの失敗では途中まで当たる。
 - 実際の下流のリポへの導入と、GitHub の HTTPS から sha で取る経路はまだ回していない (test は insteadOf で手元のリポに向ける)。
 - `render.sb` の KEG は archetect の実行ファイルの 2 つ上のディレクトリで、Homebrew の Cellar では keg だが、`/usr/local/bin` に置いた archetect では `/usr/local` 全体の読み取りを許す。
+- 2 回目のレビューの修正の実測と未測定:
+  - Linux (bwrap) の描画の probe (`bwrap --unshare-all --ro-bind / / --proc /proc --dev /dev /usr/bin/true`) は、この環境 (macOS) で動かしていない。CI が最初の実測になる。通らなければ CI は飛ばさず落ちる。
+  - Linux の bwrap が入れ子の sandbox の中で動くかも未測定。
+  - sandbox-exec の入れ子が exit 71 で落ちるのは、Claude Code の Bash の sandbox の中で probe が `Operation not permitted` で落ちる形で確かめた (描画の test は飛ばして理由を出す)。
+  - bash の glob の範囲の locale 依存は macOS の bash 3.2 だけ測った。Linux の bash 5 は未測定で、`LC_ALL=C` の固定はどちらでも害が無いので測らずに入れた。
