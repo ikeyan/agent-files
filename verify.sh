@@ -109,6 +109,7 @@ check_files shellcheck -- '*.sh' hooks/pre-push
 check_files deno check -- '*.ts'
 scripts/test-target-diff.sh
 scripts/test-pre-push.sh
+scripts/test-cleanup-branch.sh
 scripts/test-codex-limits.sh
 # 書き込みは $TMPDIR の下だけだが、シンボリックリンクを作るので Deno はパスを絞った許可を受け付けない
 deno run --allow-run=git,bash --allow-env --allow-read --allow-write scripts/test-target-diff.ts

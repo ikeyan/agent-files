@@ -29,10 +29,7 @@ description: Use when pushing a branch, creating a pull request or editing its d
   - 根拠と実測: `canon: facts/git/force-with-lease-recreated-branch`
 - **push の単位**: コミットごとには push しない。作業の区切り (レビュー依頼・指示された時点) でまとめる。
 - **PR の作成**: 頼まれたときだけ作る。寄稿規約に従う。
-- **merge の後**: ローカルの作業ブランチを消す。squash merge では先端が既定ブランチの祖先にならず `git branch -d` が断るので、次の両方を確かめてから `git branch -D <branch>` で消す。
-  - PR が merged である。
-  - PR の head がブランチの先端と一致する。一致しなければ PR に入っていない commit があるので消さない。
-  - git は worktree で checkout 中のブランチを `-D` でも消せない (`cannot delete branch … used by worktree`)。そのブランチを checkout している worktree (main worktree・linked worktree のどちらでも) で、先に `git switch --detach` して HEAD を外す。既定ブランチへの切り替えは、既定ブランチが別の worktree で checkout 中だと断られる。
+- **merge の後**: PR の head の sha を PR から読み (merged であることも確かめ)、`<このスキルのディレクトリ>/cleanup-branch.sh <branch> <PR の head の sha>` でローカルの作業ブランチを消す。squash merge では先端が既定ブランチの祖先にならず `git branch -d` が使えないので、先端が PR の head と一致することをスクリプトが確かめて `-D` する。checkout 中の worktree の扱いなどはスクリプトの先頭に書いてある。
 - **PR の説明**: 最新の HEAD に関連することだけを書く。push するたびに更新するので、計測結果を書くなら計測スクリプトを用意する。
   - 書くこと (寄稿規約に PR テンプレートがあればその構成に収め、無ければ次の 3 つを見出しにする):
     - Purpose: 何を達成しようとして、何を期待し、実際に何が起きたか。
