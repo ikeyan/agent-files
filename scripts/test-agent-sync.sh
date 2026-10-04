@@ -3,7 +3,7 @@
 # - 初回: 部品の一覧のファイルを、上流と同じバイトと一覧の mode で置く。一覧の mode は上流の git の mode と同じ。手で写した sync.sh と render.sb は同じバイトなので引き取る。下流の archetype が描画したファイルも置く。
 # - 2 回目は何も変えず、mode のずれと消したファイルは戻す
 # - 上流の更新 (v1 → v2): 変わったファイルを置き直し、一覧から消えたファイルを消す
-# - 作業ツリーを変えずに落ちる (理由も見る): 引数 (exit 2)、入力ファイルの欠け、archetype.yaml の source の行の定義域、generated の定義域・順序・古いパスの種類、answers の欠け、置き先の重複、一覧の行が定義域の外 (上流のパスの symlink、置き先の途中の symlink を含む)、一覧と描画の不一致、利用者のファイル、HEAD とも置くものとも違う生成物と HEAD から変わった古いパス、ロックが取られている、TMPDIR の文字、archetect の版、対応していない OS、OS の sandbox を適用できない (描画が非 0 で終わる)、リポジトリの場所を決める GIT_* (`git rev-parse --local-env-vars` の各変数)
+# - 作業ツリーを変えずに落ちる (理由も見る): 引数 (exit 2)、入力ファイルの欠け、archetype.yaml の source の行の定義域、generated の定義域・順序・古いパスの種類、answers の欠け、置き先の重複 (別の置き先の親のディレクトリを含む)、置き先の .agent-sync/ の下、一覧の行が定義域の外 (上流のパスの symlink、置き先の途中の symlink を含む)、一覧と描画の不一致、利用者のファイル、HEAD とも置くものとも違う生成物と HEAD から変わった古いパス、ロックが取られている、TMPDIR の文字、archetect の版、対応していない OS、OS の sandbox を適用できない (描画が非 0 で終わる)、リポジトリの場所を決める GIT_* (`git rev-parse --local-env-vars` の各変数)
 # - 環境: GIT_CONFIG* は通る (この test 自身が GIT_CONFIG_COUNT で上流へ向ける)。UTF-8 の locale (LANG・LC_ALL) でも通り、非 ASCII の文字は定義域の外として落ちる (置き先・source の名前・TMPDIR)
 # - 標準出力は git status --short と同じ。終わった (落ちた) 後にロックが残らない
 # OS の sandbox を適用できない環境 (別の sandbox の中など) では、実際に適用を試す probe が失敗するので、描画を伴う検査を飛ばしたことを理由と一緒に stderr に出す。CI (環境変数 CI が空でない) では飛ばさず落とす。
@@ -229,6 +229,16 @@ hooks/pre-push\t../x\t644|置き先のパスが定義域の外
 hooks/pre-push\t.git/hooks/pre-push\t755|置き先のパスが定義域の外
 hooks/pre-push\t.GIT/x\t755|置き先のパスが定義域の外
 hooks/pre-push\tx y\t644|置き先のパスが定義域の外
+hooks/pre-push\tfoo\t644\nhooks/pre-push\tfoo/bar\t644|の親のディレクトリ
+hooks/pre-push\tfoo/bar\t644\nhooks/pre-push\tfoo\t644|の親のディレクトリ
+hooks/pre-push\tFOO/bar\t644\nhooks/pre-push\tfoo\t644|の親のディレクトリ
+hooks/pre-push\thooks\t644|の親のディレクトリ
+hooks/pre-push\tNOTICE.txt/x\t644|の親のディレクトリ
+hooks/pre-push\t.agent-sync/answers.yaml\t644|置いてよい 2 つ
+hooks/pre-push\t.agent-sync/archetype/archetype.lua\t644|置いてよい 2 つ
+hooks/pre-push\t.agent-sync/generated\t644|置いてよい 2 つ
+hooks/pre-push\t.AGENT-SYNC/sync.sh\t644|置いてよい 2 つ
+hooks/pre-push\t.agent-sync\t644|置いてよい 2 つ
 hooks/pre-push\tx\t600|mode が 644 でも 755 でもない
 hooks/pre-push\tx|タブ区切りの 3 つの欄でない
 hooks/missing\tx\t644|symlink を通らない通常のファイルでない
@@ -284,6 +294,8 @@ expect_fail 'generated が逆順' ds '重複なしでない'
 expect_fail 'generated が重複' ds '重複なしでない'
 { cat generated.orig; echo ../x; } >"$gen"
 expect_fail 'generated のパスが定義域の外' ds 'パスが定義域の外'
+{ cat generated.orig; echo .agent-sync/answers.yaml; } >"$gen"
+expect_fail 'generated に .agent-sync/ の入力' ds '置いてよい 2 つ'
 { cat generated.orig; echo zdir; } >"$gen"
 mkdir ds/zdir
 expect_fail '古いパスがディレクトリ' ds '古いパス zdir が通常のファイルでも symlink でもない'

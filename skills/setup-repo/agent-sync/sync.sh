@@ -32,9 +32,10 @@
 #     - 置き先のパス: 作業ツリーのルートからの相対パス。
 #     - mode: 644 か 755。
 #   - パスは / で区切った 1 つ以上の名前。名前は POSIX の可搬なファイル名の文字 (A-Z a-z 0-9 . _ -) だけで、. と .. でない。置き先は大文字小文字によらず .git の名前を含まない。
-#   - 置き先は全ての一覧を通して、大文字小文字によらず 1 回だけ (後勝ちにしない)。
+#   - 置き先は全ての一覧を通して、大文字小文字によらず 1 回だけ (後勝ちにしない)。別の置き先の親のディレクトリと同じ (`foo` と `foo/bar`) 置き先も許さない (大文字小文字によらない。mkdir が失敗するか、`foo` が `foo/` の中へ入る)。
+#   - 置き先の最初の名前が .agent-sync (大文字小文字によらない) なら、`.agent-sync/sync.sh` と `.agent-sync/render.sb` (agent-sync の部品が置くもの) だけを許す。archetype/・answers.yaml・generated は sync.sh の入力で、上流に書かせない。
 #   - 一覧の外の描画の出力は、`-` の行の置き先と 1 対 1 に対応する。
-# 作業ツリーの定義域 (置き先と、generated にあって置き先に無い古いパス。generated も上のパスの規則に従う):
+# 作業ツリーの定義域 (置き先と、generated にあって置き先に無い古いパス。generated も上のパスと .agent-sync/ の規則に従う):
 #   - 途中のディレクトリは、無いか symlink でないディレクトリ。
 #   - 既にある置き先は、generated にある通常のファイルか symlink、または置くものと同じバイトの通常のファイル (利用者のファイルを上書きしない)。
 #   - 古いパスは、無いか、通常のファイルか symlink。
@@ -55,6 +56,14 @@
 # 資源: 手順 4 までに取るのは、作業ディレクトリ・ロック・手順 4 が置き先ごとと generated に 1 つずつ作る作業ツリーの一時ファイル (同じディレクトリの `.agent-sync.XXXXXX`。現在の 1 つを wt_tmp が持つ)。全て EXIT trap が解放する (cp・chmod・mv が失敗して落ちるときも、一時ファイルを作業ツリーに残さない)。
 # 失敗: 手順 2 の描画が非 0 で終わる (archetect の失敗か、別の sandbox の中などで OS の sandbox を適用できない) と、終了状態を示して落ちる。手順 1〜3 のどこで落ちても作業ツリーは変わらない。手順 4 は検査済みのパスへの rm・mv・chmod だけだが、ファイルシステムの失敗で途中まで当たることはある (git status に出る)。起動し直せば、同一性の表に従って同じ結果に収束する。
 set -euo pipefail
+
+# 置き先と generated のパスの .agent-sync/ の規則 (描画の出力の定義域)。awk の本体の前に連ねる。
+AWK_AGENT='
+function agent_bad(p,   a) {
+  split(p, a, "/")
+  return tolower(a[1]) == ".agent-sync" && p != ".agent-sync/sync.sh" && p != ".agent-sync/render.sb"
+}
+'
 
 main() {
   [ $# -eq 0 ] || { echo "usage: .agent-sync/sync.sh (引数なし)" >&2; exit 2; }
@@ -162,7 +171,7 @@ main() {
   find . -type f -path "./$lists/*" | sort | sed 's|^\./||' | {
     files=()
     while IFS= read -r f; do files+=("$f"); done
-    [ ${#files[@]} -eq 0 ] || awk -F '\t' '
+    [ ${#files[@]} -eq 0 ] || awk -F '\t' "$AWK_AGENT"'
       function bad_path(p, dest,   n, a, i) {
         n = split(p, a, "/")
         if (n == 0) return 1
@@ -176,6 +185,7 @@ main() {
       NF != 3 { fail("タブ区切りの 3 つの欄でない"); next }
       $1 != "-" && bad_path($1, 0) { fail("上流のパスが定義域の外: " $1); next }
       bad_path($2, 1) { fail("置き先のパスが定義域の外: " $2); next }
+      agent_bad($2) { fail("置き先が .agent-sync/ の下の、置いてよい 2 つ (sync.sh・render.sb) 以外: " $2); next }
       $3 != "644" && $3 != "755" { fail("mode が 644 でも 755 でもない: " $3); next }
       { print $2 "\t" $1 "\t" $3 "\t" FILENAME }
       END { exit bad }
@@ -184,8 +194,19 @@ main() {
   awk -F '\t' '
     { k = tolower($1) }
     k in seen { print "agent-sync: 置き先が重複している (大文字小文字によらない): " $1 " (" $4 ") と " seen[k] > "/dev/stderr"; bad = 1; next }
-    { seen[k] = $1 " (" $4 ")" }
-    END { exit bad }
+    {
+      seen[k] = $1 " (" $4 ")"
+      n = split(k, a, "/")
+      pre = ""
+      for (i = 1; i < n; i++) {
+        pre = pre (i > 1 ? "/" : "") a[i]
+        parent[pre] = $1 " (" $4 ")"
+      }
+    }
+    END {
+      for (k in parent) if (k in seen) { print "agent-sync: 置き先 " seen[k] " が、別の置き先 " parent[k] " の親のディレクトリ (大文字小文字によらない)" > "/dev/stderr"; bad = 1 }
+      exit bad
+    }
   ' "$run/records"
   awk -F '\t' '$2 == "-" {print $1}' "$run/records" | sort >"$run/declared"
   local errs=0
@@ -198,14 +219,15 @@ main() {
     errs=1
   done < <(comm -13 "$run/rendered" "$run/declared")
 
-  awk -F '\t' '
+  awk -F '\t' "$AWK_AGENT"'
     function bad_path(p,   n, a, i) {
       n = split(p, a, "/")
       if (n == 0) return 1
       for (i = 1; i <= n; i++) if (a[i] !~ /^[A-Za-z0-9._-]+$/ || a[i] == "." || a[i] == ".." || tolower(a[i]) == ".git") return 1
       return 0
     }
-    bad_path($0) { print "agent-sync: generated:" NR ": パスが定義域の外: " $0 > "/dev/stderr"; bad = 1 }
+    bad_path($0) { print "agent-sync: generated:" NR ": パスが定義域の外: " $0 > "/dev/stderr"; bad = 1; next }
+    agent_bad($0) { print "agent-sync: generated:" NR ": .agent-sync/ の下の、置いてよい 2 つ (sync.sh・render.sb) 以外: " $0 > "/dev/stderr"; bad = 1 }
     END { exit bad }
   ' "$cfg/generated"
   sort -c -u "$cfg/generated" 2>/dev/null || { echo "agent-sync: $cfg/generated が LC_ALL=C の順で重複なしでない" >&2; exit 1; }
