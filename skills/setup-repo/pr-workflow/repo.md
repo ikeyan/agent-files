@@ -1,5 +1,7 @@
 # PR / ブランチ運用: このリポの値
 
+<これは setup-repo のテンプレートで、リポごとの値ではない。写したらこの行を消す。ikeyan/agent-files 自身の値は [.claude/skills/pr-workflow/repo.md](../../../.claude/skills/pr-workflow/repo.md)>
+
 [SKILL.md](SKILL.md) が読む、このリポ固有の値。SKILL.md と手段のファイルは agent-sync で ikeyan/agent-files からそのまま写すので、リポごとに違うものはこのファイルだけに書く。
 
 ## 値
