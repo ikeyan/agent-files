@@ -146,7 +146,6 @@ step() { # <名前> <コマンド…>: 裏で回し、標準出力を $out/<番�
 step shellcheck run_shellcheck
 step "deno check" check_files deno check -- '*.ts'
 step scripts/test-target-diff.sh scripts/test-target-diff.sh
-step scripts/test-codex-limits.ts deno run --allow-run=bash,skills/setup-repo/pr-workflow/codex-limits.sh --allow-env=PATH,TMPDIR --allow-read="${TMPDIR:-/tmp}" --allow-write="${TMPDIR:-/tmp}" scripts/test-codex-limits.ts
 # 書き込みは $TMPDIR の下だけだが、シンボリックリンクを作るので Deno はパスを絞った許可を受け付けない
 step scripts/test-target-diff.ts deno run --allow-run=git,bash --allow-env --allow-read --allow-write scripts/test-target-diff.ts
 # sync.sh の写しと shim を一時ディレクトリから起動し、symlink を作るので、run・read・write はパスを絞れない
@@ -154,6 +153,7 @@ step scripts/test-agent-sync.ts deno run --allow-run --allow-env=CI,PATH,TMPDIR 
 # 一時ディレクトリに symlink を作るので、read・write はパスを絞れない
 step scripts/test-pre-push.ts deno run --allow-run=git,env --allow-env=PATH,TMPDIR --allow-read --allow-write scripts/test-pre-push.ts
 step scripts/test-cleanup-branch.ts deno run --allow-run=git,skills/setup-repo/pr-workflow/cleanup-branch.sh --allow-env=PATH,TMPDIR --allow-read="${TMPDIR:-/tmp}" --allow-write="${TMPDIR:-/tmp}" scripts/test-cleanup-branch.ts
+step scripts/test-codex-limits.ts deno run --allow-run=bash,skills/setup-repo/pr-workflow/codex-limits.sh --allow-env=PATH,TMPDIR --allow-read="${TMPDIR:-/tmp}" --allow-write="${TMPDIR:-/tmp}" scripts/test-codex-limits.ts
 step scripts/test-pr.ts deno run --allow-run=bash --allow-net=127.0.0.1 --allow-env=PR_RUNS,FC_SEED,PATH --allow-read="${TMPDIR:-/tmp}" --allow-write="${TMPDIR:-/tmp}" scripts/test-pr.ts
 step scripts/verify.ts bash -c 'set -o pipefail; git ls-files --cached --others --exclude-standard | deno run --allow-read=. --allow-net=www.schemastore.org scripts/verify.ts'
 

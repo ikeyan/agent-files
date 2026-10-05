@@ -16,12 +16,12 @@
  *
  * このスクリプトの入力と環境の定義域:
  * - 引数は取らない。渡されれば理由を出して落ちる。
- * - 読む環境変数は PATH・TMPDIR だけ。PATH に bash・jq・mktemp・mkfifo・rm・cat・sleep・ln があること (codex は要らない)。
+ * - 読む環境変数は PATH・TMPDIR だけ。PATH に bash (bash スクリプトの `#!/usr/bin/env bash` が引く)・jq・mktemp・mkfifo・rm (codex-limits.sh)・cat・sleep (偽の codex)・mkdir・ln (codex か jq を欠いた PATH を作る準備)・sleep (alive) があること (codex は要らない)。
  * - TMPDIR (未設定か空なら /tmp) は絶対パスで、作った一時ディレクトリの綴りと解決済みのパスが A-Z a-z 0-9 . _ / - だけであること。外れていれば理由を出して落ちる。
  * - 後始末は、終わったときに一時ディレクトリを消す。SIGINT・SIGTERM では子に SIGTERM を送り、子が終わってから消す (子が書いている最中に消すと消し残す)。codex-limits.sh は SIGTERM でも EXIT trap で app-server を止める (canon: facts/shell/bash-exit-trap-runs-on-fatal-signal)。
  *
  * 並行の検査が共有する、変わりうる状態。これ以外は検査ごとの `${tmp}/f/<n>` の下に置き (codex-limits.sh の TMPDIR と、偽の codex が読み書きする CASE も)、新しく共有するものを足すときも検査ごとのパスにする:
- * - HOME (`${tmp}/home`。作らない)。
+ * - HOME (`${tmp}/home`)。
  * - 偽の codex (`${tmp}/bin/codex`) と、codex か jq を欠いた PATH (`${tmp}/no-codex`・`${tmp}/no-jq`): 準備で作った後は読むだけ。
  *
  * 子の環境は baseEnv と、検査ごとの CASE・TMPDIR・PATH だけ (clearEnv。canon: facts/deno/command-spawn)。
@@ -188,6 +188,13 @@ await gather(`${tmp}/no-jq`, ["bash", "codex", "mktemp", "mkfifo", "rm", "cat", 
 
 // ---- 回して照合する ----
 
+/** ファイルの中身。無ければ null で、読めない (権限など) ときは投げる。 */
+const readOptional = (path: string) =>
+  Deno.readTextFile(path).catch((e) => {
+    if (e instanceof Deno.errors.NotFound) return null;
+    throw e;
+  });
+
 /** 例のディレクトリで codex-limits.sh を回す。mode と response は偽の codex が読む。 */
 async function run(t: Ctx, mode: "respond" | "hang" | "exit", response = "", path = fakePath): Promise<Run> {
   await Deno.mkdir(`${t.dir}/tmp`);
@@ -196,14 +203,14 @@ async function run(t: Ctx, mode: "respond" | "hang" | "exit", response = "", pat
   return exec(script, [], { CASE: t.dir, TMPDIR: `${t.dir}/tmp`, PATH: path });
 }
 
-/** pid が 2 秒のうちに消えなければ真。codex-limits.sh の kill は待たないので、すぐには消えていないことがある。 */
+/** pid が 2 秒のうちに消えなければ真。codex-limits.sh の EXIT trap は kill するだけで終わりを待たない (SIGTERM を無視する app-server で止まらないため) ので、すぐには消えていないことがある。codex-limits.sh が終わりを待つようになれば、poll をやめて 1 回の `kill -0` にする。 */
 const alive = async (pid: string) => (await exec("bash", ["-c", 'for _ in {1..20}; do kill -0 "$1" 2> /dev/null || exit 1; sleep 0.1; done', "bash", pid])).code === 0;
 
 /** 終わった後に、app-server と codex-limits.sh の一時ディレクトリが残っていないこと、30 秒の timeout を待ったかを確かめる。 */
 async function expectEnded(t: Ctx, r: Run, waited = false) {
   if (waited && r.ms < 29_000) t.fail(`${(r.ms / 1000).toFixed(1)} 秒で終わった — 30 秒の timeout を待っていない`);
   if (!waited && r.ms >= 5_000) t.fail(`${(r.ms / 1000).toFixed(1)} 秒かかった — 30 秒の timeout を待った疑い`);
-  const pid = await Deno.readTextFile(`${t.dir}/pid`).catch(() => null);
+  const pid = await readOptional(`${t.dir}/pid`);
   if (pid !== null && await alive(pid.trim())) t.fail(`app-server (pid ${pid.trim()}) が残っている`);
   const left: string[] = [];
   for await (const e of Deno.readDir(`${t.dir}/tmp`)) left.push(e.name);
@@ -232,7 +239,7 @@ const ended = "codex-limits.sh: codex app-server が応答の前に終わった"
 // 30 秒かかるので最初に始める
 fixture("応答しない", async (t) => {
   await expectFail(t, await run(t, "hang"), 2, "codex-limits.sh: codex app-server が 30 秒以内に応答しない", true);
-  if (await Deno.readTextFile(`${t.dir}/pid`).catch(() => null) === null) t.fail("app-server が起動されていない");
+  if (await readOptional(`${t.dir}/pid`) === null) t.fail("app-server が起動されていない");
 });
 
 fixture("全部の値", async (t) => {
@@ -244,7 +251,7 @@ fixture("全部の値", async (t) => {
     '{"id":2,"method":"account/rateLimits/read","params":null}',
     "",
   ].join("\n");
-  const got = await Deno.readTextFile(`${t.dir}/in`).catch(() => null);
+  const got = await readOptional(`${t.dir}/in`);
   if (got === null) t.fail("app-server が 1 行も受けていない");
   else if (got !== want) t.fail(`app-server に送った行が違う — ${JSON.stringify(got)}`);
 });
