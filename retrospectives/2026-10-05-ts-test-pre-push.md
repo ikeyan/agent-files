@@ -37,9 +37,16 @@
   - linked worktree で回した verify.sh が、写しを worktree の git dir でなく common git dir の hooks に置く。先頭の「common git dir の hooks へ写す」は sh でも書いていたが、verify.sh を linked worktree で回す検査が無かった。
   - 現行と同じ実行可能な pre-push があれば、verify.sh は示さず写し直さない (VERIFY_READONLY=1 でも)。sh の先頭は「何もしない」と書いていたが、その場合の出力も inode も見ていなかった。
 - 中断では子に SIGTERM を送り、子が終わるのを待ってから消す。中断の後は新しい子を起こさない。プロセスグループへの SIGINT (0.3〜2.5 秒) と deno だけへの SIGINT (0.3〜1.5 秒) で、一時ディレクトリが残らないことを確かめた。
-- `.git` の中からの push の検査は git 自身の英語のエラーを見るので、その push だけ `LC_ALL=C` にした。clearEnv で LANG が無いと、Homebrew の bash 5.3 は macOS の言語の設定 (ja-JP) で訳した (「行 140」)。git 2.55.0 は訳さなかったが、契約ではない。
+- `.git` の中からの push の検査は git 自身の英語のエラーを見るので、`LC_ALL=C` にした (この commit ではその push だけ。下の修正で baseEnv へ移した)。clearEnv で LANG が無いと、Homebrew の bash 5.3 は macOS の言語の設定 (ja-JP) で訳した (「行 140」)。git 2.55.0 は訳さなかったが、契約ではない。
 - 自分のレビューで、bare リポジトリの検査の `git for-each-ref ""` が何も出さないことに気づいた (空の pattern は全ての ref でなく何にも合わない)。remote に ref ができたかの検査が常に通っていた。pattern を渡さない形にした。
 - core.hooksPath の検査は、`git config --get` が設定の無いときに exit 1 になるのを例外にせず、書き換えたと示す。
+
+レビューの修正 (`edcab49`)。
+
+- TMPDIR に空白・`%`・非 ASCII があると、`shellcheck の版が違う verify.sh` の検査が file URL との照合で誤って落ちた。deno が URL のパスを percent-encode するため (canon: `facts/deno/run-missing-module`)。解決済みの一時ディレクトリが `A-Z a-z 0-9 . _ / -` だけであることを調べ、外れていれば理由を出して落ちる (`test-agent-sync.ts` と同じ定義域)。先頭の定義域の行も直した。TMPDIR に空白を含めて実測し、理由を出して exit 1 で落ちる。
+- `LC_ALL=C` を baseEnv に置いた。clearEnv で locale の環境変数が無くても macOS では bash などがシステムの言語で訳すため (canon: `facts/shell/gettext-macos-system-language`)。`.git` の中からの push だけの上書きを消した。
+- `pre-push.local の呼び出し`: 最後の `git rev-parse` の `.catch(() => "")` を外した (git の失敗は例外として理由に出る)。引数と stdin の記録が無いとき (pre-push.local が呼ばれなかったとき) は、「null」でなくそう示す。
+- `core.hooksPath` の最後の失敗に stderr を含めた。`seq` をやめ、検査のディレクトリ番号を `reports.length - 1` から導いた。`install` の JSDoc を消した。
 
 ## 変異と結果
 
@@ -82,8 +89,12 @@ hooks/pre-push と verify.sh を 1 か所ずつ壊し、sh (`a30f60d` の `scrip
 
 ## 残っていること
 
-- 次に移すもの: `scripts/test-target-diff.sh` (できれば `scripts/test-target-diff.ts` と 1 つにする)、`scripts/test-codex-limits.sh`、`scripts/test-cleanup-branch.sh`、`verify.sh` の検査の段。
+- 次に移すもの:
+  - `scripts/test-target-diff.sh` (できれば `scripts/test-target-diff.ts` と 1 つにする)
+  - `scripts/test-codex-limits.sh`
+  - `scripts/test-cleanup-branch.sh`
+  - `verify.sh` の検査の段
 - 並行に回した `git push` が遅い原因 (上の時間) は調べていない。速さが要るようになったら、push の待ちが何かを測ってから直す。
 - shellcheck の版が違うときの検査は、deno が無いモジュールを `Module not found "file://…"` と示して exit 1 で終わること (deno 2.9.7 で実測) に依る。deno の文言が変われば、この検査が落ちて知らせる。
 - 中断で子を待つ仕組みは `scripts/test-agent-sync.ts` には無い (mode を戻してから消すだけ)。同じ消し残しが起きうる。
-- `.git` の中からの push の検査だけ `LC_ALL=C` にした。他の検査は git の文言を見ない。
+- locale は baseEnv の `LC_ALL=C` に置いた。他の検査も、子の文言を見る検査を足すときはこの前提に乗る。
