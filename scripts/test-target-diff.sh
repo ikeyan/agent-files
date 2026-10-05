@@ -6,7 +6,8 @@ script=$(cd "$(dirname "$0")/.." && pwd)/skills/review-perspectives/target-diff.
 tmp=$(cd "$(mktemp -d "${TMPDIR:-/tmp}/target-diff.XXXXXX")" && pwd -P)
 trap 'rm -rf "$tmp"' EXIT
 export TMPDIR=$tmp
-export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+gitconfig=$(cd "$(dirname "$0")" && pwd)/test-gitconfig
+export GIT_CONFIG_GLOBAL=$gitconfig GIT_CONFIG_SYSTEM=/dev/null
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
 status=0
 

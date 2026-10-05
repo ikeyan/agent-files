@@ -177,8 +177,9 @@ type Case = typeof caseArb extends fc.Arbitrary<infer T> ? T : never;
 
 // ---- 実行 ----
 
+const tmpRoot = await Deno.makeTempDir({ prefix: "target-diff-pbt." });
 const baseEnv = {
-  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_CONFIG_GLOBAL: new URL("./test-gitconfig", import.meta.url).pathname,
   GIT_CONFIG_SYSTEM: "/dev/null",
   GIT_AUTHOR_NAME: "t",
   GIT_AUTHOR_EMAIL: "t@example.com",
@@ -606,7 +607,6 @@ async function checkIdentity(c: Case, wt: string, before: Output, invoke: () => 
 
 // ---- 入口 ----
 
-const tmpRoot = await Deno.makeTempDir({ prefix: "target-diff-pbt." });
 try {
   await fc.assert(
     fc.asyncProperty(caseArb, async (c) => {

@@ -16,7 +16,8 @@ tmp=$(mktemp -d "${TMPDIR:-/tmp}/agent-sync-test.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 tmp=$(cd "$tmp" && pwd -P)
 url=https://github.com/ikeyan/agent-files.git
-export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+gitconfig=$(cd "$(dirname "$0")" && pwd)/test-gitconfig
+export GIT_CONFIG_GLOBAL=$gitconfig GIT_CONFIG_SYSTEM=/dev/null
 export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="url.$tmp/upstream.insteadOf" GIT_CONFIG_VALUE_0=$url
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
 export TMPDIR=$tmp
