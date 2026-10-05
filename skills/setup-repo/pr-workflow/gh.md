@@ -35,7 +35,7 @@ gh 2.98.0 で `--help` と実行を確認したもの。「未実測」と書い
     - 旧来の commit status で報告する CI は、この API でなく `gh api repos/<owner>/<repo>/commits/$sha/status` の該当する context を見る。
     - 根拠: `canon: facts/gh/pr-checks-zero-checks-and-exit-codes`、`canon: facts/claude-code/bash-tool-grep-wrapper-qv-exit-code`
   - ログ: Actions の check は `link` の URL から `<jobId>` を取って `gh run view --job <jobId> --log-failed` (`canon: facts/gh/pr-checks-link-to-run-logs`)。Actions 以外の check は `link` の URL を見る。
-- **PR の watch** (対応が要るものを待つ): `<このスキルのディレクトリ>/pr.sh watch <owner>/<repo> <n> <dir>` を Bash ツールの `run_in_background` で回す。何を出し、何を出さないかは `pr.sh` の先頭に書いてある。`curl` と `jq` が要る。
+- **PR の watch** (対応が要るものを待つ): `<このスキルのディレクトリ>/pr.sh watch <owner>/<repo> <n> <dir>` を Bash ツールの `run_in_background` で回す。何を出し、何を出さないかは `pr.sh` の先頭に書いてある。`curl` と `jq` (1.6 以上) が要る。
   - `<dir>` は PR ごとに 1 つ作り、その PR の間は使い続ける: `mktemp -d -p "${TMPDIR:-/tmp}" watch-pr.XXXXXX`。共有の `/tmp` に固定名で置かない (`canon: facts/shell/mktemp-tmpdir-handling-bsd-vs-gnu`)。
   - 出力は終わったときにまとめて届く。終わったら次のとおりにする。
     - `open`・`new`・`changed` の行: 対応してから、同じ `<dir>` で起動し直す。止まっていた間の変化は、起動し直した最初の周期で出る。

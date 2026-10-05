@@ -42,6 +42,8 @@ skills の外に各リポへ置くファイルは、ルートの `archetype.yaml
 - pr-workflow
 - agent-sync の `sync.sh` と `render.sb`
 
+配る pr-workflow のスクリプト (`pr.sh`・`codex-limits.sh`) は、各リポで jq 1.6 以上を前提にする。Raspberry Pi OS (Debian 12 bookworm) の jq が 1.6 なので、1.6 を下限にしている (canon: `facts/jq/parse-error-prefix`)。
+
 各リポは固定した版から `.agent-sync/sync.sh` で当てる。導入と運用は [setup-repo の 7 節](skills/setup-repo/SKILL.md#7-agent-sync-ikeyanagent-files-のファイルの配布)。
 
 ## builtin の `/code-review` を review-perspectives に向ける

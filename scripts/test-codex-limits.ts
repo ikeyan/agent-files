@@ -271,6 +271,7 @@ fixture("error", async (t) => {
 });
 
 // canon: facts/jq/parse-error-prefix — 接頭辞の "jq: " は jq 1.7 から付くので、"parse error: " を見る
+// TODO: README の jq の下限を 1.7 に上げたら (Debian 12 bookworm の 1.6 を支えなくなったら)、/^jq: parse error: / で照合する
 fixture("応答が JSON でない", async (t) => {
   await expectFail(t, await run(t, "respond", "not json"), 2, /^(jq: )?parse error: /);
 });
