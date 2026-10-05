@@ -17,6 +17,7 @@
 | 問題 | 直した先 |
 | --- | --- |
 | 手元と CI の shellcheck の版が違った | verify.sh が 0.11.0 だけを通す。CI は同じ版を sha256 検証つきで `/usr/local/bin` に入れる (`27c4a56`) |
+| 版の検査が verify.sh の最初で exit し、新しい clone で hook の写しと skills の symlink を置く段を飛ばした (Codex) | 版の検査を状態を揃える段の後の検査の段に移し、違えば違反を記録して shellcheck だけを飛ばす (`2564d44`) |
 
 ## 残っていること
 
