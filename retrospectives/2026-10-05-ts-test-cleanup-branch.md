@@ -28,11 +28,13 @@
 
 ## 直したこと
 
-`9759ef3` に全部を入れた。
+`9759ef3` に入れた (レビュー後の修正を除く)。
 
 - sh の全ての検査を ts に移し、verify.sh の段を替えて sh を消した。AGENTS.md の列挙のファイル名を直した。
-- sh に無かった検査を足した。
-  - 断るときに、ブランチに加えて worktree の登録 (`git worktree list --porcelain` の前後) と、work を checkout している worktree を変えない。cleanup-branch.sh の先頭は「何も変えずに断る」と書いている。
+- sh に無かった検査を足した:
+  - 断るときに、ブランチに加えて次を変えない。cleanup-branch.sh の先頭は「何も変えずに断る」と書いている。
+    - worktree の登録 (`git worktree list --porcelain` の前後)
+    - work を checkout している worktree
   - 断る理由の文言 (先端の不一致・ブランチが無い・40 桁の 16 進数でない・usage)。sh は非 0 だけを見ていたので、形の検査を外しても先端の比較で断られて通っていた (M08)。
   - 引数の数が違うとき。
   - 名前が同じ接頭辞の別のブランチ (`work-x`) を checkout している worktree を detach しない。他のブランチの ref を変えない。
@@ -40,6 +42,11 @@
 - TMPDIR の定義域。一時ディレクトリは解決しないパスのまま使い、文字の定義域は `Deno.realPath` で解決したパスで確かめる。
   - deno の `--allow-write` は symlink を解決せずにパスで照合する。macOS の `/tmp` は `/private/tmp` への symlink なので、解決したパスで書くと TMPDIR に絞った許可が NotCapable で落ちた。
   - git は worktree のパスを解決して記録し (`git worktree list` は `/private/tmp/…` を出す)、cleanup-branch.sh はそのパスを `git -C` に渡すので、文字の定義域は解決したパスについてのもの。
+- 次の修正を `957c44f` で足した (レビューで決まったもの):
+  - 断る場合に、引数が 0 個と 3 個を足した。
+  - 名前に `/` を含むブランチ (`feature/work`) を linked worktree が checkout している場合が、消えて同じ commit で detach されることを足した。
+  - locked な登録の検査が終了コードしか見ていなかった。実測では detach の `git -C` が `fatal: cannot change to '<登録のパス>': No such file or directory` (exit 128) で落ちる。この文言で落ちること、断る理由の文言でないこと、ブランチと worktree の登録が前後で変わらないことを見る。locked の登録を残したまま別の理由で落とす変異は、この検査が捕える。
+  - `tmp` と `resolved` の 2 つのパスの役割がコメントから読めるようにした。
 - 引数を渡したとき、TMPDIR が相対パスのとき、TMPDIR に空白を含めたときに、理由を出して exit 1 で落ちることを確かめた。SIGINT (起動から 0.2・0.25 秒) で exit 130 になり、一時ディレクトリが残らないことも確かめた。
 
 ## 変異と結果
@@ -72,5 +79,5 @@ cleanup-branch.sh を 1 か所ずつ壊し、sh (`2bdb5d6` の `scripts/test-cle
   - `verify.sh` の検査の段
 - deno の許可は symlink を解決せずにパスで照合する (deno 2.9.7、macOS で実測)。`Deno.realPath` した一時ディレクトリを使う test は、TMPDIR に絞った許可では落ちる。`test-pre-push.ts`・`test-agent-sync.ts` は symlink を作るので read・write を絞っておらず、この形に揃えても絞れない。
 - worktree のパスの文字 (空白・改行など) の検査は無い。cleanup-branch.sh は `git worktree list --porcelain -z` で読むので扱えるはずだが、TMPDIR の定義域で外している。
-- 引数の数は 1 つの場合だけ回している (0 と 3 は回していない)。
+- 入口の止まる経路 (引数・TMPDIR の相対・文字) と SIGINT の後始末は手で確かめただけで、検査は無い。
 - 中断で子を待つ仕組みは `scripts/test-agent-sync.ts` には無いまま。
