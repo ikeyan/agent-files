@@ -33,7 +33,7 @@
  *
  * このスクリプトの入力と環境の定義域:
  * - 引数は取らない。渡されれば理由を出して落ちる。
- * - 読む環境変数は PATH・TMPDIR・TARGET_DIFF_RUNS (モデルの試行数。既定 25 で、先頭が 0 でない 10 進の正の整数の綴り)・FC_SEED (モデルを再現する seed。整数) だけ。値が外れれば理由を出して落ちる。
+ * - 読む環境変数は PATH・TMPDIR・TARGET_DIFF_RUNS (モデルの試行数。既定 25 で、先頭が 0 でない 10 進の正の整数の綴りの安全な整数)・FC_SEED (モデルを再現する seed。-2147483648〜2147483647 の整数) だけ。値が外れれば理由を出して落ちる。
  * - /bin/bash (macOS の bash 3.2。無ければ bash 3.2 の例だけ飛ばして理由を stderr に出す)。
  * - PATH に git・bash と、target-diff.sh が呼ぶ dirname・mkdir・mktemp・rm・paste・cat、gh の stub が呼ぶ sh、準備の ln があること。
  * - TMPDIR (未設定か空なら /tmp) は絶対パスで、作った一時ディレクトリの綴りと解決済みのパスが A-Z a-z 0-9 . _ / - だけであること。外れていれば理由を出して落ちる。
@@ -58,14 +58,15 @@ if (Deno.args.length) {
 }
 
 const runsRaw = Deno.env.get("TARGET_DIFF_RUNS");
-if (runsRaw !== undefined && !/^[1-9]\d*$/.test(runsRaw)) {
+// 綴りの検査だけでは、桁の多い数が Number() で Infinity や丸めた値になる。fast-check は numRuns をそのまま使い、seed は 32 ビットの整数に寄せる (canon: facts/fast-check/seed-and-numruns)
+const numRuns = runsRaw === undefined ? 25 : Number(runsRaw);
+if (runsRaw !== undefined && (!/^[1-9]\d*$/.test(runsRaw) || !Number.isSafeInteger(numRuns))) {
   console.error(`${self}: TARGET_DIFF_RUNS は 1 以上の整数: ${runsRaw}`);
   Deno.exit(1);
 }
-const numRuns = runsRaw === undefined ? 25 : Number(runsRaw);
 const seedEnv = Deno.env.get("FC_SEED");
-if (seedEnv !== undefined && !/^-?\d+$/.test(seedEnv)) {
-  console.error(`${self}: FC_SEED は整数: ${seedEnv}`);
+if (seedEnv !== undefined && (!/^-?\d+$/.test(seedEnv) || (Number(seedEnv) | 0) !== Number(seedEnv))) {
+  console.error(`${self}: FC_SEED は 32 ビットの符号付き整数: ${seedEnv}`);
   Deno.exit(1);
 }
 
