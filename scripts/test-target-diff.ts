@@ -736,6 +736,7 @@ fixture("origin の HEAD が既定ブランチを指していない", async (t) 
   await git(o, "symbolic-ref", "HEAD", "refs/heads/gone");
   await git(t.dir, "clone", "-q", "-b", "main", o, `${t.dir}/badhead`);
   await Deno.writeTextFile(`${t.dir}/badhead/x.txt`, "x\n");
+  // git の set-head --auto の文言 (canon: facts/git/repository-shapes の「remote とブランチ」。子は LC_ALL=C)
   await fails(t, `${t.dir}/badhead`, [], { reason: "Cannot determine remote HEAD" });
 });
 
