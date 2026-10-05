@@ -19,9 +19,8 @@ here=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/pre-push.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 tmp=$(cd "$tmp" && pwd -P)
-# 自動 maintenance の背景の gc が、直後の clone や読み取りの最中に loose object を消さないよう止める (canon: facts/git/auto-maintenance-races-local-clone)
-printf '[gc]\n\tauto = 0\n[maintenance]\n\tauto = false\n' > "$tmp/gitconfig"
-export GIT_CONFIG_GLOBAL=$tmp/gitconfig GIT_CONFIG_SYSTEM=/dev/null
+gitconfig=$(cd "$(dirname "$0")" && pwd)/test-gitconfig
+export GIT_CONFIG_GLOBAL=$gitconfig GIT_CONFIG_SYSTEM=/dev/null
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
 status=0
 # 呼び出し元の許可を引き継がない
