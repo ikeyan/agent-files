@@ -13,7 +13,7 @@
  *   - ロックが取られている、別のリポの sync.sh の起動、TMPDIR の文字と絶対パス、上流のパスの大文字小文字の衝突、fetch の GIT_TERMINAL_PROMPT、archetect の版、対応していない OS、OS の sandbox を適用できない・描画が非 0 で終わる、リポジトリの場所を決める GIT_* (`git rev-parse --local-env-vars` の各変数)。
  * - 環境:
  *   - awk が正規表現の区間を持たなくても通る。
- *   - GIT_CONFIG* は通る (この test 自身が GIT_CONFIG_COUNT で上流へ向ける)。core.autocrlf・core.eol を変えても、置くバイトは上流の blob と同じ。
+ *   - GIT_CONFIG*: GIT_CONFIG_COUNT (この test 自身が上流へ向けるのに使う)・GIT_CONFIG_PARAMETERS・GIT_CONFIG を設定しても通る。core.autocrlf・core.eol を変えても、置くバイトは上流の blob と同じ。
  *   - UTF-8 の locale (LANG・LC_ALL) でも通り、文字の分類 (タブ・制御文字・空白・shell の特殊文字・é・あ・ｚ。canon: facts/shell/string-input-categories) ごとに、置き先・source の名前・TMPDIR の定義域の外として落ちる。
  * - 名前が - で始まるパス: 上流の tree にあっても取り出しが通り、置き先・古いパスにあっても置いて消せる。ディレクトリ同士の別名を持つ上流 (大文字小文字を区別しないファイルシステムだけ) は、取り出しで落ちる。
  * - 標準出力は git status --short と同じ。終わった (落ちた) 後にロックが残らない。
@@ -1280,6 +1280,18 @@ fixture("core.autocrlf=true・core.eol=crlf", async (t) => {
   await checkPlaced(t, name, d, v1);
   if ((await readOr(`${d}/hooks/pre-push`)).includes("\r")) t.fail("core.autocrlf=true: hooks/pre-push に CR がある");
 });
+
+// GIT_CONFIG_PARAMETERS と GIT_CONFIG は sync.sh が拒まず、通る (GIT_CONFIG は git config だけが読む。空の設定のファイルを指す)
+for (const name of ["GIT_CONFIG_PARAMETERS", "GIT_CONFIG"]) {
+  fixture(`${name} が設定されている`, async (t) => {
+    const d = `${t.dir}/cfg`;
+    await makeDs(d, v1);
+    await write(`${t.dir}/empty.gitconfig`, "");
+    const env: Record<string, string> = name === "GIT_CONFIG" ? { GIT_CONFIG: `${t.dir}/empty.gitconfig` } : { GIT_CONFIG_PARAMETERS: "'core.abbrev=12'" };
+    await syncOk(t, `${name} が設定されている`, d, env);
+    await checkPlaced(t, `${name} が設定されている`, d, v1);
+  });
+}
 
 // 描画が .agent-sync/sync.sh を置かなければ (agent-sync の部品を合成していない・一覧が 1 つも無い)、generated の全てを古いパスとして消さずに落ちる
 fixture("agent-sync の部品を合成していない", async (t) => {
