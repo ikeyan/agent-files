@@ -49,7 +49,7 @@
     - `hooks/pre-push` と違えば、上書きせず落ちて置き換えのコマンドを示す。
 - `./verify.sh` は `core.hooksPath` が hook をよそへ向けていれば落ちる (設定は書かない)。
 - 必要なもの:
-  - 共通のツール: `shellcheck`、`deno`、`curl` (7.84 以降)、`jq`、`archetect` (3.6.1)。
+  - 共通のツール: `shellcheck` (0.11.0 だけ。違えば `./verify.sh` が落ちる)、`deno`、`curl` (7.84 以降)、`jq`、`archetect` (3.6.1)。
   - macOS: `sandbox-exec`、`otool`。
   - Linux: `bwrap`、`ldd` (非特権の user namespace が要る)。
   - ネットワーク: `www.schemastore.org` への到達。
