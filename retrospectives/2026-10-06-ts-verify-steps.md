@@ -6,10 +6,14 @@
 
 - 移す前の `verify.sh` は、状態を揃える段の後に、検査の段を `set -m` の subshell で並行に回し、段ごとの出力を一時ディレクトリのファイルに残してから決めた順で出していた。止めるときは EXIT trap で段のプロセスグループに TERM を送っていた。
 - 移した後の形:
-  - 状態を揃える段 (hooks/pre-push の写し、`.claude/skills` の symlink、core.hooksPath の検査、VERIFY_READONLY) は `verify.sh` に残した。symlink を deno で作るには、パスを付けない read・write の許可が要る (canon: `facts/deno/permission-paths-not-resolved`)。
+  - 状態を揃える段は `verify.sh` に残した。symlink を deno で作るには、パスを付けない read・write の許可が要る (canon: `facts/deno/permission-paths-not-resolved`)。残した段:
+    - hooks/pre-push の写し
+    - `.claude/skills` の symlink
+    - core.hooksPath の検査
+    - VERIFY_READONLY
   - 検査の段は `scripts/run-checks.ts` に移した。`verify.sh` は最後に `exec deno run --allow-run --allow-env=TMPDIR scripts/run-checks.ts "$status"` で替わる。引数は状態を揃える段の結果 (0 か 1) で、検査が全部通っても 1 なら exit 1。
-    - exec にしたのは、`verify.sh` の pid だけに届く SIGINT・SIGTERM を runner が直接受けるため。bash が deno を前景で待つ形では、SIGTERM で bash だけが死に、deno と段が残る (bash の子の deno に pid を書かせ、bash にだけ SIGTERM を送って確かめた)。
-    - 段の子は `Deno.Command` の `detached: true` で起動する。deno 2.9.7 の `spawn()` は子で `setsid` する (`ext/process/lib.rs` の `create_command`) ので、子はそれぞれ自分のプロセスグループの先頭になる。perl の `getpgrp` で、pgid が子の pid になることを確かめた。`outputSync()` では `detached` が効かず、子は親のグループに残った。止めるときは `Deno.kill(-pid, "SIGTERM")` でグループに送る。`Deno.kill` は `--allow-run` をパスで絞ると NotCapable になるので、runner の `--allow-run` は絞らない (deno を起こせる時点で絞っても意味は無い)。
+    - exec にしたのは、`verify.sh` の pid だけに届く SIGHUP・SIGINT・SIGTERM を runner が直接受けるため。bash が deno を前景で待つ形では、SIGTERM で bash だけが死に、deno と段が残る (bash の子の deno に pid を書かせ、bash にだけ SIGTERM を送って確かめた)。
+    - 段の子は `Deno.Command` の `detached: true` で起動する。deno 2.9.7 の `spawn()` は子で `setsid` する (`ext/process/lib.rs` の `create_command`) ので、子はそれぞれ自分のプロセスグループの先頭になる。perl の `getpgrp` で、pgid が子の pid になることを確かめた。`outputSync()` では `detached` が効かず、子は親のグループに残った。止めるときは `Deno.kill(-pid, …)` でグループに送る。`Deno.kill` は `--allow-run` をパスで絞ると NotCapable になるので、runner の `--allow-run` は絞らない (deno を起こせる時点で絞っても意味は無い。canon: `facts/deno/command-spawn` の「Deno.kill」)。
     - 出力はファイルでなく pipe で受ける。段の子が終わったら、そのグループに残ったものに SIGTERM を送る。残ったものが pipe を開いたままにすると、pipe を読み終えられず段が終わらないため (下の表の「出力を開いたまま残る孫」)。
     - 段の deno の許可は移す前と同じ。段ごとに子の deno を起動する。
   - `scripts/verify.ts` (JSON と Markdown の検査) は runner に吸収せず、1 つの段のまま残した。
@@ -34,17 +38,28 @@
 
 ## 良かったこと
 
-- 古い runner を消す前に、検査の段の test を stub に替えた一時の clone を作り、古い `verify.sh` と新しい形の両方を同じ条件で回した (下の「同等性」)。stub は段ごとに決めた時間だけ待ち、stdout と stderr に段の名前を出し、決めた exit code で終わる。PATH の先頭の `deno` と `shellcheck` の wrapper が呼び出しを記録する。
+- 古い runner を消す前に、検査の段の test を stub に替えた一時の clone を作り、古い `verify.sh` と新しい形の両方を同じ条件で回した (下の「同等性」)。
+  - stub は段ごとに決めた時間だけ待ち、stdout と stderr に段の名前を出し、決めた exit code で終わる。
+  - PATH の先頭の `deno` と `shellcheck` の wrapper が呼び出しを記録する。
 - 同等性の確認の道具が runner の壊れを捕えることを、runner の変異で確かめた (下の「runner の変異」)。
 - 最初に回したシグナルの確認で、古い `verify.sh` が SIGINT で止まらず、段の孫が残った。原因は確認の道具の側で、`&` で起動した非対話の bash の子は SIGINT を無視した状態で始まり、bash はそれを trap できない (bash(1) の `trap`: 「Signals ignored upon entry to the shell cannot be trapped or reset」)。perl で SIGINT を既定に戻してから起動し直すと、両方が止まった。新しい形 (deno の `Deno.addSignalListener`) は、無視した状態で始まっても SIGINT を受けて止まった。
 
 ## 直したこと
 
-`ce4eb22` に全部を入れた。
+移したものは `ce4eb22` に入れた。
 
 - 検査の段を `scripts/run-checks.ts` に移し、`verify.sh` の検査の段 (`check_files`・`run_shellcheck`・`step`・出力のループ・SC2329 の disable) を消した。
 - `scripts/test-pre-push.ts` を新しい落ち方に合わせた (上の「状況」)。
 - AGENTS.md の「このリポの検証」に exec と止め方を書き、「このリポのスクリプトの言語」から移す対象を消して、`verify.sh` の入口と状態を揃える段を対象外に足した。README は検査の段に触れていないので変えていない。
+
+レビューの指摘で `scripts/run-checks.ts` を直した:
+
+- 中断が始まったら、通常の経路は出力せず、中断の経路の終わり (`Deno.exit`) を待つ。それまでは、中断が子を待つ間に全段が決着すると、通常の経路が全段を「落ちた」で出して exit 1 しえた。
+- 2 回目のシグナルで、残っている段のグループに SIGKILL を送ってすぐ終わる。それまでは、SIGTERM を受けても子を待つ段があると、何回送っても終わらなかった。
+- SIGHUP も受ける (exit 129)。それまでは端末を閉じると runner だけが死に、setsid した段は孤児で残った。シグナルと終了コードの対応は `signals` の 1 つの表にした。
+- 段の子の stdin への書き込みが `Deno.errors.BrokenPipe` で投げても (子が先に終わった)、子を回収してグループを止め、子の status と stderr を段の結果にする。子が exit 0 なら、読み終える前に閉じたことを示して exit 1 にする。それまでは EPIPE の stack が段の結果になり、子は回収されなかった。BrokenPipe は実測して canon (`facts/deno/command-spawn`) に足した。
+- グループへの `Deno.kill` の `EPERM` (`PermissionDenied`) を、`ESRCH` と同じく「止めるものが無い」として扱う。macOS は、終わりかけのものだけのグループに送るとまれに `EPERM` を返す (先頭に SIGKILL を送った直後のグループで 1000 回に 2〜5 回。canon: `facts/deno/command-spawn` の「Deno.kill」)。それまでは、中断の経路で投げると終了コードがシグナルの値にならず、通常の経路では段の結果が stack になりえた。
+- git ls-files が落ちたときに out を空にする処理を `gitFiles` の 1 か所にし、終了コードを結果と引数から 1 回で求める。
 
 ## 同等性
 
@@ -58,6 +73,10 @@
 | SIGINT を verify.sh の pid へ | 段の stub が起こした孫 (`sleep 300`) の pid を記録し、送ってから 1 秒後に見る | exit 130。段の deno も孫も残らない | 同じ |
 | SIGTERM を verify.sh の pid へ | 同上 | exit 143。残らない | 同じ |
 | SIGINT をプロセスグループへ (端末の Ctrl-C) | 同上 | exit 130。残らない | 同じ |
+| SIGHUP を verify.sh の pid へ・プロセスグループへ (端末を閉じる) | 同上 | exit 129。残らない | 同じ (直す前の runner は exit 129 で、段の deno と孫が残った) |
+| SIGTERM を無視する子を持つ段に、SIGTERM・SIGINT・SIGHUP を 2 回 | 段の stub は SIGTERM を受けると子の終わりを待ち、子 (`trap "" TERM; exec sleep 300`) は SIGTERM を無視する。1 回目の 3 秒後に 2 回目を送る | 1 回目ですぐ 143・130・129 で終わり、段の deno と子が残る | 1 回目では待つ。2 回目から 0.007〜0.012 秒で 143・130・129 で終わり、残らない (直す前の runner は 2 回目でも終わらず、確認の道具が 20 秒で SIGKILL した。SIGHUP では 1 回目で死に、段が残った) |
+| 段がシグナルですぐ終わる | 段の stub (listener 無しの deno) を 1.5 秒待つ形にし、起動から 1.6〜2.1 秒にグループへ送る。SIGINT・SIGTERM・SIGHUP を 20 回ずつ | 測っていない | 終わる前に届いた 14・15・15 回は全部 130・143・129 で、段の見出しを出さない。残りは送る前に終わっていた (exit 0)。直す前の runner も 0.8〜2.0 秒の 14 回ずつで同じだった (競合は再現していない) |
+| 段の子が stdin を読まずに終わる | 未追跡のファイルを 3000 足して git ls-files の出力を 254725 バイトにし、`scripts/verify.ts` の stub を読まずに exit 5・exit 0 で終わらせる | 測っていない | exit 5 は `落ちた (exit 5、…)` と stub の stderr。exit 0 は `落ちた (exit 1、…)` と stub の stderr と「読み終える前に閉じた」。直す前の runner はどちらも `落ちた (exit 1、…)` と `BrokenPipe` の stack |
 | shellcheck の版が違う | 0.9.0 を名乗る shellcheck を PATH の先頭に置く | shellcheck の段だけが版の違いで落ち、他の段は回って通る。exit 1 | 同じ |
 | git が知っている .ts が無い | `.gitignore` に `*.ts` を書き、index から外す | `deno check` を呼ばずに通る | 同じ |
 | git が知っている .sh と hooks/pre-push が無い | 同様に外す | shellcheck は `--version` だけを呼んで通る | 同じ |
@@ -94,4 +113,7 @@
 - runner の性質 (並行・出力の順と経路・止め方・状態を揃える段の結果の引き継ぎ) を常に回る検査は無い。この振り返りの確認は一時の道具で、リポに入れていない。入れるなら、runner の段の定義を差し替えられる形 (stub に向けた段の表) が要る。
 - `scripts/test-pre-push.ts` の shellcheck の検査は、runner と 8 つの deno を起動する。段が増えればこの検査も重くなる。
 - runner は段の子の出力を pipe で受けるので、段の孫が SIGTERM を無視して pipe を開いたまま残ると、段が終わらない。今の段では起きていない (`./verify.sh` は 3 回とも全部の段の後に終わった)。
-- 非対話の bash から `./verify.sh &` で回すと、古い `verify.sh` は SIGINT を無視したが、新しい形は受けて止まる。端末から回すときと、SIGTERM の挙動は同じ。
+- 古い `verify.sh` と新しい形で、シグナルの挙動が違うところ:
+  - 非対話の bash から `./verify.sh &` で回したときの SIGINT: 古い形は無視し、新しい形は受けて止まる。
+  - 1 回目のシグナル: 古い形は段のグループに TERM を送ってすぐ終わり、新しい形は段が終わるのを待つ。2 回目は新しい形もすぐ終わる。
+- 1 回目のシグナルで、段の先頭の子が終わった後もグループに SIGTERM を無視するものが残ると、runner は先頭の子だけを待って終わるので、それは残る (2 回目を送る前に runner が終わる)。段の stub を listener 無しの deno にし、子に SIGTERM を無視させて確かめた (exit 143 で、子が残った)。今の段では起きていない。

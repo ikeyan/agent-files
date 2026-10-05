@@ -8,9 +8,10 @@
  *   - 落ちた段: 見出しと両方を stderr へ。落ちた段は全部出す。
  *   - 見出しに段の所要時間を出す。
  * - どれかの段が落ちるか、引数が 1 なら exit 1。
- * - 段が起動する子は、それぞれ自分のプロセスグループで回る (Deno.Command の detached。deno 2.9.7 の spawn() は子で setsid する)。
- *   - 子が終われば、そのグループに残ったものに SIGTERM を送る。残ったものが出力の pipe を開いたままにすると、段が終わらない。
- *   - SIGINT・SIGTERM では、動いている子のグループに SIGTERM を送り、子が終わってから 130・143 で終わる。段が起こした pr.sh なども残さない。
+ * - 段の子孫 (段が起こした pr.sh なども) を段より長く残さない。段が起動する子は、それぞれ自分のプロセスグループで回る (Deno.Command の detached。deno 2.9.7 の spawn() は子で setsid する) ので、グループごとに止める。
+ *   - 子が終われば、そのグループに残ったものに SIGTERM を送る。残ったものが出力の pipe を開いたままにすると、段も終わらない。
+ *   - SIGHUP・SIGINT・SIGTERM (終了コードは下の signals) の 1 回目では、動いている子のグループに SIGTERM を送り、子が終わってから終わる (段の test が一時ディレクトリを片付けられるように)。段の出力は出さない。
+ *   - 2 回目のシグナルでは、残っている子のグループに SIGKILL を送り、待たずに終わる (SIGTERM を受けても終わらない子がいても抜けられるように)。
  *
  * 入力と環境の定義域:
  * - 引数は 1 つで、verify.sh が先に回した状態を揃える段の結果 (0 か 1)。外れていれば理由を出して落ちる。
@@ -31,25 +32,36 @@ if (Deno.args.length !== 1 || !["0", "1"].includes(Deno.args[0])) {
 }
 const tmpdir = Deno.env.get("TMPDIR") || "/tmp";
 
-/** 動いている子。止めるときは、そのプロセスグループに SIGTERM を送る。 */
+/** 受けるシグナルと、それで終わるときの終了コード。 */
+const signals: Partial<Record<Deno.Signal, number>> = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
+
+/** 動いている子。止めるときは、そのプロセスグループに送る。 */
 const children = new Set<Deno.ChildProcess>();
-const killGroup = (child: Deno.ChildProcess) => {
+const killGroup = (child: Deno.ChildProcess, signal: Deno.Signal) => {
   try {
-    Deno.kill(-child.pid, "SIGTERM");
+    Deno.kill(-child.pid, signal);
   } catch (e) {
-    // ESRCH: グループに誰も残っていない
-    if (!(e instanceof Deno.errors.NotFound)) throw e;
+    // ESRCH: グループに誰も残っていない。EPERM: 残っているのは終わりかけのものだけ (macOS。canon: facts/deno/command-spawn)
+    if (!(e instanceof Deno.errors.NotFound || e instanceof Deno.errors.PermissionDenied)) throw e;
   }
 };
-let interrupted = false;
-const interrupt = async (code: number) => {
-  interrupted = true;
-  children.forEach(killGroup);
+/** 中断が始まっていれば、その経路 (終了コードを決めて Deno.exit する。解決しない)。 */
+let interruption: Promise<never> | undefined;
+const interrupt = async (code: number): Promise<never> => {
+  children.forEach((c) => killGroup(c, "SIGTERM"));
   await Promise.allSettled([...children].map((c) => c.status));
   Deno.exit(code);
 };
-Deno.addSignalListener("SIGINT", () => interrupt(130));
-Deno.addSignalListener("SIGTERM", () => interrupt(143));
+for (const [signal, code] of Object.entries(signals) as [Deno.Signal, number][]) {
+  Deno.addSignalListener(signal, () => {
+    if (!interruption) {
+      interruption = interrupt(code);
+      return;
+    }
+    children.forEach((c) => killGroup(c, "SIGKILL"));
+    Deno.exit(code);
+  });
+}
 
 interface Run {
   code: number;
@@ -57,9 +69,22 @@ interface Run {
   err: Uint8Array;
 }
 
-/** 子を自分のプロセスグループで起動し、終わるまで待つ。 */
+/** 子の stdin に書いて閉じる。子が先に終わっていた (stdin を閉じていた) なら false (BrokenPipe。canon: facts/deno/command-spawn)。 */
+async function feed(stdin: WritableStream<Uint8Array>, data: Uint8Array): Promise<boolean> {
+  const w = stdin.getWriter();
+  try {
+    await w.write(data);
+    await w.close();
+    return true;
+  } catch (e) {
+    if (e instanceof Deno.errors.BrokenPipe) return false;
+    throw e;
+  }
+}
+
+/** 子を自分のプロセスグループで起動し、終わるまで待つ。投げるときも、子を回収してグループを止めてから投げる。 */
 async function exec(cmd: string, args: string[], stdin?: Uint8Array): Promise<Run> {
-  if (interrupted) throw new Error("中断した");
+  if (interruption) throw new Error("中断した");
   const child = new Deno.Command(cmd, {
     args,
     detached: true,
@@ -71,30 +96,32 @@ async function exec(cmd: string, args: string[], stdin?: Uint8Array): Promise<Ru
   try {
     const out = new Response(child.stdout).bytes();
     const err = new Response(child.stderr).bytes();
-    if (stdin) {
-      const w = child.stdin.getWriter();
-      await w.write(stdin);
-      await w.close();
-    }
+    const fed = !stdin || await feed(child.stdin, stdin);
     const status = await child.status;
-    killGroup(child);
-    return { code: status.code, out: await out, err: await err };
+    killGroup(child, "SIGTERM");
+    const run = { code: status.code, out: await out, err: await err };
+    if (fed || run.code !== 0) return run;
+    return { ...run, code: 1, err: new Uint8Array([...run.err, ...enc.encode(`${self}: ${cmd} が stdin を読み終える前に閉じた\n`)]) };
+  } catch (e) {
+    killGroup(child, "SIGTERM");
+    await child.status;
+    throw e;
   } finally {
     children.delete(child);
   }
 }
 
-/** git が知っているファイル (作業ツリーの未追跡を含み、無視するものを除く) のうち、pathspec に合うもの。 */
+/** git が知っているファイル (作業ツリーの未追跡を含み、無視するものを除く) のうち、pathspec に合うもの。git が落ちれば out は空 (落ちた段に一覧を出さない)。 */
 async function gitFiles(patterns: string[]): Promise<Run & { files: string[] }> {
   const r = await exec("git", ["ls-files", "--cached", "--others", "--exclude-standard", ...patterns]);
+  if (r.code !== 0) return { ...r, out: new Uint8Array(), files: [] };
   return { ...r, files: dec.decode(r.out).split("\n").filter(Boolean) };
 }
 
 /** git が知っているファイルが 1 件以上あるときだけ、それを引数に足してコマンドを回す。無ければ通す。 */
 async function checkFiles(cmd: string, args: string[], patterns: string[]): Promise<Run> {
   const ls = await gitFiles(patterns);
-  if (ls.code !== 0) return { ...ls, out: new Uint8Array() };
-  if (!ls.files.length) return ls;
+  if (ls.code !== 0 || !ls.files.length) return ls;
   return exec(cmd, [...args, ...ls.files]);
 }
 
@@ -156,7 +183,7 @@ const steps: [string, () => Promise<Run>][] = [
     ], "scripts/test-pr.ts")],
   ["scripts/verify.ts", async () => {
     const ls = await gitFiles([]);
-    if (ls.code !== 0) return { ...ls, out: new Uint8Array() };
+    if (ls.code !== 0) return ls;
     return exec("deno", ["run", "--allow-read=.", "--allow-net=www.schemastore.org", "scripts/verify.ts"], ls.out);
   }],
 ];
@@ -166,11 +193,11 @@ const results = await Promise.all(steps.map(async ([, run]) => {
   const r = await run().catch((e): Run => ({ code: 1, out: new Uint8Array(), err: enc.encode(`${e instanceof Error ? e.stack : e}\n`) }));
   return { ...r, secs: ((performance.now() - start) / 1000).toFixed(1) };
 }));
+if (interruption) await interruption;
 
 const write = (w: { writeSync(p: Uint8Array): number }, data: Uint8Array) => {
   for (let i = 0; i < data.length;) i += w.writeSync(data.subarray(i));
 };
-let status = Number(Deno.args[0]);
 results.forEach((r, i) => {
   const name = steps[i][0];
   if (r.code === 0) {
@@ -181,7 +208,7 @@ results.forEach((r, i) => {
     write(Deno.stderr, enc.encode(`== ${name}: 落ちた (exit ${r.code}、${r.secs} 秒)\n`));
     write(Deno.stderr, r.out);
     write(Deno.stderr, r.err);
-    status = 1;
   }
 });
+const status = Deno.args[0] === "1" || results.some((r) => r.code !== 0) ? 1 : 0;
 Deno.exit(status);
