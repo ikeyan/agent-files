@@ -64,6 +64,7 @@
 - `alive` の 2 秒の poll に、理由 (codex-limits.sh の EXIT trap は終わりを待たない) と外せる条件 (待つようになれば 1 回の `kill -0`) を書いた。
 - 先頭コメントの PATH に要るコマンドの列挙が、コードが呼ぶものと違っていた (`mkdir` の漏れ)。呼ぶ場所ごとに書き直した。HOME の「作らない」も消した。
 - verify.sh の test-codex-limits の段を、同じく read・write を TMPDIR に絞った test-cleanup-branch の隣に移した。直後の行のコメントが test-codex-limits の段のことと読み違えられていた。
+- `d7a151e` (Codex の指摘): 応答が JSON でない例を `^jq: ` で照合していた。jq 1.6 は parse error に `jq: ` を付けないので、リポが版を決めていない jq の 1.6 で誤って落ちた。`parse error: ` で照合する。手元の 1.8.2 だけで文言を決め、版の次元を見なかった。
 
 ## 変異と結果
 
