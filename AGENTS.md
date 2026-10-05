@@ -52,7 +52,7 @@
   - 通った段: 標準出力を stdout へ、標準エラーを stderr へ。
   - 落ちた段: 両方を stderr へ。落ちた段は全部示す。
 - 必要なもの:
-  - 共通のツール: `shellcheck` (0.11.0 だけ。違えば `./verify.sh` が落ちる)、`deno`、`curl` (7.84 以降)、`jq`、`archetect` (3.6.1)。
+  - 共通のツール: `shellcheck` (0.11.0 だけ。違えば `./verify.sh` が落ちる)、`deno`、`curl` (7.84 以降)、`jq` (1.6 以降)、`archetect` (3.6.1)。
   - macOS: `sandbox-exec`、`otool`。
   - Linux: `bwrap`、`ldd` (非特権の user namespace が要る)。
   - ネットワーク: `www.schemastore.org` への到達。
