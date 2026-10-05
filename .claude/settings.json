@@ -3,7 +3,6 @@
     "network": {
       "allowedDomains": [
         "dl.deno.land",
-        "api.github.com",
         "www.schemastore.org"
       ]
     }
