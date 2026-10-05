@@ -14,14 +14,6 @@ set -euo pipefail
 shopt -s nullglob
 cd "$(dirname "$0")"
 
-# 版で出す指摘が違う (SC2015 は 0.9.0 が出し 0.11.0 は出さない。canon: facts/shellcheck) ので、手元と CI で同じ版に揃える。
-readonly shellcheck_version=0.11.0
-actual=$(shellcheck --version 2>/dev/null | sed -n 's/^version: //p') || actual=
-if [ "$actual" != "$shellcheck_version" ]; then
-  echo "shellcheck の版が ${actual:-不明 (shellcheck が無い)} で、$shellcheck_version でない。macOS: brew install shellcheck (Homebrew の版が $shellcheck_version でなければ https://github.com/koalaman/shellcheck/releases/tag/v$shellcheck_version の成果物を PATH に置く)。Linux: .github/workflows/verify.yml の shellcheck の手順と同じに入れる" >&2
-  exit 1
-fi
-
 readonly_mode=${VERIFY_READONLY:-}
 status=0
 common=$(git rev-parse --path-format=absolute --git-common-dir)
@@ -114,7 +106,15 @@ check_files() { # <コマンド…> -- <パターン…>: git が知っている
   while IFS= read -r file; do files+=("$file"); done < <(git ls-files --cached --others --exclude-standard "$@")
   if [ ${#files[@]} -gt 0 ]; then "${cmd[@]}" "${files[@]}"; fi
 }
-check_files shellcheck -- '*.sh' hooks/pre-push
+# 版で出す指摘が違う (SC2015 は 0.9.0 が出し 0.11.0 は出さない。canon: facts/shellcheck) ので、手元と CI で同じ版に揃える。
+readonly shellcheck_version=0.11.0
+actual=$(shellcheck --version 2>/dev/null | sed -n 's/^version: //p') || actual=
+if [ "$actual" != "$shellcheck_version" ]; then
+  echo "shellcheck の版が ${actual:-不明 (shellcheck が無い)} で、$shellcheck_version でない。macOS: brew install shellcheck (Homebrew の版が $shellcheck_version でなければ https://github.com/koalaman/shellcheck/releases/tag/v$shellcheck_version の成果物を PATH に置く)。Linux: .github/workflows/verify.yml の shellcheck の手順と同じに入れる" >&2
+  status=1
+else
+  check_files shellcheck -- '*.sh' hooks/pre-push
+fi
 check_files deno check -- '*.ts'
 scripts/test-target-diff.sh
 scripts/test-pre-push.sh
