@@ -19,7 +19,7 @@
  * このスクリプトの入力と環境の定義域:
  * - 引数は取らない。
  * - 読む環境変数は PATH・TMPDIR だけ。PUSH_OK と VERIFY_READONLY は呼び出し元から引き継がない。
- * - TMPDIR (未設定か空なら /tmp) は絶対パスで、作った一時ディレクトリの解決済みのパスが ' を含まないこと (pre-push.local の中に単一引用符で書く)。外れていれば理由を出して落ちる。
+ * - TMPDIR (未設定か空なら /tmp) は絶対パスで、作った一時ディレクトリの解決済みのパスが A-Z a-z 0-9 . _ / - だけであること。外れていれば理由を出して落ちる。
  * - 後始末は、終わったときに一時ディレクトリを消す。SIGINT・SIGTERM では子に SIGTERM を送り、子が終わってから消す (子が書いている最中に消すと消し残す)。
  *
  * 並行の検査が共有する、変わりうる状態。これ以外は検査ごとの `${tmp}/f/<n>` の下に置き、新しく共有するものを足すときも検査ごとのパスにする:
@@ -67,8 +67,9 @@ const interrupt = async (code: number) => {
 Deno.addSignalListener("SIGINT", () => interrupt(130));
 Deno.addSignalListener("SIGTERM", () => interrupt(143));
 
-if (tmp.includes("'")) {
-  console.error(`${self}: TMPDIR (${tmpdirEnv}) の下に作った一時ディレクトリ ${tmp} が ' を含む。TMPDIR を直す`);
+// ' は pre-push.local の中に単一引用符で書くため、空白・%・非 ASCII は deno が file URL で percent-encode し、Module not found の照合が合わなくなるため (canon: facts/deno/run-missing-module)
+if (!/^\/[A-Za-z0-9._\/-]*$/.test(tmp)) {
+  console.error(`${self}: TMPDIR (${tmpdirEnv}) の下に作った一時ディレクトリ ${tmp} が A-Z a-z 0-9 . _ / - だけの形でない。TMPDIR を直す`);
   Deno.exit(1);
 }
 
@@ -76,6 +77,8 @@ const baseEnv: Record<string, string> = {
   PATH: Deno.env.get("PATH") ?? "",
   HOME: `${tmp}/home`,
   TMPDIR: tmp,
+  // clearEnv で locale の環境変数が無くても、macOS では GNU gettext を使う bash などがシステムの言語で訳す。子のメッセージを照合するため C に固定する (canon: facts/shell/gettext-macos-system-language)
+  LC_ALL: "C",
   GIT_CONFIG_GLOBAL: `${here}/scripts/test-gitconfig`,
   GIT_CONFIG_SYSTEM: "/dev/null",
   GIT_AUTHOR_NAME: "t",
@@ -146,7 +149,6 @@ async function write(path: string, content: string, mode?: number) {
   await Deno.writeTextFile(path, content);
   if (mode !== undefined) await Deno.chmod(path, mode);
 }
-/** `install -m 755`。 */
 async function install(from: string, to: string) {
   await Deno.mkdir(to.slice(0, to.lastIndexOf("/")), { recursive: true });
   await Deno.copyFile(from, to);
@@ -174,13 +176,12 @@ interface Ctx {
 }
 const reports: string[][] = [];
 const pending: Promise<unknown>[] = [];
-let seq = 0;
 
 /** 検査を始める。独立に並行で回り、落ちた理由を登録の順で最後に出す。 */
 function fixture(name: string, body: (t: Ctx) => Promise<void>) {
   const failures: string[] = [];
   reports.push(failures);
-  const dir = `${tmp}/f/${seq++}`;
+  const dir = `${tmp}/f/${reports.length - 1}`;
   pending.push((async () => {
     await Deno.mkdir(dir, { recursive: true });
     await body({ dir, fail: (m) => failures.push(m) });
@@ -264,14 +265,16 @@ fixture("pre-push.local の呼び出し", async (t) => {
   await Deno.writeTextFile(`${t.dir}/local.rc`, "1\n");
   if ((await push(clone, ["origin", "main"], pushOk)).code === 0) t.fail("pre-push.local が 1 で終わったのに push が通った");
   const args = await readOr(`${t.dir}/local.args`);
-  if (args !== `origin\n${remote}\n`) t.fail(`pre-push.local の引数が push の remote 名と URL でない — ${args}`);
+  if (args === null) t.fail("pre-push.local が呼ばれなかった (引数の記録が無い)");
+  else if (args !== `origin\n${remote}\n`) t.fail(`pre-push.local の引数が push の remote 名と URL でない — ${args}`);
   const stdin = await readOr(`${t.dir}/local.stdin`);
-  if (!new RegExp(`^refs/heads/main ${head} refs/heads/main `, "m").test(stdin ?? "")) t.fail(`pre-push.local の stdin に push する ref の行が無い — ${stdin}`);
+  if (stdin === null) t.fail("pre-push.local が呼ばれなかった (stdin の記録が無い)");
+  else if (!new RegExp(`^refs/heads/main ${head} refs/heads/main `, "m").test(stdin)) t.fail(`pre-push.local の stdin に push する ref の行が無い — ${stdin}`);
   if (await refOf(remote, "refs/heads/main")) t.fail("pre-push.local が 1 で終わったのに remote に ref ができた");
   await Deno.writeTextFile(`${t.dir}/local.rc`, "0\n");
   const ok = await push(clone, ["-q", "origin", "main"], pushOk);
   if (ok.code !== 0) t.fail(`pre-push.local が 0 で終わったのに push が失敗した — ${ok.err}`);
-  if (await git(remote, ["rev-parse", "main"]).catch(() => "") !== head) t.fail("pre-push.local が 0 で終わったのに remote が進まない");
+  if (await git(remote, ["rev-parse", "main"]) !== head) t.fail("pre-push.local が 0 で終わったのに remote が進まない");
 });
 
 // 実行可能な通常のファイルでない pre-push.local は、無視せず push を止めて示す (検査が黙って外れない)。実行可能な通常のファイルに戻せば通る
@@ -368,8 +371,7 @@ fixture("pre-push.local の無い linked worktree からの push", async (t) => 
 // 作業ツリーのルートを得られない .git の中からの push は、git 自身のエラーを隠さず止まる
 fixture(".git の中からの push", async (t) => {
   const w = await worktrees(t.dir);
-  // git 自身のエラーを英語の文言で見るので、訳さない locale にする
-  const r = await exec("git", ["push", w.remote, "HEAD:refs/heads/w"], { cwd: `${w.clone}/.git`, env: { ...pushOk, LC_ALL: "C" } });
+  const r = await exec("git", ["push", w.remote, "HEAD:refs/heads/w"], { cwd: `${w.clone}/.git`, env: pushOk });
   if (r.code === 0) t.fail(".git の中からの push が通った");
   if (!r.err.includes("must be run in a work tree")) t.fail(`.git の中からの push で git 自身のエラーが見えない — ${r.err}`);
   if (!r.err.includes("ルートを得られない")) t.fail(`.git の中からの push のエラーに理由が無い — ${r.err}`);
@@ -407,7 +409,7 @@ fixture("shellcheck の版が違う verify.sh", async (t) => {
   const r = await verify(repo, { PATH: `${t.dir}/old-shellcheck:${baseEnv.PATH}` });
   if (r.code === 0) t.fail("shellcheck の版が違うのに verify.sh が通った");
   if (!r.err.includes("shellcheck の版が 0.9.0 で")) t.fail(`verify.sh が shellcheck の版の違いを示さない — ${r.err}`);
-  // deno は無いモジュールを「Module not found」と示して exit 1 で終わる (deno 2.9.7)
+  // canon: facts/deno/run-missing-module — 無いモジュールは Module not found と file URL で示し exit 1 で終わる。tmp は encode の要らない文字だけ
   if (!/^== scripts\/test-pre-push\.ts: 落ちた \(exit 1、/m.test(r.err) || !r.err.includes(`Module not found "file://${repo}/scripts/test-pre-push.ts"`)) {
     t.fail(`shellcheck の版が違うとき、verify.sh を回すリポの scripts/test-pre-push.ts の段が起動できずに落ちていない — ${r.err}`);
   }
@@ -524,7 +526,7 @@ fixture("core.hooksPath", async (t) => {
   if (r.code === 0) t.fail("core.hooksPath が hook をよそへ向けているのに verify.sh が通った");
   if (!r.err.includes("local file:.git/config hooks")) t.fail(`core.hooksPath の設定元を verify.sh が示さない — ${r.err}`);
   const got = await exec("git", ["-C", repo, "config", "--get", "core.hooksPath"]);
-  if (got.code !== 0 || got.out !== "hooks\n") t.fail(`verify.sh が core.hooksPath を書き換えた — exit ${got.code}、${got.out}`);
+  if (got.code !== 0 || got.out !== "hooks\n") t.fail(`verify.sh が core.hooksPath を書き換えた — exit ${got.code}、${got.out}${got.err}`);
 });
 
 await Promise.all(pending);
