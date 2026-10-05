@@ -60,6 +60,7 @@
 - 段の子の stdin への書き込みが `Deno.errors.BrokenPipe` で投げても (子が先に終わった)、子を回収してグループを止め、子の status と stderr を段の結果にする。子が exit 0 なら、読み終える前に閉じたことを示して exit 1 にする。それまでは EPIPE の stack が段の結果になり、子は回収されなかった。BrokenPipe は実測して canon (`facts/deno/command-spawn`) に足した。
 - グループへの `Deno.kill` の `EPERM` (`PermissionDenied`) を、`ESRCH` と同じく「止めるものが無い」として扱う。macOS は、終わりかけのものだけのグループに送るとまれに `EPERM` を返す (先頭に SIGKILL を送った直後のグループで 1000 回に 2〜5 回。canon: `facts/deno/command-spawn` の「Deno.kill」)。それまでは、中断の経路で投げると終了コードがシグナルの値にならず、通常の経路では段の結果が stack になりえた。
 - git ls-files が落ちたときに out を空にする処理を `gitFiles` の 1 か所にし、終了コードを結果と引数から 1 回で求める。
+- 日本語名のファイル (47 件) が検査から外れていた。`git ls-files` を `-z` 無しで回していたので、git が名前を `"\343\201..."` と quote して出し、`scripts/verify.ts` の `.md` で終わる名前の絞り込みに掛からなかった (移す前の `verify.sh` から)。`-z` で出して NUL で分ける形にした (canon: `facts/git/path-output-quoting`)。
 
 ## 同等性
 
@@ -110,7 +111,13 @@
 ## 残っていること
 
 - test・開発用のスクリプトの TypeScript への移植は、これで終わった。
-- runner の性質 (並行・出力の順と経路・止め方・状態を揃える段の結果の引き継ぎ) を常に回る検査は無い。この振り返りの確認は一時の道具で、リポに入れていない。入れるなら、runner の段の定義を差し替えられる形 (stub に向けた段の表) が要る。
+- 次の runner の性質を常に回る検査は無い:
+  - 並行
+  - 出力の順と経路
+  - 止め方
+  - 状態を揃える段の結果の引き継ぎ
+
+  この振り返りの確認は一時の道具で、リポに入れていない。入れるなら、runner の段の定義を差し替えられる形 (stub に向けた段の表) が要る。
 - `scripts/test-pre-push.ts` の shellcheck の検査は、runner と 8 つの deno を起動する。段が増えればこの検査も重くなる。
 - runner は段の子の出力を pipe で受けるので、段の孫が SIGTERM を無視して pipe を開いたまま残ると、段が終わらない。今の段では起きていない (`./verify.sh` は 3 回とも全部の段の後に終わった)。
 - 古い `verify.sh` と新しい形で、シグナルの挙動が違うところ:
