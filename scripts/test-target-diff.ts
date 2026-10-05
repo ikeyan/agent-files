@@ -177,8 +177,11 @@ type Case = typeof caseArb extends fc.Arbitrary<infer T> ? T : never;
 
 // ---- 実行 ----
 
+const tmpRoot = await Deno.makeTempDir({ prefix: "target-diff-pbt." });
+// 自動 maintenance の背景の gc が、直後の clone や読み取りの最中に loose object を消さないよう止める (canon: facts/git/auto-maintenance-races-local-clone)
+await Deno.writeTextFile(`${tmpRoot}/gitconfig`, "[gc]\n\tauto = 0\n[maintenance]\n\tauto = false\n");
 const baseEnv = {
-  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_CONFIG_GLOBAL: `${tmpRoot}/gitconfig`,
   GIT_CONFIG_SYSTEM: "/dev/null",
   GIT_AUTHOR_NAME: "t",
   GIT_AUTHOR_EMAIL: "t@example.com",
@@ -606,7 +609,6 @@ async function checkIdentity(c: Case, wt: string, before: Output, invoke: () => 
 
 // ---- 入口 ----
 
-const tmpRoot = await Deno.makeTempDir({ prefix: "target-diff-pbt." });
 try {
   await fc.assert(
     fc.asyncProperty(caseArb, async (c) => {

@@ -10,7 +10,9 @@ here=$(cd "$(dirname "$0")/.." && pwd)
 script=$here/skills/setup-repo/pr-workflow/cleanup-branch.sh
 tmp=$(cd "$(mktemp -d "${TMPDIR:-/tmp}/cleanup-branch.XXXXXX")" && pwd -P)
 trap 'rm -rf "$tmp"' EXIT
-export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+# 自動 maintenance の背景の gc が、直後の clone や読み取りの最中に loose object を消さないよう止める (canon: facts/git/auto-maintenance-races-local-clone)
+printf '[gc]\n\tauto = 0\n[maintenance]\n\tauto = false\n' > "$tmp/gitconfig"
+export GIT_CONFIG_GLOBAL=$tmp/gitconfig GIT_CONFIG_SYSTEM=/dev/null
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
 status=0
 
