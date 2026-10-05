@@ -1,38 +1,59 @@
-# 2026-10-05: verify.sh を並行に回して速くした振り返り
+# 2026-10-05: verify.sh を速くした振り返り
 
 読者: 次に `./verify.sh` の段や `scripts/test-pr.ts` の回し方を触る実装セッション。前提知識は AGENTS.md の「このリポの検証」。
 
 ## 状況
 
-- 手元 (macOS、18 コア) の `./verify.sh` は 582 秒かかっていた。`scripts/test-pr.ts` だけで 439 秒で、その内訳は固定の検査 195 秒、p5 133 秒、p2・p4 が 48 秒ずつ。pr.sh が実際に間隔を sleep するので、CPU 時間は 68 秒ほどしかない。
-- 並行にした後の手元の時間 (秒):
+- 手元 (macOS、18 コア) の `./verify.sh` は 582 秒かかっていた。`scripts/test-pr.ts` だけで 439 秒で、そのうち CPU 時間は 68 秒ほどだった。残りは待ち時間で、原因は 2 つ:
+  - pr.sh が周期の間とまとめの窓で本物の `sleep` を呼んでいた。
+  - p4 と同じ秒の上限の検査が、reset の時刻まで実時間で待っていた。
+- 最初の版は待ちを並行に回して隠した (`test-pr.ts` の試行を分割し、`verify.sh` の段を並行に回す)。レビューで原因の機構を直すよう指摘され、時刻を仮想にして待ちを消した。
+- 手元の時間 (秒):
 
-| 段 | 前 | 後 |
-| --- | --- | --- |
-| `scripts/test-pr.ts` | 439 | 31〜33 |
-| `scripts/test-agent-sync.sh` | 88 | 96〜97 |
-| `scripts/test-codex-limits.sh` | 30 | 30〜31 |
-| `scripts/test-pre-push.sh` | 19 | 24〜26 |
-| `scripts/test-target-diff.ts` | 11 | 13〜16 |
-| `scripts/test-target-diff.sh` | 10 | 12〜13 |
-| 全体 | 582 | 97〜98 |
+| 段 | main | 並行にした版 (`656d0cd`) | 今 |
+| --- | --- | --- | --- |
+| `scripts/test-pr.ts` | 439 | 30〜33 | 77〜81 (順に回す) |
+| `scripts/test-agent-sync.sh` | 88 | 95〜97 | 93〜96 |
+| `scripts/test-codex-limits.sh` | 30 | 30〜31 | 30 |
+| `scripts/test-pre-push.sh` | 19 | 24〜27 | 5〜7 |
+| `scripts/test-target-diff.ts` | 11 | 12〜16 | 12 |
+| `scripts/test-target-diff.sh` | 10 | 12〜14 | 11〜12 |
+| shellcheck | (先に回す) | (先に回す) | 2 |
+| 全体 | 582 | 97〜98 | 93〜96 |
 
-- 3 回続けて回して全部通った。`PR_JOBS=4` (CI の runner の CPU の数) でも通り、`test-pr.ts` が 106 秒、全体が 108 秒。`PR_RUNS=40 PR_JOBS=36` の `test-pr.ts` 単体も通った (45 秒)。
+- 今の版を 3 回続けて回して全部通った (この後の 2 回のうち 1 回は、残っていることの test-target-diff.sh で落ちた)。
 
 ## 良かったこと
 
-- 性質の試行を fast-check の `seed` と `path: "i"` で 1 件ずつ取り出した。同じ seed なら順に回したときと同じ例になることを、fast-check 4.10.2 の `pathWalk`・`lazyToss` を読み、値の一致を実測して確かめてから使った。FC_SEED の意味は変わらない。
-- `scripts/test-pre-push.sh` が clone で回す verify.sh は、shellcheck が落ちることで自身を呼び返さずに止まっている。並行にする前にこの依存に気づき、shellcheck を並行の段の前に残した。
+- wall の時間と CPU 時間を分けて測ったので、`test-pr.ts` の時間のほとんどが待ちだと分かった。並行にする前にこれを原因として扱っていれば、分割と `PR_JOBS` は要らなかった。
+- 仮想の時刻にした後、pr.sh を reset の前に POST するように壊すと固定の検査が落ちることを確かめた。待ちを消しても「reset の前に POST しない」の検査は効いている。
+- 再帰の止め方を変えた後、verify.sh を回すリポに `scripts/test-pre-push.sh` を置くように壊すと新しい検査が落ちることを確かめた。
 
 ## 直したこと
 
-- `test-pr.ts` の固定の検査と性質の各試行を、同時に `PR_JOBS` 件まで回す (`7f16067`)。落ちた単位は fast-check が `cause` に入れた元の失敗と一緒に全部を示す。
-- `verify.sh` の shellcheck の後の段を並行に回し、落ちた段を全部示す (`0efe5da`)。段は `set -m` で自分のプロセスグループに入れ、止まるときにグループごと TERM を送る。非対話の shell の裏の段は SIGINT を無視するので、これが無いと Ctrl-C の後に pr.sh が残る。
-- AGENTS.md に検査の順序と `PR_JOBS` を書いた (`205a035`)。
+- `test-pr.ts` の時刻を仮想にした (`eb34ba4`、`674b64c`):
+  - pr.sh の PATH の先頭の偽の bin に、待たずに返る `sleep` を足した。bash は `sleep` と `date` を PATH で引く (canon: facts/shell/bash-sleep-date-resolved-via-path)。
+  - 偽の `date` は常に試験が決めた時刻を返す。時刻は T0 から始まり、試験が `Fake.setNow` で進めたときだけ進む。`+%s` 以外の引数では落ちる。
+  - p4 と同じ秒の上限の検査は、reset の前の周期で何も出さないことを確かめてから時刻を reset に進める。
+  - pr.sh の周期は、前から fake が受けた要求 (starts・ends) で数えていたので、偽の sleep が待たなくてもモデルとの照合は変わらない。
+- 順に回しても 77〜81 秒になり、全体の律速 (`test-agent-sync.sh`) より短いので、最初の版の並行の仕組みを消した (`eb34ba4`):
+  - fast-check の `seed` と `path: "i"` で i 件目の試行を取り出す分割 (`7f16067`)。fast-check の内部の振る舞いに頼っていた。
+  - seed の自前の決め方と `PR_JOBS`。
+  - FC_SEED の意味と回し方は main と同じに戻った。
+- `scripts/test-pre-push.sh` が clone で回す verify.sh の再帰を構造で断った (`fbf716c`):
+  - 最初の版は、clone に置いた shellcheck の落ちるファイルで verify.sh が止まることに頼り、shellcheck を並行の段の前に残していた。#27 から版の違う shellcheck では先へ進むので、その手元では再帰が際限なく続く。
+  - verify.sh を回すリポを、verify.sh と hooks/pre-push だけを commit したものにした。scripts/ が無いので検査の段は起動できずに落ちる。
+  - 版 0.9.0 を名乗る偽の shellcheck で verify.sh を回し、`scripts/test-pre-push.sh` の段が exit 127 で落ちることを確かめる検査を足した。
+  - shellcheck を並行の段の 1 つにした。
+- `verify.sh` の段の標準出力と標準エラーを分けた (`c0337dd`)。最初の版は 1 つのファイルにまとめ、通った段の警告 (stderr) を stdout に出していた。
+- AGENTS.md の検査の順序と `PR_JOBS` の記述を、今の形に直した (`7b81473`)。
 
 ## 残っていること
 
-- 全体は `scripts/test-agent-sync.sh` (96 秒) が律速。145 回の sync.sh の起動 (`expect_fail`) が 50 秒ほどを占めるが、同じ下流のリポとロック・`$tmp/err.txt` を共有しているので、並行にするには例ごとにリポを分ける作り直しが要る。今回は手を付けていない。
-- `test-codex-limits.sh` の 30 秒は codex-limits.sh の timeout を待つ時間で、短くするには製品の timeout を変えることになる。
-- CI (ubuntu-latest、4 vCPU) での時間はまだ見ていない。`PR_JOBS=4` の手元の測定どおりなら、`test-pr.ts` と `test-agent-sync.sh` がどちらも 100 秒前後になる。
-- `test-pr.ts` が SIGTERM で止まると一時ディレクトリ (`pr-pbt.*`) が `$TMPDIR` に残る。順に回していたときも同じ。
+- 全体は `scripts/test-agent-sync.sh` (93〜96 秒) が律速。145 回の sync.sh の起動 (`expect_fail`) が 50 秒ほどを占めるが、同じ下流のリポとロック・`$tmp/err.txt` を共有しているので、並行にするには例ごとにリポを分ける作り直しが要る。
+- `test-pr.ts` の残りの時間は pr.sh の周期ごとの curl・jq・awk の起動 (CPU) で、待ちではない。律速になったら、p1〜p5 の `fc.assert` と固定の検査を `Promise.all` で並行に回す (fast-check の公開の API だけで済む)。
+- 偽の `sleep` は引数を見ないので、pr.sh が待つ秒数 (間隔、失敗時の倍、まとめの窓の `min(間隔, 10)`) は検査に入っていない。本物の `sleep` だった頃も検査していなかった。
+- `test-codex-limits.sh` の 30 秒は codex-limits.sh の timeout を待つ時間で、`test-pr.ts` と同じ種類の待ち。短くするには製品の timeout を変えることになる。
+- CI (ubuntu-latest、4 vCPU) での時間はまだ見ていない。
+- 今の版の 5 回の `./verify.sh` のうち 1 回で、変えていない `scripts/test-target-diff.sh` が落ちた (exit 128)。`git clone -q "$tmp/origin.git" "$tmp/advance"` が `failed to copy file to '<tmp>/advance/.git/objects/5c/…': No such file or directory` で失敗し、続く行も `$tmp/advance` が無いと落ちた。続けて回した次の回は通った。原因は調べていない。
+- `test-pr.ts` が SIGTERM で止まると一時ディレクトリ (`pr-pbt.*`) が `$TMPDIR` に残る。main でも同じ。
