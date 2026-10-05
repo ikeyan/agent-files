@@ -34,7 +34,7 @@
   - review-perspectives の `target-diff.sh` の fixture (`scripts/test-target-diff.sh`) と model based test (`scripts/test-target-diff.ts`。fast-check)、`hooks/pre-push` の fixture (`scripts/test-pre-push.ts`)
   - pr-workflow の `cleanup-branch.sh` の fixture (`scripts/test-cleanup-branch.ts`)
   - pr-workflow の `pr.sh` の、fake GitHub を相手にした model based test (`scripts/test-pr.ts`。fast-check)
-  - pr-workflow の `codex-limits.sh` の、偽の codex を相手にした fixture (`scripts/test-codex-limits.sh`)
+  - pr-workflow の `codex-limits.sh` の、偽の codex を相手にした fixture (`scripts/test-codex-limits.ts`)
   - agent-sync の `sync.sh` の、このリポの catalog から作った手元の上流を相手にした fixture (`scripts/test-agent-sync.ts`。検査ごとに下流のリポを分けて並行に回す):
     - OS の sandbox を適用できない環境 (別の sandbox の中など) では、最初の描画が sync.sh の「OS の sandbox を適用できない」で落ちるので、描画を伴う残りの検査を飛ばして理由を stderr に出す。
     - 全部を検査するには、適用できる環境で回す。
