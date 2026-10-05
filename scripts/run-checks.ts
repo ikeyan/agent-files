@@ -9,18 +9,25 @@
  *   - 見出しに段の所要時間を出す。
  * - どれかの段が落ちるか、引数が 1 なら exit 1。
  * - 段の子孫 (段が起こした pr.sh なども) を段より長く残さない。段が起動する子は、それぞれ自分のプロセスグループで回る (Deno.Command の detached。deno 2.9.7 の spawn() は子で setsid する) ので、グループごとに止める。
- *   - 子が終われば、そのグループに残ったものに SIGTERM を送る。残ったものが出力の pipe を開いたままにすると、段も終わらない。
- *   - SIGHUP・SIGINT・SIGTERM (終了コードは下の signals) の 1 回目では、動いている子のグループに SIGTERM を送り、子が終わってから終わる (段の test が一時ディレクトリを片付けられるように)。段の出力は出さない。
- *   - 2 回目のシグナルでは、残っている子のグループに SIGKILL を送り、待たずに終わる (SIGTERM を受けても終わらない子がいても抜けられるように)。
+ *   - 子 (グループの先頭) が終われば、グループを空にしてから段を終える: 残ったものに SIGTERM を送り、出力の pipe が閉じるか猶予 (graceMs) が過ぎたら SIGKILL を送る。SIGTERM を無視して pipe を開いたままのものがいても段が終わり、pipe を開いていないものも残らない。
+ *   - SIGHUP・SIGINT・SIGTERM (終了コードは下の signals) の 1 回目では、記録している (下の「状態」) グループに SIGTERM を送り、全部のグループを上の手順で空にしてから終わる。段の出力は出さない。グループの状態ごとに:
+ *     - 先頭が SIGTERM で終わる:
+ *       - 子孫が残らない、または SIGTERM で終わる: pipe が閉じたら SIGKILL を送り (届く先は無い)、終わる。
+ *       - 子孫が SIGTERM を無視する: pipe を開いていれば猶予の後に、開いていなければ pipe が閉じたらすぐ SIGKILL を送る。
+ *     - 先頭が SIGTERM で終わらない (子孫を待つ、または無視する): 先頭が終わるまで待つ (段の test が一時ディレクトリを片付けられるように)。終わった後は上と同じ。
+ *   - 2 回目のシグナルでは、記録しているグループに SIGKILL を送り、待たずに終わる (SIGTERM を受けても終わらない先頭がいても抜けられるように)。
+ *   - 各グループに SIGTERM は高々 1 回送る。段の子孫の run-checks.ts (test-pre-push.ts が回す verify.sh) は、2 回目を 2 回目のシグナルと読んで段を待たずに終わるため。
+ *   - 自分で setsid してグループを抜けた子孫は止めない。それが pipe を開いたままだと、段は終わらない。
+ * - 状態: 起動した子のグループを、起動から SIGKILL を送るまで記録する。鍵は子 (pgid は子の pid)。メンバーの残るグループの pgid を OS は他に使わない (POSIX の Process ID Reuse) ので、先頭を回収した後も -pid はそのグループに届く。
  *
  * 入力と環境の定義域:
  * - 引数は 1 つで、verify.sh が先に回した状態を揃える段の結果 (0 か 1)。外れていれば理由を出して落ちる。
  * - cwd はリポのルート。
  * - 読む環境変数は TMPDIR だけ (未設定か空なら /tmp。段の deno の read・write の許可に渡す)。子にはこのプロセスの環境を全部渡す (段の test が読む CI・PATH など)。
- * - git が知っているファイル (canon: facts/git/path-output-quoting、facts/git/untracked-entry-kinds) の名前の次元:
- *   - 改行: 含む名前が 1 つでもあれば、理由と名前を出して gitFiles を使う段を落とす。verify.ts へ渡す 1 行 1 件の入力で名前が割れるため。
+ * - git が知っているファイル (canon: facts/git/path-output-quoting、facts/git/untracked-entry-kinds) の名前: UTF-8 として正しく (WHATWG の UTF-8 decoder が fatal で投げない)、改行を含まないものだけを処理する。外れる名前が 1 つでもあれば、理由と名前 (バイトを escape したもの) を出して gitFiles を使う段を落とす。UTF-8 として不正な名前はコマンドへ渡す引数 (文字列) で表せず、改行を含む名前は verify.ts へ渡す 1 行 1 件の入力で割れるため。処理する名前の次元:
  *   - `-` で始まる: shellcheck と deno check へは `./` を前置して渡す。`--` は使わない (shellcheck 0.11.0 は `--` の後を位置引数にするが、deno 2.9.7 の deno check は `--` の後の名前を無視して cwd 全体を検査する。canon: facts/deno/check-double-dash)。verify.ts は名前を行から読むだけなので前置しない。
  *   - 非 ASCII・`"`・`\`・タブ・空白: そのまま渡す。git は -z で quote せずに出し、コマンドへは引数の配列で渡し、verify.ts へは行で渡す。
+ *   - U+FEFF で始まる: そのまま渡す (decode で BOM として落とさない)。
  *   - 作業ツリーに無い追跡ファイル・リンク先の無い symlink: git は一覧に出す。コマンドがその名前の無いことを知らせて落ちる (shellcheck は exit 2)。
  * - deno は 2.9.7 で確かめた。detached が子で setsid すること、Deno.kill に負の pid を渡すとプロセスグループに送れること、先に終わった子の stdin への write が Deno.errors.BrokenPipe で投げることに依存する。版は検査しない (CI は v2.x を使う)。外れた版 (detached が setsid しない版など) では、段の孫が止められずに残る。
  * - PATH に shellcheck (0.11.0 だけ。違えばその段が落ちる)・git・deno があること。
@@ -41,8 +48,8 @@ const tmpdir = Deno.env.get("TMPDIR") || "/tmp";
 /** 受けるシグナルと、それで終わるときの終了コード。 */
 const signals: Partial<Record<Deno.Signal, number>> = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
 
-/** 動いている子。止めるときは、そのプロセスグループに送る。 */
-const children = new Set<Deno.ChildProcess>();
+/** 起動した子 (グループの先頭) と、そのグループを空にし終えたら解決するもの。 */
+const groups = new Map<Deno.ChildProcess, Promise<unknown>>();
 const killGroup = (child: Deno.ChildProcess, signal: Deno.Signal) => {
   try {
     Deno.kill(-child.pid, signal);
@@ -51,11 +58,30 @@ const killGroup = (child: Deno.ChildProcess, signal: Deno.Signal) => {
     if (!(e instanceof Deno.errors.NotFound || e instanceof Deno.errors.PermissionDenied)) throw e;
   }
 };
+const termed = new WeakSet<Deno.ChildProcess>();
+const term = (child: Deno.ChildProcess) => {
+  if (termed.has(child)) return;
+  termed.add(child);
+  killGroup(child, "SIGTERM");
+};
+/** SIGTERM を送ってから SIGKILL を送るまで、グループの出力の pipe が閉じるのを待つ時間。 */
+const graceMs = 2000;
+/** 先頭が終わった後のグループを空にする。 */
+async function emptyGroup(child: Deno.ChildProcess, outputs: Promise<unknown>) {
+  term(child);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([outputs, new Promise((r) => timer = setTimeout(r, graceMs))]);
+  } finally {
+    clearTimeout(timer);
+    killGroup(child, "SIGKILL");
+  }
+}
 /** 中断が始まっていれば、その経路 (終了コードを決めて Deno.exit する。解決しない)。 */
 let interruption: Promise<never> | undefined;
 const interrupt = async (code: number): Promise<never> => {
-  children.forEach((c) => killGroup(c, "SIGTERM"));
-  await Promise.allSettled([...children].map((c) => c.status));
+  groups.forEach((_, c) => term(c));
+  await Promise.all(groups.values());
   Deno.exit(code);
 };
 for (const [signal, code] of Object.entries(signals) as [Deno.Signal, number][]) {
@@ -64,7 +90,7 @@ for (const [signal, code] of Object.entries(signals) as [Deno.Signal, number][])
       interruption = interrupt(code);
       return;
     }
-    children.forEach((c) => killGroup(c, "SIGKILL"));
+    groups.forEach((_, c) => killGroup(c, "SIGKILL"));
     Deno.exit(code);
   });
 }
@@ -88,7 +114,7 @@ async function feed(stdin: WritableStream<Uint8Array>, data: Uint8Array): Promis
   }
 }
 
-/** 子を自分のプロセスグループで起動し、終わるまで待つ。投げるときも、子を回収してグループを止めてから投げる。 */
+/** 子を自分のプロセスグループで起動し、終わってグループを空にするまで待つ。 */
 async function exec(cmd: string, args: string[], stdin?: Uint8Array): Promise<Run> {
   if (interruption) throw new Error("中断した");
   const child = new Deno.Command(cmd, {
@@ -98,33 +124,60 @@ async function exec(cmd: string, args: string[], stdin?: Uint8Array): Promise<Ru
     stdout: "piped",
     stderr: "piped",
   }).spawn();
-  children.add(child);
+  const run = collect(child, cmd, stdin);
+  groups.set(child, run.catch(() => {}));
   try {
-    const out = new Response(child.stdout).bytes();
-    const err = new Response(child.stderr).bytes();
-    const fed = !stdin || await feed(child.stdin, stdin);
-    const status = await child.status;
-    killGroup(child, "SIGTERM");
-    const run = { code: status.code, out: await out, err: await err };
-    if (fed || run.code !== 0) return run;
-    return { ...run, code: 1, err: new Uint8Array([...run.err, ...enc.encode(`${self}: ${cmd} が stdin を読み終える前に閉じた\n`)]) };
-  } catch (e) {
-    killGroup(child, "SIGTERM");
-    await child.status;
-    throw e;
+    return await run;
   } finally {
-    children.delete(child);
+    groups.delete(child);
   }
 }
+
+/** 子の出力を受け、子が終わったらグループを空にする。投げるときも、先頭を止めて回収し、グループを空にしてから投げる。 */
+async function collect(child: Deno.ChildProcess, cmd: string, stdin?: Uint8Array): Promise<Run> {
+  const outputs = Promise.all([new Response(child.stdout).bytes(), new Response(child.stderr).bytes()]);
+  let fed: boolean;
+  try {
+    fed = !stdin || await feed(child.stdin, stdin);
+  } catch (e) {
+    term(child);
+    await child.status;
+    await emptyGroup(child, outputs);
+    throw e;
+  }
+  const status = await child.status;
+  await emptyGroup(child, outputs);
+  const [out, err] = await outputs;
+  if (fed || status.code !== 0) return { code: status.code, out, err };
+  return { code: 1, out, err: new Uint8Array([...err, ...enc.encode(`${self}: ${cmd} が stdin を読み終える前に閉じた\n`)]) };
+}
+
+const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+/** 印字できる ASCII (空白と \ を除く) の他のバイトを \xHH にする。 */
+const escapeBytes = (b: Uint8Array) =>
+  Array.from(b, (c) => c > 0x20 && c < 0x7f && c !== 0x5c ? String.fromCharCode(c) : `\\x${c.toString(16).padStart(2, "0")}`).join("");
 
 /** git が知っているファイル (作業ツリーの未追跡を含み、無視するものを除く) のうち、pathspec に合うもの。-z でなければ git は非 ASCII の名前を quote して出す (canon: facts/git/path-output-quoting)。git が落ちれば out は空 (落ちた段に一覧を出さない)。out は名前を改行で繋いだもの。 */
 async function gitFiles(patterns: string[]): Promise<Run & { files: string[] }> {
   const r = await exec("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard", ...patterns]);
   if (r.code !== 0) return { ...r, out: new Uint8Array(), files: [] };
-  const files = dec.decode(r.out).split("\0").filter(Boolean);
-  const nl = files.filter((f) => f.includes("\n"));
-  if (nl.length) {
-    return { code: 1, out: new Uint8Array(), err: enc.encode(`${self}: 改行を含む名前のファイルがある (1 行 1 件の入力で割れる)。名前を変えるか消す: ${nl.map((f) => JSON.stringify(f)).join(" ")}\n`), files: [] };
+  const files: string[] = [];
+  const rejected: Uint8Array[] = [];
+  for (let i = 0; i < r.out.length;) {
+    const end = r.out.indexOf(0, i);
+    const name = r.out.subarray(i, end < 0 ? r.out.length : end);
+    i += name.length + 1;
+    let f: string | undefined;
+    try {
+      f = utf8.decode(name);
+    } catch (e) {
+      if (!(e instanceof TypeError)) throw e;
+    }
+    if (f === undefined || f.includes("\n")) rejected.push(name);
+    else files.push(f);
+  }
+  if (rejected.length) {
+    return { code: 1, out: new Uint8Array(), err: enc.encode(`${self}: UTF-8 として不正な名前 (引数の文字列で表せない) か改行を含む名前 (1 行 1 件の入力で割れる) のファイルがある。名前を変えるか消す: ${rejected.map(escapeBytes).join(" ")}\n`), files: [] };
   }
   return { ...r, out: enc.encode(files.map((f) => `${f}\n`).join("")), files };
 }

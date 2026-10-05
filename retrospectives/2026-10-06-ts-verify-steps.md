@@ -66,6 +66,14 @@
   - 改行を含む名前は、`gitFiles` が理由と名前 (JSON.stringify) を出して、その一覧を使う段を落とす。それまでは先頭コメントで「含まない」と宣言するだけで、verify.ts へ渡す 1 行 1 件の入力で名前が割れた。
   - 非 ASCII・引用符・バックスラッシュ・タブ・空白は処理する。作業ツリーに無い追跡ファイルとリンク先の無い symlink は、コマンドが名前の無いことを知らせて落ちる。
   - 一時の clone で、`-x.sh`・空白を含む `.ts`・`-bad.md`・改行を含む `.md`・壊れた symlink を置いて段の挙動を確かめた。
+- 段の先頭が終わった後のグループを、空にしてから段を終える形にした (中断と通常の経路の両方への指摘)。点で直さず、1 つの操作 (`emptyGroup`) で両方の経路を覆った: 先頭が終わったらグループに SIGTERM を送り、出力の pipe が閉じるか猶予 (2 秒) が過ぎたら SIGKILL を送る。
+  - それまでは、1 回目のシグナルで先頭だけを待って終わるので、SIGTERM を無視する子孫が残り、2 回目のシグナルを受ける者がいなくなった。通常の経路でも、SIGTERM を無視して pipe を開いたままの孫がいると段が終わらなかった。
+  - 1 回目の中断の経路の定義域を、グループの状態 (先頭が SIGTERM で終わる・終わらない × 子孫が残らない・SIGTERM で終わる・無視する) で先頭コメントに列挙した。
+  - 各グループに SIGTERM を高々 1 回送る。それまでは中断のときに 2 回届いていた (中断の SIGTERM と、先頭が終わった後の SIGTERM)。段の子孫の `run-checks.ts` (`scripts/test-pre-push.ts` が回す verify.sh) は、2 回目を 2 回目のシグナルと読んで、自分の段を待たずに終わる。
+- UTF-8 として不正な名前を落とす (git の名前についての 3 回目の指摘)。名前の次元を値ごとに足すのをやめ、「UTF-8 として正しく改行を含まない名前だけを処理し、他は理由と名前を出して落とす」を 1 つの契約にした。
+  - それまでは既定の `TextDecoder` で一覧全体を decode していたので、不正なバイトが U+FFFD になり、index だけにある `bad-\xff.sh` と U+FFFD を含む `bad-�.sh` が同じ名前に潰れ、前者が検査から外れた。
+  - NUL で分けた名前ごとに `new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })` で decode する。`ignoreBOM` が無いと、名前ごとの decode が U+FEFF で始まる名前の先頭を落とす (WHATWG Encoding の decode は呼ぶたびに BOM seen を戻す)。落とす名前は、バイトを `\xHH` に escape して出す。
+  - macOS の APFS は不正な名前のファイルを作れない (EILSEQ) が、`git update-index --cacheinfo` で index に入れると `ls-files --cached` に出る。canon の `facts/git/path-output-quoting` に足した。
 
 ## 同等性
 
@@ -90,8 +98,13 @@
 | VERIFY_READONLY=1 | `.claude/skills` の symlink を 1 つ消し、hook の無い clone で回す | hook と symlink を直さずに示し、検査は全部通って exit 1 | 同じ |
 | VERIFY_READONLY 無し | 同上 | hook を写し、symlink を作る | 同じ |
 | 出力を開いたまま残る孫 | 段の stub が `sleep 300 &` を残して終わる | 4 秒で終わる。孫は残る | 4 秒で終わる。孫は残らない |
+| 段の先頭が SIGTERM で終わり、子孫が SIGTERM を無視する | 段の stub (listener 無しの deno) の子が `trap "" TERM; exec sleep 300`。SIGTERM・SIGINT・SIGHUP を 1 回 | 測っていない | 143・130・129 で、子が pipe を開いていれば 2.0 秒 (猶予) で、開いていなければ 0.013 秒で終わる。子は残らない。直す前の runner は 0.012 秒で終わり、子が残った |
+| 中断で子孫が受ける SIGTERM の数 | 段の stub (listener 無しの deno) の子が、SIGTERM を受けるたびにファイルに 1 行書いて動き続ける。SIGTERM・SIGINT・SIGHUP を 1 回 | 測っていない | 1 回。子は残らない。直す前の runner は 2 回で、子が残った |
+| SIGTERM を無視して残る孫 (通常の経路) | 段の stub が `trap "" TERM; sleep 300 &` を残して終わる | 測っていない | pipe を開いた孫は 2.8 秒で、開いていない孫 (`>/dev/null 2>&1`) は 1.1 秒で verify.sh が終わる。孫は残らない。直す前の runner は、前者で孫が終わるまで (300 秒) 段が終わらず、後者で孫が残った |
+| UTF-8 として不正な名前 | index だけに `bad-\xff.sh` を入れ、作業ツリーに U+FFFD を含む `bad-�.sh` と U+FEFF で始まる `bom.sh` を置く | 測っていない | shellcheck と verify.ts の段が、理由と `bad-\xff.sh` を出して落ちる。直す前の runner は 2 つの名前を `bad-�.sh` に潰して verify.ts に 2 回渡し、shellcheck の段は `bad-\xff.sh` を検査せずに進んだ。U+FEFF で始まる名前は、どちらも shellcheck にそのまま渡った (その名前で SC2086 を出した) |
 
 - `scripts/test-pre-push.ts` は、古い形では古い版が、新しい形では直した版が通った。
+- グループを空にする形に直した後、上の表の他の行を回し直した。シグナル・2 回のシグナル・stdin を読まない子・出力の順を含め、結果は直す前と同じだった (段がシグナルですぐ終わる行は、終わる前に届いた 15・15・16 回が全部 130・143・129)。stub に替えた出力は、直す前の runner と、所要時間を除いて一致した。
 
 ## runner の変異
 
@@ -124,8 +137,10 @@
 
   この振り返りの確認は一時の道具で、リポに入れていない。入れるなら、runner の段の定義を差し替えられる形 (stub に向けた段の表) が要る。
 - `scripts/test-pre-push.ts` の shellcheck の検査は、runner と 8 つの deno を起動する。段が増えればこの検査も重くなる。
-- runner は段の子の出力を pipe で受けるので、段の孫が SIGTERM を無視して pipe を開いたまま残ると、段が終わらない。今の段では起きていない (`./verify.sh` は 3 回とも全部の段の後に終わった)。
 - 古い `verify.sh` と新しい形で、シグナルの挙動が違うところ:
   - 非対話の bash から `./verify.sh &` で回したときの SIGINT: 古い形は無視し、新しい形は受けて止まる。
   - 1 回目のシグナル: 古い形は段のグループに TERM を送ってすぐ終わり、新しい形は段が終わるのを待つ。2 回目は新しい形もすぐ終わる。
-- 1 回目のシグナルで、段の先頭の子が終わった後もグループに SIGTERM を無視するものが残ると、runner は先頭の子だけを待って終わるので、それは残る (2 回目を送る前に runner が終わる)。段の stub を listener 無しの deno にし、子に SIGTERM を無視させて確かめた (exit 143 で、子が残った)。今の段では起きていない。
+- グループを空にする操作の、まだ閉じていないところ:
+  - 自分で setsid してグループを抜けた子孫は止められない。それが pipe を開いたままだと段が終わらない。
+  - pipe を開いていない子孫は、pipe が閉じた時点で猶予なしに SIGKILL を受ける。SIGTERM で片付けを始めていても、片付けは終わらない。
+- UTF-8 として不正な名前を Linux の作業ツリーに作って測っていない (macOS では index に入れて測った)。
