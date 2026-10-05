@@ -16,7 +16,7 @@
 
 | 問題 | 直した先 |
 | --- | --- |
-| 手元と CI の shellcheck の版が違った | verify.sh が 0.11.0 だけを通す。CI は同じ版を sha256 検証つきで `/usr/local/bin` に入れる (`76cfa8b`) |
+| 手元と CI の shellcheck の版が違った | verify.sh が 0.11.0 だけを通す。CI は同じ版を sha256 検証つきで `/usr/local/bin` に入れる (`27c4a56`) |
 
 ## 残っていること
 
