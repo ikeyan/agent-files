@@ -35,6 +35,13 @@
 - `240cdad` レビューの指摘を直した。
   - Deno.Command は相対パスのコマンドを絶対パスにして起動するので、sync.sh の `$0` が常に絶対パスだった。sh は `./.agent-sync/sync.sh` で起動していて、here の解決を壊す変異 (M24) を捕えていたが、ts は通した。`env` を通して `$0` を保つ。
   - 下流を検査ごとに写すようにしたので、落ちた起動が `.git` の下に残すものを後の検査が見なくなった。`expectFail` で `.git` の下 (index と objects を除く) を前後で比べる。この検査は sh より強い (M25 は sh では通る)。
+- `3b09605` AGENTS.md の TypeScript で書く理由を、1 文に詰めず項目に分けた。
+- `6a44c49` 二回目のレビューの指摘を直した。
+  - Deno.Command の契約 (相対パスの絶対化・clearEnv と env・PATH の引き・stdin の既定) を canon の `facts/deno/command-spawn` に残し、依る行から引いた。ソースと macOS の実測で確かめた。
+  - env を通す回避に外せる条件を書いた。env 自身も `env.PATH` で引かれるので、PATH を差し替える検査は env のあるディレクトリを残す。
+  - 先頭に入力と環境の定義域 (読む環境変数、TMPDIR の定義域、UTF-8 の locale が無いときの扱い) と、並行の検査が共有する状態を宣言した。TMPDIR が定義域の外なら最初に落ちる。
+  - 後始末は、ディレクトリの mode を戻してから消す。mode 111 の検査の最中に Ctrl-C を受けると、finally が走らず `removeSync` が PermissionDenied で一時ディレクトリを残した。
+- `d47f7ab` 先頭は GIT_CONFIG* が通ると書いていたが、見ていたのは GIT_CONFIG_COUNT だけだった。GIT_CONFIG_PARAMETERS と GIT_CONFIG の fixture を足した (sync.sh の拒否から GIT_CONFIG_PARAMETERS だけを外す変異で落ちる)。
 
 ## 変異と結果
 
@@ -73,7 +80,7 @@ sync.sh を 1 か所ずつ壊し、sh (`7a7c26f`) と ts を回した。ts は�
 
 - 次に移すもの: `scripts/test-pre-push.sh`、`scripts/test-target-diff.sh` (できれば `scripts/test-target-diff.ts` と 1 つにする)、`scripts/test-codex-limits.sh`、`scripts/test-cleanup-branch.sh`、`verify.sh` の検査の段。
 - 移すときは、この PR と同じく変異を作って新旧の両方で落ちることを確かめてから古いものを消す。どの検査が捕えたかも見る (M22 のように変異が狙いと違うことがある)。
-- Deno.Command は相対パスのコマンドを絶対パスにして起動する (deno 2.9.7 で実測)。`$0` を見るスクリプトを使い方の形で起動するには `env` を通す。
+- Deno.Command は相対パスのコマンドを絶対パスにして起動する。`$0` を見るスクリプトを使い方の形で起動するには `env` を通す。契約は canon の `facts/deno/command-spawn`。測ったのは deno 2.9.7・macOS 26.6.2 (arm64) だけで、CI (ubuntu、deno v2.x) は測っていない。
 - ts の中の shim (sandbox-exec・bwrap・git・awk・uname・mv・archetect) は shell の文字列で、shellcheck が見ない。
 - `--allow-run` を絞れない (sync.sh の写しと shim を一時ディレクトリから起動する) ので、Deno の許可は子プロセスに対しては効かない。
 - sandbox の外へ出ようとする probe の部品は、固定のパス (`$tmp/outside`、`$tmp/secret.txt`) を上流に書き込む。描画するのは 1 つの検査だけなので並行でも当たらないが、2 つ目を足すなら検査ごとの上流が要る。
