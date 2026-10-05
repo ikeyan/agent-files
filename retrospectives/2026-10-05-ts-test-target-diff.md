@@ -66,6 +66,7 @@
   | SIGINT | deno | 1・3 秒 |
   | SIGTERM | deno | 1・3 秒 |
   | SIGINT | プロセスグループ | 0.5・2・5 秒 |
+- `f603bad` (Codex の指摘): `TARGET_DIFF_RUNS` を綴りだけで閉じていたので、309 桁以上の数が `Number()` で `Infinity` になり fast-check に渡っていた。試行数は有限の安全な整数、`FC_SEED` は 32 ビットの符号付き整数に閉じた (canon: `facts/fast-check/seed-and-numruns`)。同じ次元の `scripts/test-pr.ts` の `PR_RUNS`・`FC_SEED` も同じ形にした。
 
 ## 変異と結果
 
