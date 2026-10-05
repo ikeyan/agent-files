@@ -18,4 +18,4 @@
 
 ## 残っていること
 
-- `dl.deno.land` が要るかは、許可を外した sandbox で実測していない (deno の更新の確認のため残した)。
+- `dl.deno.land` は deno の 1 日 1 回の更新の確認の相手で、`DENO_NO_UPDATE_CHECK=1` で止められる (Deno の permissions の文書)。Codex はそれを verify に設定して許可を外す案を出したが、verify の外で使う deno も承認で止まらないよう、利用者の判断で許可を残した。
