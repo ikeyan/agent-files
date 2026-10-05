@@ -18,7 +18,7 @@
 | `./verify.sh` の中の段 (1 回) | — | 1 |
 | `./verify.sh` 全体 (1 回) | — | 86 (律速は `scripts/test-pr.ts` の 85) |
 
-- 検査は 7 から 13 に増えたが、cleanup-branch.sh は新しく書く実行ファイルでないので、macOS の初回の exec の待ち (canon: `facts/macos/first-exec-of-new-executable`) は積まれない。
+- 検査は 10 (sh の `expect_deleted` 4 と `expect_refused` 6) から 16 (ts の単独の `fixture` 7 と `refusals` 9) に増えたが、cleanup-branch.sh は新しく書く実行ファイルでないので、macOS の初回の exec の待ち (canon: `facts/macos/first-exec-of-new-executable`) は積まれない。
 
 ## 良かったこと
 
