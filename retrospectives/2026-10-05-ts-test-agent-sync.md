@@ -21,6 +21,7 @@
 
 - `./verify.sh` 全体の律速は `scripts/test-pr.ts` (93〜99 秒) に移った。全体の時間は変わっていない。
 - Claude Code の sandbox の中の `./verify.sh` は 84 秒で通った。agent-sync の段は 3 秒で、初回の描画が「OS の sandbox を適用できない」で落ち、描画を伴う検査を飛ばした理由を出した。`CI=1` では落ちることも確かめた。
+- CI (ubuntu-24.04、bwrap、`78fcc6c`) では agent-sync の段は 29 秒、律速の `scripts/test-pr.ts` は 71 秒だった。
 
 ## 良かったこと
 
@@ -80,9 +81,8 @@ sync.sh を 1 か所ずつ壊し、sh (`7a7c26f`) と ts を回した。ts は�
 
 - 次に移すもの: `scripts/test-pre-push.sh`、`scripts/test-target-diff.sh` (できれば `scripts/test-target-diff.ts` と 1 つにする)、`scripts/test-codex-limits.sh`、`scripts/test-cleanup-branch.sh`、`verify.sh` の検査の段。
 - 移すときは、この PR と同じく変異を作って新旧の両方で落ちることを確かめてから古いものを消す。どの検査が捕えたかも見る (M22 のように変異が狙いと違うことがある)。
-- Deno.Command は相対パスのコマンドを絶対パスにして起動する。`$0` を見るスクリプトを使い方の形で起動するには `env` を通す。契約は canon の `facts/deno/command-spawn`。測ったのは deno 2.9.7・macOS 26.6.2 (arm64) だけで、CI (ubuntu、deno v2.x) は測っていない。
+- Deno.Command は相対パスのコマンドを絶対パスにして起動する。`$0` を見るスクリプトを使い方の形で起動するには `env` を通す。契約は canon の `facts/deno/command-spawn`。測ったのは deno 2.9.7・macOS 26.6.2 (arm64) だけ。CI (ubuntu-24.04、deno 2.9.7 x86_64) では `env` を通した起動で test が通ったが、`env` を通さないときに絶対パスになるかは測っていない。
 - ts の中の shim (sandbox-exec・bwrap・git・awk・uname・mv・archetect) は shell の文字列で、shellcheck が見ない。
 - `--allow-run` を絞れない (sync.sh の写しと shim を一時ディレクトリから起動する) ので、Deno の許可は子プロセスに対しては効かない。
 - sandbox の外へ出ようとする probe の部品は、固定のパス (`$tmp/outside`、`$tmp/secret.txt`) を上流に書き込む。描画するのは 1 つの検査だけなので並行でも当たらないが、2 つ目を足すなら検査ごとの上流が要る。
 - 文字の分類と同一性の表は固定の表で回し、fast-check は使わなかった。行は canon の目録の値そのもので、生成しても増える値が無い。
-- CI (ubuntu-latest、bwrap) での時間はまだ見ていない。
