@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # このリポの単一検証コマンド。引数なしで全部を検査する。
 # 段は 2 種類で、その場で直す状態 (hooks/pre-push の写し (無いときだけ置く)、.claude/skills の symlink のずれ) を先に揃え、検査を後に回す。検査が落ちても状態は揃っているようにするため。VERIFY_READONLY=1 では直さず違反にする (CI 用)。
-# 検査は shellcheck を先に回し、shellcheck が落ちたら残りを回さずに止まる (scripts/test-pre-push.sh が clone で回す verify.sh は、これで自身を呼び返さない)。
-# 残りの検査は互いに独立なので並行に回し、全部を待ってから、段ごとの出力を下に並べた順で出す。通った段は標準出力を stdout へ、標準エラーを stderr へ、落ちた段は両方を stderr へ出す。どれかが落ちれば exit 1。
+# 検査は互いに独立なので並行に回し、全部を待ってから、段ごとの出力を下に並べた順で出す。通った段は標準出力を stdout へ、標準エラーを stderr へ、落ちた段は両方を stderr へ出す。どれかが落ちれば exit 1。
 # 事前条件: shellcheck (0.11.0 だけ。.github/workflows/verify.yml が入れる版と同じ)・deno・curl (7.84 以降)・jq・archetect と、macOS では sandbox-exec と otool、Linux では bwrap と ldd が PATH にあること。ネットワーク (www.schemastore.org) に出られること。
 # agent-sync の描画の sandbox を適用できない環境 (別の sandbox の中など) では、test-agent-sync.sh の最初の描画が sync.sh の「OS の sandbox を適用できない」で落ちるので、描画を伴う残りの検査を飛ばして理由を stderr に出す。CI では落とす。全部を検査するのは適用できる環境。
 # git は hook を $GIT_COMMON_DIR/hooks (linked worktree も共有し、checkout で変わらない) から呼ぶので、hooks/pre-push をそこへ写す。core.hooksPath (どの scope でも) が hook をよそへ向けていれば違反にし、設定は書かない。
@@ -101,6 +100,7 @@ else
   done
 fi
 
+# shellcheck disable=SC2329 # step が呼ぶ
 check_files() { # <コマンド…> -- <パターン…>: git が知っているファイルが 1 件以上あるときだけコマンドを回す
   local cmd=() files=()
   while [ "$1" != "--" ]; do cmd+=("$1"); shift; done
@@ -110,13 +110,16 @@ check_files() { # <コマンド…> -- <パターン…>: git が知っている
 }
 # 版で出す指摘が違う (SC2015 は 0.9.0 が出し 0.11.0 は出さない。canon: facts/shellcheck) ので、手元と CI で同じ版に揃える。
 readonly shellcheck_version=0.11.0
-actual=$(shellcheck --version 2>/dev/null | sed -n 's/^version: //p') || actual=
-if [ "$actual" != "$shellcheck_version" ]; then
-  echo "shellcheck の版が ${actual:-不明 (shellcheck が無い)} で、$shellcheck_version でない。macOS: brew install shellcheck (Homebrew の版が $shellcheck_version でなければ https://github.com/koalaman/shellcheck/releases/tag/v$shellcheck_version の成果物を PATH に置く)。Linux: .github/workflows/verify.yml の shellcheck の手順と同じに入れる" >&2
-  status=1
-else
+# shellcheck disable=SC2329 # step が呼ぶ
+run_shellcheck() {
+  local actual
+  actual=$(shellcheck --version 2>/dev/null | sed -n 's/^version: //p') || actual=
+  if [ "$actual" != "$shellcheck_version" ]; then
+    echo "shellcheck の版が ${actual:-不明 (shellcheck が無い)} で、$shellcheck_version でない。macOS: brew install shellcheck (Homebrew の版が $shellcheck_version でなければ https://github.com/koalaman/shellcheck/releases/tag/v$shellcheck_version の成果物を PATH に置く)。Linux: .github/workflows/verify.yml の shellcheck の手順と同じに入れる" >&2
+    return 1
+  fi
   check_files shellcheck -- '*.sh' hooks/pre-push
-fi
+}
 
 out=$(mktemp -d "${TMPDIR:-/tmp}/verify.XXXXXX")
 names=() pids=()
@@ -137,6 +140,7 @@ step() { # <名前> <コマンド…>: 裏で回し、標準出力を $out/<番�
   ) &
   pids+=($!)
 }
+step shellcheck run_shellcheck
 step "deno check" check_files deno check -- '*.ts'
 step scripts/test-target-diff.sh scripts/test-target-diff.sh
 step scripts/test-pre-push.sh scripts/test-pre-push.sh

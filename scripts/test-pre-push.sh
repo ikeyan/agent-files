@@ -4,7 +4,8 @@
 # - PUSH_OK=1 の push は、hooks/pre-push.local があればそれに同じ引数と stdin で替わる。実行可能な通常のファイルでなければ (実行可能でない・ディレクトリ・壊れた symlink) 止まる
 # - 作業ツリーが無い (bare) リポジトリと .git の中からの push は止まる (git 自身のエラーも見える)
 # - main worktree と linked worktree、そのサブディレクトリからの push は、その作業ツリーのルートの pre-push.local を呼ぶ
-# - verify.sh は hooks/pre-push を common git dir の hooks へ写す (検査に落ちる clone でも)
+# - verify.sh は hooks/pre-push を common git dir の hooks へ写す (検査に落ちるリポでも)
+# - verify.sh を回すリポに scripts/ は無く、shellcheck の版が違っても verify.sh はこの test を呼び返さない
 # - 写す先の pre-push の状態ごとに、写す・何もしない・触らずに落とすのどれかになる
 #   - 無い・壊れた symlink: 写す (VERIFY_READONLY=1 では写さずに落ちる)
 #   - 現行と同じ実行可能なファイル: 何もしない (この test の最初の push と verify.sh の通常の実行)
@@ -147,25 +148,34 @@ git -C clone worktree remove --force ../lwt
 rm -r clone/hooks clone/sub
 
 # verify.sh は、検査が落ちても hooks/pre-push を common git dir の hooks に写してから落ちる (hook が無い clone から push できる期間を作らない)。
-# 作業ツリーの verify.sh と hooks/pre-push を clone に写す。
-# どの clone も shellcheck が落ちるファイルを置く: verify.sh は hook の段の後に shellcheck で落ち、後ろの検査 (この test の再帰) を回さない。VERIFY_READONLY は直さないモードなので、CI から継承した値を外す
-git clone -q "$here" repo
-cp "$here/verify.sh" repo/verify.sh
-cp "$here/hooks/pre-push" repo/hooks/pre-push
-cat > repo/bad.sh <<'BAD'
-#!/bin/bash
-if [ $x = y ]; then :; fi
-BAD
+# verify.sh を回すリポは、作業ツリーの verify.sh と hooks/pre-push だけを commit したもの。scripts/ が無いので検査の段は起動できずに落ち、verify.sh はこの test を呼び返さない。VERIFY_READONLY は直さないモードなので、CI から継承した値を外す
+verify_repo() { # <dir>: 作業ツリーの verify.sh と hooks/pre-push だけを commit したリポを作る
+  git init -q -b main "$1"
+  mkdir "$1/hooks"
+  cp "$here/verify.sh" "$1/verify.sh"
+  cp "$here/hooks/pre-push" "$1/hooks/pre-push"
+  git -C "$1" add verify.sh hooks/pre-push
+  git -C "$1" commit -q -m init
+}
+verify_repo repo
 hook=$tmp/repo/.git/hooks/pre-push
 rm -f "$hook"
 if (cd repo && env -u VERIFY_READONLY ./verify.sh) > /dev/null 2>&1; then
-  echo "shellcheck が落ちるファイルがあるのに verify.sh が通った" >&2
+  echo "検査の段が落ちるのに verify.sh が通った" >&2
   status=1
 fi
 if [ ! -x "$hook" ] || ! cmp -s repo/hooks/pre-push "$hook"; then
   echo "検査に落ちた verify.sh が $hook に hooks/pre-push の実行可能な写しを置いていない" >&2
   status=1
 fi
+
+# 版の違う shellcheck が先にあっても (その段だけが落ちて残りの段は回る)、verify.sh はこの test を呼び返さない
+mkdir old-shellcheck
+printf '#!/bin/sh\necho "version: 0.9.0"\n' > old-shellcheck/shellcheck
+chmod 755 old-shellcheck/shellcheck
+(cd repo && PATH="$tmp/old-shellcheck:$PATH" env -u VERIFY_READONLY ./verify.sh) > /dev/null 2> err13.txt && { echo "shellcheck の版が違うのに verify.sh が通った" >&2; status=1; }
+grep -q 'shellcheck の版が 0.9.0 で' err13.txt || { echo "verify.sh が shellcheck の版の違いを示さない — $(cat err13.txt)" >&2; status=1; }
+grep -q '^== scripts/test-pre-push.sh: 落ちた (exit 127、' err13.txt || { echo "shellcheck の版が違うとき、verify.sh を回すリポの scripts/test-pre-push.sh の段が起動できずに落ちていない — $(cat err13.txt)" >&2; status=1; }
 
 # 無いときに VERIFY_READONLY=1 なら、写さずに落として示す
 rm -f "$hook"
@@ -253,8 +263,7 @@ fi
 grep -q PUSH_OK err6.txt || { echo "main worktree が hooks/pre-push の無い commit のときの PUSH_OK 無しの push のエラーに PUSH_OK が無い — $(cat err6.txt)" >&2; status=1; }
 
 # core.hooksPath が hook をよそへ向けていれば、verify.sh は設定元を示して落ち、設定は書き換えない
-git clone -q "$here" repo2
-cp "$here/verify.sh" repo/bad.sh repo2/
+verify_repo repo2
 git -C repo2 config core.hooksPath hooks
 if (cd repo2 && env -u VERIFY_READONLY ./verify.sh) > /dev/null 2> err7.txt; then
   echo "core.hooksPath が hook をよそへ向けているのに verify.sh が通った" >&2
