@@ -17,7 +17,7 @@
  * ネットワークは使わない (bare リポジトリを file システム上に作って push する)。
  *
  * このスクリプトの入力と環境の定義域:
- * - 引数は取らない。
+ * - 引数は取らない。渡されれば理由を出して落ちる。
  * - 読む環境変数は PATH・TMPDIR だけ。PUSH_OK と VERIFY_READONLY は呼び出し元から引き継がない。
  * - TMPDIR (未設定か空なら /tmp) は絶対パスで、作った一時ディレクトリの解決済みのパスが A-Z a-z 0-9 . _ / - だけであること。外れていれば理由を出して落ちる。
  * - 後始末は、終わったときに一時ディレクトリを消す。SIGINT・SIGTERM では子に SIGTERM を送り、子が終わってから消す (子が書いている最中に消すと消し残す)。
@@ -33,6 +33,11 @@ const self = "test-pre-push.ts";
 const notSame = "hooks/pre-push と同じ実行可能なファイルでない";
 const badLocal = "実行可能な通常のファイルでない";
 const dec = new TextDecoder();
+
+if (Deno.args.length) {
+  console.error(`${self}: 引数は取らない (${Deno.args.join(" ")})`);
+  Deno.exit(1);
+}
 
 const tmpdirEnv = Deno.env.get("TMPDIR") ?? "";
 if (tmpdirEnv && !tmpdirEnv.startsWith("/")) {
