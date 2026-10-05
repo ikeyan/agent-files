@@ -237,6 +237,7 @@ fixture("他のブランチの worktree", async (t) => {
 });
 
 // locked な登録は prune されず、detach するディレクトリも無いので落ちる (cleanup-branch.sh の先頭)。断る理由 (usage・先端の不一致・ブランチが無い) でなく、その登録のディレクトリへ移れないことで落ち、登録は変わらない
+// canon: facts/git/worktree-lock-survives-prune — git -C は消えたディレクトリへ移れず「cannot change to」で exit 128 になる (LC_ALL=C の文言)
 fixture("ディレクトリが消えた locked な登録が checkout", async (t) => {
   const repo = await newRepo(t.dir);
   await git(repo, ["worktree", "add", "-q", "--lock", `${t.dir}/wt`, "work"]);
