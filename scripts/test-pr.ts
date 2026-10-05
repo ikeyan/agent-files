@@ -2,7 +2,7 @@
  * test-pr.ts — skills/setup-repo/pr-workflow/pr.sh の model based test。verify.sh から呼ぶ。
  *
  * PR の状態と操作列を生成し、pr.sh が呼ぶ経路だけを持つ fake の GitHub (127.0.0.1 の空きポート) に載せて pr.sh を回し、モデルから計算した出力と照合する。fake の返り方は canon の facts/github/rest-rate-limit-responses、facts/github/pr-comments-retrieval-and-resolved-state、facts/github/check-runs-filter-latest-hides-reruns に合わせる。
- * 時刻は仮想にする: pr.sh の PATH の先頭に偽の date と sleep を置き、date +%s は試験が決めた時刻 (T0 から始まり、試験が進めたときだけ進む) を返し、sleep は待たずに返る。pr.sh の周期は fake が受けた要求で数える。
+ * 時刻は仮想にする: pr.sh の PATH の先頭に偽の date と sleep を置き (bash はどちらも PATH で引く。canon: facts/shell/bash-sleep-date-resolved-via-path)、date +%s は試験が決めた時刻 (T0 から始まり、試験が進めたときだけ進む) を返し、sleep は待たずに返る。pr.sh の周期は fake が受けた要求で数える。
  *
  * モデル (pr.sh の先頭の仕様を集合で書いたもの):
  * - 状態 S は PENDING の review (提出前の下書き) を持たないものとする。提出されたら、その時に S に足す。
