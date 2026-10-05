@@ -20,7 +20,10 @@
 | `./verify.sh` の中の段 (sandbox の中、2 回) | 5〜7 (`2026-10-05-fast-verify.md`) | 9〜10 |
 | `./verify.sh` 全体 (sandbox の中、2 回) | 93〜96 (同) | 89 |
 
-- 速くはならなかった。30 の検査がそれぞれ準備のリポを作り直し、verify.sh の起動は 13 回から 16 回に増えた。また、並行に回した `git push` が 1 回 1.3〜3 秒かかる (単独では 0.03〜0.17 秒)。CPU は 135% 程度で、原因は調べていない。全体の律速は `scripts/test-pr.ts` のままで、全体の時間は変わらない。
+- 速くはならなかった。30 の検査がそれぞれ準備のリポを作り直し、verify.sh の起動は 13 回から 16 回に増えた。また、並行に回した `git push` が 1 回 1.3〜3 秒かかる (単独では 0.03〜0.17 秒)。全体の律速は `scripts/test-pr.ts` のままで、全体の時間は変わらない。
+- 並行の `git push` が遅い原因は、macOS が新しく作った実行ファイルの初回の exec を約 85 ms 遅らせ、同時の初回を直列に待たせることだった (canon: `facts/macos/first-exec-of-new-executable`)。
+  - git の trace2 (`GIT_TRACE2_EVENT` にディレクトリを渡すと、push・hook の中の git・receive-pack がプロセスごとのファイルに書く) で測った。push の時間はほぼ全部が pre-push の hook で、hook の中の git は 1 ms 以下だった。hook の起動から中の git の開始まで (新しく写した hook の exec) と、中の git の終わりから hook の回収まで (新しく書いた pre-push.local の exec) が、同時 1 で各 90 ms、同時 18 で各 1.3 秒だった。
+  - 検査ごとに hook・pre-push.local・verify.sh の写しを新しく書くので、macOS ではその数だけ初回の待ちが直列に積まれる。CI (Linux) ではこの段は 6 秒。
 
 ## 良かったこと
 
@@ -98,7 +101,7 @@ hooks/pre-push と verify.sh を 1 か所ずつ壊し、sh (`a30f60d` の `scrip
   - `scripts/test-codex-limits.sh`
   - `scripts/test-cleanup-branch.sh`
   - `verify.sh` の検査の段
-- 並行に回した `git push` が遅い原因 (上の時間) は調べていない。速さが要るようになったら、push の待ちが何かを測ってから直す。
+- macOS で速さが要るようになったら、検査ごとに新しく書く実行ファイルを、検査済みのファイルへの hard link か symlink にする (inode を共有するので、mode や中身を変える検査は自分の写しを持つ)。今は全体の律速が `scripts/test-pr.ts` なので、していない。
 - shellcheck の版が違うときの検査は、deno が無いモジュールを `Module not found "file://…"` と示して exit 1 で終わること (deno 2.9.7 で実測) に依る。deno の文言が変われば、この検査が落ちて知らせる。
 - 中断で子を待つ仕組みは `scripts/test-agent-sync.ts` には無い (mode を戻してから消すだけ)。同じ消し残しが起きうる。
 - locale は baseEnv の `LC_ALL=C` に置いた。他の検査も、子の文言を見る検査を足すときはこの前提に乗る。
