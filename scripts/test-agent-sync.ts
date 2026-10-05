@@ -406,8 +406,8 @@ await git(up, ["init", "-q", "-b", "main"]);
 await git(up, ["add", "-A"]);
 await git(up, ["commit", "-q", "-m", "v1"]);
 const v1 = chomp(await git(up, ["rev-parse", "HEAD"]));
-const lists = chomp(await git(up, ["ls-tree", "-r", "--name-only", v1, "--", "components"])).split("\n")
-  .filter((p) => /\/content\/\.agent-sync\/files\//.test(p) && !p.startsWith("components/probe/")).sort();
+const lists = (await git(up, ["ls-tree", "-r", "-z", "--name-only", v1, "--", "components"])).split("\0")
+  .filter((p) => p && /\/content\/\.agent-sync\/files\//.test(p) && !p.startsWith("components/probe/")).sort();
 if (!lists.length) {
   console.error("上流に部品の一覧が無い");
   Deno.exit(1);

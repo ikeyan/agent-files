@@ -46,7 +46,7 @@ const memoized1 = <T, U>(fn: (arg: T) => U) => {
   };
 }
 
-const targets = new TextDecoder().decode(await new Response(Deno.stdin.readable).bytes())
+const targets = new TextDecoder("utf-8", { ignoreBOM: true }).decode(await new Response(Deno.stdin.readable).bytes())
   .split("\n").filter(Boolean);
 
 // logger: false — schema が使う format キーワード (uri 等) を ajv 本体は解釈せず、
