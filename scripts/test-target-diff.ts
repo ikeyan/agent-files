@@ -1269,7 +1269,8 @@ pending.push((async () => {
         await Deno.remove(root, { recursive: true });
       }
     }),
-    { numRuns, ...(seedEnv ? { seed: Number(seedEnv) } : {}), verbose: fc.VerbosityLevel.Verbose },
+    // 照合の失敗の文言は、既定では message でなく cause に入る (canon: facts/fast-check/failure-error-cause)
+    { numRuns, ...(seedEnv ? { seed: Number(seedEnv) } : {}), verbose: fc.VerbosityLevel.Verbose, includeErrorInReport: true },
   );
 })().catch((e) => modelFailures.push(`モデル: ${e instanceof Error ? e.message : e}`)));
 
