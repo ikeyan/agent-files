@@ -16,7 +16,7 @@
 #   処理する: linked worktree、/ にあるリポジトリ、--single-branch の clone、shallow clone、unborn HEAD、root commit、既定ブランチに入った revision と merge commit、既定ブランチ以外へ向く PR、手元だけ・リモートだけのブランチ、未追跡の項目の全種 (- 始まりの名前、シンボリックリンク、commit のある入れ子のリポジトリ)、diff と log の出力を変える git の設定 (diff.external・GIT_EXTERNAL_DIFF・textconv・color・diff.noprefix・log.showSignature)、リポジトリの hook と core.fsmonitor のコマンド (走らせない)、.gitattributes の filter ドライバ (内容の表現を決めるので走らせる。止めると clean されない内容が stage されて HEAD と食い違う)、gh の既定のリポジトリ (GH_REPO・gh repo set-default) が origin と違う
 #   対象外:   submodule と入れ子のリポジトリの中身 (gitlink の commit id だけを見る。中の変更はそのリポジトリで回す)、本来の index の内容 (作業ツリーを正とする。staged した後に作業ツリーを戻した内容は出ない)、.gitignore で無視された項目 (git add -A が拾わないので diff にも tree にも入らない)
 #   止まる:   同時に始めた別の実行と fetch が衝突した (cannot lock ref、shallow なら shallow.lock の File exists か shallow file has changed since we read it。やり直せば通る)、origin が無い、origin の HEAD が既定ブランチを指していない (set-head --auto の Cannot determine remote HEAD)、<対象> が解決できない (PR 番号で origin が GitHub のリポジトリでない・gh が認証されていないものを含む)、PR の head の fork が無い (headRepositoryOwner が null。fork を削除した)、PR の base の commit が origin のブランチから辿れない (マージの後で base を force push・削除した)、共通の祖先が無い、<path> が絶対パス、未追跡の入れ子のリポジトリに commit が無い (git add -A の does not have a commit checked out)、レビュー対象が空 (変更が無い、<path> が何にも一致しない、コミットが打ち消し合って patch が空)
-# 外さないもの: fetch の refspec と --prune と --no-write-fetch-head、unshallow の origin、set-head --auto、--path-format=absolute --git-common-dir、add -A の前の read-tree、patch の diff-index、log の --no-show-signature (理由は canon の同ページ)
+# 外さないもの: fetch の refspec と --prune と --no-write-fetch-head、shallow を埋める fetch の origin、set-head --auto、--path-format=absolute --git-common-dir、add -A の前の read-tree、patch の diff-index、log の --no-show-signature (理由は canon の同ページ)
 set -euo pipefail
 
 target=
@@ -36,8 +36,9 @@ for p in "${paths[@]+"${paths[@]}"}"; do
 done
 
 git fetch -q --no-write-fetch-head --prune origin '+refs/heads/*:refs/remotes/origin/*'
-# shallow だと merge-base も first-parent の走査も途中で切れる (走査は失敗せず短い結果を返す)
-if [ "$(git rev-parse --is-shallow-repository)" = true ]; then git fetch -q --no-write-fetch-head --unshallow origin; fi
+# shallow だと merge-base も first-parent の走査も途中で切れる (走査は失敗せず短い結果を返す)。
+# --unshallow は、判定の後に並行の実行が埋めた完全なリポジトリで止まるので、同じ無限の深さを --depth で渡す (canon: facts/git/repository-shapes の並行実行)
+if [ "$(git rev-parse --is-shallow-repository)" = true ]; then git fetch -q --no-write-fetch-head --depth=2147483647 origin; fi
 git remote set-head origin --auto > /dev/null
 common=$(git rev-parse --path-format=absolute --git-common-dir)
 base_ref=origin/HEAD
