@@ -11,7 +11,7 @@
   - gh の stub は 1 つの実行ファイルを例とモデルで共有し、応答・応答の前に回すもの・受けた引数を、例ごとの GH_CASE の下に置く。macOS は新しく作った実行ファイルの初回の exec を直列に待たせる (canon: `facts/macos/first-exec-of-new-executable`) ので、stub を例ごとに書かない。
   - 子の環境は `clearEnv` と baseEnv (PATH・HOME・TMPDIR・`LC_ALL=C`・GIT_CONFIG_GLOBAL・GIT_CONFIG_SYSTEM・author と committer と日時) と、呼ぶごとに足す TMPDIR・PATH・GH_CASE・git の設定だけ。stdin は null。
   - target-diff.sh は run を `pwd -P` で解決して出し、git の `rev-parse --show-toplevel`・`--path-format=absolute` も解決したパスを出す。deno の許可は symlink を解決せずに綴りで照合する (canon: `facts/deno/permission-paths-not-resolved`) ので、出力のパスは `local` で tmp の綴りに戻してから読む。symlink は `ln` で作る。
-  - verify.sh の段の許可は `--allow-run=git,bash,/bin/bash,ln --allow-env=PATH,TMPDIR,TARGET_DIFF_RUNS,FC_SEED --allow-read="${TMPDIR:-/tmp}" --allow-write="${TMPDIR:-/tmp}"`。移す前のモデルの段は env・read・write を絞っていなかった (symlink を deno で作っていた)。
+  - verify.sh の段の許可は `--allow-run=git,bash,/bin/bash,ln --allow-env=PATH,TMPDIR,TARGET_DIFF_RUNS,FC_SEED --allow-read="${TMPDIR:-/tmp}",/bin/bash --allow-write="${TMPDIR:-/tmp}"`。移す前のモデルの段は env・read・write を絞っていなかった (symlink を deno で作っていた)。
 - 時間 (秒、手元の macOS 18 コア、Claude Code の sandbox の中):
 
 | 対象 | 移す前 | 移した後 |
@@ -51,6 +51,13 @@
   - target.diff のコミットとファイルを、集合でなく並べ替えた配列で比べる (同じものが 2 度出れば落ちる)。
   - 試行ごとの一時ディレクトリを消す失敗を `.catch(() => {})` で隠していたのを、例外にした。
   - 「絶対パスは git が止める」というコメントを直した (止めるのは target-diff.sh)。
+- `ab64908` で、レビューの指摘を直した:
+  - bash 3.2 の例が、`/bin/bash` 以外の NotFound (target.diff が無い等) も黙って成功にしていた。`/bin/bash` の有無は `Deno.stat` の NotFound だけで判定し、無ければ理由を stderr に出して飛ばす。`targetDiff`・`expect` は判定の外で回す。target.diff の読み先を壊すと、この例が落ちることを確かめた。`Deno.stat` に read の許可が要るので、verify.sh の段の `--allow-read` に `/bin/bash` を足した。
+  - `parseOutput` が、同じキーの行が 2 回あると後の値で上書きしていた。重複を例外にした。`work=a` と `work=b` を渡すと例外になることを確かめた。
+  - `TARGET_DIFF_RUNS` を `FC_SEED` と同じく綴りの正規表現 (`/^[1-9]\d*$/`) で閉じた。`0`・`01`・`1.5`・`x` で理由を出して落ちることを確かめた。
+  - 「origin の HEAD が既定ブランチを指していない」の例が止まる理由を確かめ、git の `Cannot determine remote HEAD` を `reason` に入れた。
+  - gh の stub が `pre.sh` の存在を見ていたのをやめ、`gh()` とモデルが常に書く (無ければ空) ようにした。
+  - `local` と `ln` で作る symlink のコメントに、canon を引いた理由と外せる条件を書いた。fork の PR の `owner:branch` の区切りのコメントを、説明するコードの直前に移した。`scripts/test-gitconfig` のコメントから、移す前の sh への言及を消した。
 - 理由を出して exit 1 で落ちることを確かめた: 引数を渡したとき、TMPDIR が相対パスのとき、TMPDIR に空白を含めたとき、`TARGET_DIFF_RUNS=0`、`FC_SEED=x`。
 - 中断の後始末を確かめた。次のどれでも exit 130 (SIGINT)・143 (SIGTERM) で終わり、一時ディレクトリが残らなかった。
 
@@ -110,6 +117,6 @@ target-diff.sh を 1 か所ずつ壊し、sh (`9accb16` の `scripts/test-target
 - 次に移すもの: `verify.sh` の検査の段。
 - 段の時間はモデルの 25 試行が決める。fast-check の試行は 1 つずつ回るので、試行を並行にするなら縮小 (shrink) の扱いを決めてから。
 - モデルの fetch の衝突をやり直す判定は、git の文言 (`cannot lock ref`、`.lock': File exists`、`shallow file has changed`) の照合に依る。canon (`facts/git/repository-shapes` の並行実行) にあるのは `cannot lock ref` だけで、残りの 2 つは canon に無い。git の文言が変われば、モデルが「止まった」で落ちて知らせる。
-- 止まる例のうち git が理由を出すもの (origin の HEAD が無い・origin 無し・消えたリモートブランチ・commit の無い入れ子のリポジトリ) は、文言を見ていない (git の版で変わりうる)。理由を外す変異は、対象が空でない作業ツリーで回すことで捕える (M03・M36)。
+- 止まる例のうち git が理由を出すもの (origin の HEAD が既定ブランチを指していない例は `Cannot determine remote HEAD` を見る。origin 無し・消えたリモートブランチ・commit の無い入れ子のリポジトリ) は、文言を見ていない (git の版で変わりうる)。理由を外す変異は、対象が空でない作業ツリーで回すことで捕える (M03・M36)。
 - gh の stub (ts の中の sh の文字列) は shellcheck が見ない。
 - canon の `facts/git/auto-maintenance-races-local-clone` は、実測の手順として消した `scripts/test-target-diff.sh` を引いている。
