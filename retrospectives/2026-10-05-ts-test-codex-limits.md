@@ -102,5 +102,5 @@ codex-limits.sh を 1 か所ずつ壊し、sh (`5ed41ea` の `scripts/test-codex
 - `trap '' PIPE` (app-server が先に終わったときに SIGPIPE で黙って止まらない) は検査できていない (M18 はどちらも通った)。codex-limits.sh は FIFO を開いた直後に 3 行を書くので、偽の codex が起動して読み手を閉じるより先に書き終わるためと見ているが、確かめていない。読み手が閉じてから書く順は、偽の codex の側からは作れない。
 - 応答しない例の 30 秒が、この段と変異の検査の時間の下限。codex-limits.sh の timeout は固定で、短くする knob は無い (足すなら定義域ごと抱える)。
 - 偽の codex (ts の中の bash の文字列) は shellcheck が見ない。
-- 応答が JSON でない例は、jq が理由を `jq: ` で始めて出すこと (手元の jq 1.8.2 で実測) に依る。jq の文言が変われば、この検査が落ちて知らせる。
+- 応答が JSON でない例は、jq が理由を `parse error: ` (jq 1.7 以降は前に `jq: `) で出すこと (canon: `facts/jq/parse-error-prefix`) に依る。jq の文言が変われば、この検査が落ちて知らせる。
 - app-server を止めない変異では、偽の codex (`sleep 60`) が test の後も最大 60 秒残る。test は残っていることを示すだけで、pid を kill しない (pid の再利用で別のプロセスに当たりうるため)。

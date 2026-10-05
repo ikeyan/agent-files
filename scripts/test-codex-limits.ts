@@ -270,8 +270,9 @@ fixture("error", async (t) => {
   await expectFail(t, r, 1, "codex-limits.sh: failed to fetch codex rate limits: error sending request for url (https://chatgpt.com/backend-api/wham/usage)");
 });
 
+// canon: facts/jq/parse-error-prefix — 接頭辞の "jq: " は jq 1.7 から付くので、"parse error: " を見る
 fixture("応答が JSON でない", async (t) => {
-  await expectFail(t, await run(t, "respond", "not json"), 2, /^jq: /);
+  await expectFail(t, await run(t, "respond", "not json"), 2, /^(jq: )?parse error: /);
 });
 
 fixture("何も返さずに終わる", async (t) => {
