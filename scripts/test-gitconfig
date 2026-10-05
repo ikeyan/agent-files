@@ -1,5 +1,5 @@
 # test が GIT_CONFIG_GLOBAL に指す設定。git の背景の自動 maintenance が、直後の local の clone や読み取りの最中に loose object を消して競合するのを避ける (canon: facts/git/auto-maintenance-races-local-clone)。
-# 回避策であって、test-target-diff の例 (TypeScript に移す前の test-target-diff.sh) の clone の失敗 (5 回に 1 回) の原因とは確かめていない。
+# 回避策であって、test-target-diff の例の clone の失敗 (5 回に 1 回) の原因とは確かめていない。
 # 外す条件: これを入れても同じ失敗が再発したら、原因は別にあるので調べて外す。canon が既定の閾値では起きないと示したときも外す。
 [gc]
 	auto = 0

@@ -33,7 +33,8 @@
  *
  * このスクリプトの入力と環境の定義域:
  * - 引数は取らない。渡されれば理由を出して落ちる。
- * - 読む環境変数は PATH・TMPDIR・TARGET_DIFF_RUNS (モデルの試行数。既定 25 で、1 以上の整数)・FC_SEED (モデルを再現する seed。整数) だけ。値が外れれば理由を出して落ちる。
+ * - 読む環境変数は PATH・TMPDIR・TARGET_DIFF_RUNS (モデルの試行数。既定 25 で、先頭が 0 でない 10 進の正の整数の綴り)・FC_SEED (モデルを再現する seed。整数) だけ。値が外れれば理由を出して落ちる。
+ * - /bin/bash (macOS の bash 3.2。無ければ bash 3.2 の例だけ飛ばして理由を stderr に出す)。
  * - PATH に git・bash と、target-diff.sh が呼ぶ dirname・mkdir・mktemp・rm・paste・cat、gh の stub が呼ぶ sh、準備の ln があること。
  * - TMPDIR (未設定か空なら /tmp) は絶対パスで、作った一時ディレクトリの綴りと解決済みのパスが A-Z a-z 0-9 . _ / - だけであること。外れていれば理由を出して落ちる。
  * - 後始末は、終わったときに一時ディレクトリを消す。SIGINT・SIGTERM では子に SIGTERM を送り、子が終わってから消す (子が書いている最中に消すと消し残す)。
@@ -57,11 +58,11 @@ if (Deno.args.length) {
 }
 
 const runsRaw = Deno.env.get("TARGET_DIFF_RUNS");
-const numRuns = runsRaw === undefined ? 25 : Number(runsRaw);
-if (!Number.isInteger(numRuns) || numRuns < 1) {
-  console.error(`${self}: TARGET_DIFF_RUNS は 1 以上の整数: ${runsRaw ?? ""}`);
+if (runsRaw !== undefined && !/^[1-9]\d*$/.test(runsRaw)) {
+  console.error(`${self}: TARGET_DIFF_RUNS は 1 以上の整数: ${runsRaw}`);
   Deno.exit(1);
 }
+const numRuns = runsRaw === undefined ? 25 : Number(runsRaw);
 const seedEnv = Deno.env.get("FC_SEED");
 if (seedEnv !== undefined && !/^-?\d+$/.test(seedEnv)) {
   console.error(`${self}: FC_SEED は整数: ${seedEnv}`);
@@ -110,7 +111,11 @@ for (const p of [tmp, resolved]) {
     Deno.exit(1);
   }
 }
-/** target-diff.sh (`pwd -P`) と git (canon: facts/git/worktree-add-records-resolved-path) が出す解決済みのパスを、許可を受けた tmp の綴りに戻す。 */
+/**
+ * target-diff.sh (`pwd -P`) と git (canon: facts/git/worktree-add-records-resolved-path) が出す解決済みのパスを、許可を受けた tmp の綴りに戻す。
+ * deno の許可は symlink を解決せずに綴りで照合する (canon: facts/deno/permission-paths-not-resolved) ので、解決済みのパスのままでは読めない。
+ * 外せる条件: deno が許可の照合でパスを解決するようになったとき、または verify.sh が TMPDIR を解決した綴りで渡すようになったとき。
+ */
 const local = (p: string) => (p === resolved || p.startsWith(`${resolved}/`) ? tmp + p.slice(resolved.length) : p);
 
 const baseEnv: Record<string, string> = {
@@ -173,7 +178,10 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
   return r.out.trim();
 }
 
-/** symlink は deno で作ると read・write の許可をパスに絞れないので ln で作る。 */
+/**
+ * `Deno.symlink` はパスを付けない read・write の許可を要る (canon: facts/deno/permission-paths-not-resolved) ので、許可を TMPDIR に絞るため ln で作る。
+ * 外せる条件: Deno.symlink がパスを絞った許可で通るようになったとき。
+ */
 async function symlink(target: string, path: string) {
   const r = await exec("ln", ["-s", target, path]);
   if (r.code !== 0) throw new Error(`ln -s ${target} ${path}: exit ${r.code} — ${r.err}`);
@@ -206,6 +214,7 @@ function parseOutput(stdout: string): Output {
   for (const line of stdout.split("\n").filter((l) => l !== "")) {
     const m = /^(work|run|repo|diff|tree|rules)=(.*)$/.exec(line);
     if (!m) throw new Error(`出力に形式外の行がある: ${line}`);
+    if (m[1] in o) throw new Error(`出力に ${m[1]} の行が重複している: ${stdout}`);
     o[m[1]] = m[2];
   }
   const missing = keys.filter((k) => !(k in o));
@@ -340,11 +349,11 @@ const merge = await git(origin, "rev-list", "--merges", "--max-count=1", "main")
 
 // gh の代わり。target-diff.sh が PATH で引いて起動する実行ファイルなので sh で書く。macOS の初回の exec の待ち (canon: facts/macos/first-exec-of-new-executable) を 1 回にするため、全ての例で 1 つを共有し、例ごとの応答は GH_CASE の下に置く:
 // - args: 受けた引数を書く
-// - pre.sh: あれば応答の前に回す
+// - pre.sh: 応答の前に回す (無ければ空)
 // - out: 応答 (gh pr view --json … --jq … の出力)
 await Deno.mkdir(`${tmp}/bin`);
 const ghPath = `${tmp}/bin:${baseEnv.PATH}`;
-await Deno.writeTextFile(`${tmp}/bin/gh`, '#!/bin/sh\nprintf \'%s\\n\' "$*" > "$GH_CASE/args"\nif [ -f "$GH_CASE/pre.sh" ]; then sh "$GH_CASE/pre.sh" || exit 1; fi\ncat "$GH_CASE/out"\n', { mode: 0o755 });
+await Deno.writeTextFile(`${tmp}/bin/gh`, '#!/bin/sh\nprintf \'%s\\n\' "$*" > "$GH_CASE/args"\nsh "$GH_CASE/pre.sh" || exit 1\ncat "$GH_CASE/out"\n', { mode: 0o755 });
 
 /** gh の stub が返す応答を置き、target-diff.sh に渡す環境を返す。 */
 async function gh(t: Ctx, name: string, fields: { name: string; head: string; base: string; baseRefName: string; cross: boolean; owner: string }, pre?: string) {
@@ -352,7 +361,7 @@ async function gh(t: Ctx, name: string, fields: { name: string; head: string; ba
   await Deno.mkdir(dir);
   const tsv = [fields.name, fields.head, fields.base, fields.baseRefName, String(fields.cross), fields.owner].join("\t");
   await Deno.writeTextFile(`${dir}/out`, `${tsv}\npull request: T\n\nPR-BODY\n`);
-  if (pre !== undefined) await Deno.writeTextFile(`${dir}/pre.sh`, pre);
+  await Deno.writeTextFile(`${dir}/pre.sh`, pre ?? "");
   return { PATH: ghPath, GH_CASE: dir };
 }
 
@@ -396,13 +405,15 @@ fixture("今のチェックアウト", async (t) => {
 });
 
 fixture("bash 3.2", async (t) => {
-  const clone = await workspace(t);
   try {
-    await expect(t, await targetDiff(t, clone, [], { bash: "/bin/bash" }), checkoutFiles, ["f1.txt"]);
+    await Deno.stat("/bin/bash");
   } catch (e) {
-    // /bin/bash の無い環境では回さない
     if (!(e instanceof Deno.errors.NotFound)) throw e;
+    console.error(`${self}: /bin/bash が無いので bash 3.2 の例を飛ばす`);
+    return;
   }
+  const clone = await workspace(t);
+  await expect(t, await targetDiff(t, clone, [], { bash: "/bin/bash" }), checkoutFiles, ["f1.txt"]);
 });
 
 fixture("path (ディレクトリ)", async (t) => {
@@ -640,13 +651,13 @@ fixture("base を取り込んだ PR", async (t) => {
 });
 
 // fork からの PR (isCrossRepository) は head の owner を系列に加え、同じ head・base commit・同じブランチ名の同一リポジトリの PR と作業ディレクトリを分ける。
-// owner:branch の区切りは : (ブランチ名に使えない。git-check-ref-format(1) の規則 4) なので、同じ owner/branch がそのままブランチ名として存在しても系列は別 (base の解決がブランチと PR で違うので diff の中身までは揃わない。見るのは work が分かれることだけ)
 fixture("fork からの PR", async (t) => {
   const { clone, pr } = await prRepo(t);
   const sameRepo = workOf(await targetDiff(t, clone, ["1"], { env: await gh(t, "same", pr) }));
   const fork = await targetDiff(t, clone, ["1"], { env: await gh(t, "fork", { ...pr, cross: true, owner: "fork" }) });
   await expect(t, fork, prFiles, prCommits);
   if (fork && fork.work === sameRepo) t.fail("同じリポジトリの PR と作業ディレクトリを共有している");
+  // owner:branch の区切りは : (ブランチ名に使えない。git-check-ref-format(1) の規則 4) なので、同じ owner/branch がそのままブランチ名として存在しても系列は別 (base の解決がブランチと PR で違うので diff の中身までは揃わない。見るのは work が分かれることだけ)
   await git(clone, "branch", "-q", "fork/prhead", "prhead");
   const branch = workOf(await targetDiff(t, clone, ["fork/prhead"]));
   if (fork && branch === fork.work) t.fail("owner/branch と同名のブランチと作業ディレクトリを共有している");
@@ -725,7 +736,7 @@ fixture("origin の HEAD が既定ブランチを指していない", async (t) 
   await git(o, "symbolic-ref", "HEAD", "refs/heads/gone");
   await git(t.dir, "clone", "-q", "-b", "main", o, `${t.dir}/badhead`);
   await Deno.writeTextFile(`${t.dir}/badhead/x.txt`, "x\n");
-  await fails(t, `${t.dir}/badhead`, []);
+  await fails(t, `${t.dir}/badhead`, [], { reason: "Cannot determine remote HEAD" });
 });
 
 fixture("origin から消えたブランチは対象に解決しない", async (t) => {
@@ -1131,6 +1142,7 @@ async function runCase(c: Case, root: string): Promise<void> {
   }
   if (prStub) {
     await Deno.mkdir(`${root}/gh`);
+    await Deno.writeTextFile(`${root}/gh/pre.sh`, "");
     await Deno.writeTextFile(`${root}/gh/out`, `${prStub.name}\t${shas.get(prStub.head)}\t${shas.get(prStub.base)}\t${prStub.baseRefName}\tfalse\to\npull request: T\n\nBODY\n`);
     Object.assign(env, { PATH: ghPath, GH_CASE: `${root}/gh` });
   }
