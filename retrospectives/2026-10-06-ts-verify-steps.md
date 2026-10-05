@@ -61,6 +61,11 @@
 - グループへの `Deno.kill` の `EPERM` (`PermissionDenied`) を、`ESRCH` と同じく「止めるものが無い」として扱う。macOS は、終わりかけのものだけのグループに送るとまれに `EPERM` を返す (先頭に SIGKILL を送った直後のグループで 1000 回に 2〜5 回。canon: `facts/deno/command-spawn` の「Deno.kill」)。それまでは、中断の経路で投げると終了コードがシグナルの値にならず、通常の経路では段の結果が stack になりえた。
 - git ls-files が落ちたときに out を空にする処理を `gitFiles` の 1 か所にし、終了コードを結果と引数から 1 回で求める。
 - 日本語名のファイル (47 件) が検査から外れていた。`git ls-files` を `-z` 無しで回していたので、git が名前を `"\343\201..."` と quote して出し、`scripts/verify.ts` の `.md` で終わる名前の絞り込みに掛からなかった (移す前の `verify.sh` から)。`-z` で出して NUL で分ける形にした (canon: `facts/git/path-output-quoting`)。
+- 名前の次元を `scripts/run-checks.ts` の先頭の定義域で閉じた (git の名前についての 2 回目の指摘)。次元は canon の `facts/git/path-output-quoting` と `facts/git/untracked-entry-kinds` から挙げた。
+  - `-` で始まる名前は、`./` を前置して shellcheck と deno check に渡す。`-x.sh` は shellcheck が option と読んで usage を出し、検査されなかった。`--` は使わない: shellcheck 0.11.0 は `--` の後を位置引数にするが、deno 2.9.7 の `deno check` は `--` の後の名前を無視して cwd 全体を検査した (canon: `facts/deno/check-double-dash`、`facts/shellcheck/leading-dash-file-names`)。
+  - 改行を含む名前は、`gitFiles` が理由と名前 (JSON.stringify) を出して、その一覧を使う段を落とす。それまでは先頭コメントで「含まない」と宣言するだけで、verify.ts へ渡す 1 行 1 件の入力で名前が割れた。
+  - 非 ASCII・引用符・バックスラッシュ・タブ・空白は処理する。作業ツリーに無い追跡ファイルとリンク先の無い symlink は、コマンドが名前の無いことを知らせて落ちる。
+  - 一時の clone で、`-x.sh`・空白を含む `.ts`・`-bad.md`・改行を含む `.md`・壊れた symlink を置いて段の挙動を確かめた。
 
 ## 同等性
 

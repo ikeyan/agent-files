@@ -17,8 +17,12 @@
  * - 引数は 1 つで、verify.sh が先に回した状態を揃える段の結果 (0 か 1)。外れていれば理由を出して落ちる。
  * - cwd はリポのルート。
  * - 読む環境変数は TMPDIR だけ (未設定か空なら /tmp。段の deno の read・write の許可に渡す)。子にはこのプロセスの環境を全部渡す (段の test が読む CI・PATH など)。
- * - git が知っているファイルの名前は改行を含まない。含めば、verify.ts へ渡す 1 行 1 件の入力で 2 件に割れ、割れた名前のうち .json か .md で終わるものは「ファイルが無い」などで verify.ts が落とす (shellcheck と deno check へは引数としてそのまま渡る)。
- * - deno は 2.9.7 で確かめた。detached が子で setsid すること、Deno.kill に負の pid を渡すとプロセスグループに送れること、先に終わった子の stdin への write が Deno.errors.BrokenPipe で投げることに依存する。版は検査しない (CI は v2.x を使う)。
+ * - git が知っているファイル (canon: facts/git/path-output-quoting、facts/git/untracked-entry-kinds) の名前の次元:
+ *   - 改行: 含む名前が 1 つでもあれば、理由と名前を出して gitFiles を使う段を落とす。verify.ts へ渡す 1 行 1 件の入力で名前が割れるため。
+ *   - `-` で始まる: shellcheck と deno check へは `./` を前置して渡す。`--` は使わない (shellcheck 0.11.0 は `--` の後を位置引数にするが、deno 2.9.7 の deno check は `--` の後の名前を無視して cwd 全体を検査する。canon: facts/deno/check-double-dash)。verify.ts は名前を行から読むだけなので前置しない。
+ *   - 非 ASCII・`"`・`\`・タブ・空白: そのまま渡す。git は -z で quote せずに出し、コマンドへは引数の配列で渡し、verify.ts へは行で渡す。
+ *   - 作業ツリーに無い追跡ファイル・リンク先の無い symlink: git は一覧に出す。コマンドがその名前の無いことを知らせて落ちる (shellcheck は exit 2)。
+ * - deno は 2.9.7 で確かめた。detached が子で setsid すること、Deno.kill に負の pid を渡すとプロセスグループに送れること、先に終わった子の stdin への write が Deno.errors.BrokenPipe で投げることに依存する。版は検査しない (CI は v2.x を使う)。外れた版 (detached が setsid しない版など) では、段の孫が止められずに残る。
  * - PATH に shellcheck (0.11.0 だけ。違えばその段が落ちる)・git・deno があること。
  *
  * 並行の段が共有する、変わりうる状態: deno のキャッシュ (DENO_DIR) と deno.lock (deno が依存を解決したときに書く)。段の test は作業ツリーを読むだけで、書くものは TMPDIR の下にそれぞれ作る一時ディレクトリに置く。
@@ -118,6 +122,10 @@ async function gitFiles(patterns: string[]): Promise<Run & { files: string[] }> 
   const r = await exec("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard", ...patterns]);
   if (r.code !== 0) return { ...r, out: new Uint8Array(), files: [] };
   const files = dec.decode(r.out).split("\0").filter(Boolean);
+  const nl = files.filter((f) => f.includes("\n"));
+  if (nl.length) {
+    return { code: 1, out: new Uint8Array(), err: enc.encode(`${self}: 改行を含む名前のファイルがある (1 行 1 件の入力で割れる)。名前を変えるか消す: ${nl.map((f) => JSON.stringify(f)).join(" ")}\n`), files: [] };
+  }
   return { ...r, out: enc.encode(files.map((f) => `${f}\n`).join("")), files };
 }
 
@@ -125,7 +133,7 @@ async function gitFiles(patterns: string[]): Promise<Run & { files: string[] }> 
 async function checkFiles(cmd: string, args: string[], patterns: string[]): Promise<Run> {
   const ls = await gitFiles(patterns);
   if (ls.code !== 0 || !ls.files.length) return ls;
-  return exec(cmd, [...args, ...ls.files]);
+  return exec(cmd, [...args, ...ls.files.map((f) => `./${f}`)]);
 }
 
 // 版で出す指摘が違う (SC2015 は 0.9.0 が出し 0.11.0 は出さない。canon: facts/shellcheck) ので、手元と CI で同じ版に揃える。
