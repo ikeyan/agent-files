@@ -49,9 +49,10 @@
     - 無ければ `hooks/pre-push` を写す。
     - `hooks/pre-push` と違えば、上書きせず落ちて置き換えのコマンドを示す。
 - `./verify.sh` は `core.hooksPath` が hook をよそへ向けていれば落ちる (設定は書かない)。
-- `./verify.sh` は状態を揃えてから、検査を全部並行に回す。全部を待ってから段ごとに出す:
+- `./verify.sh` は状態を揃えてから `scripts/run-checks.ts` を exec し、検査の段を全部並行に回す。全部を待ってから段ごとに決めた順で出す:
   - 通った段: 標準出力を stdout へ、標準エラーを stderr へ。
   - 落ちた段: 両方を stderr へ。落ちた段は全部示す。
+  - SIGINT・SIGTERM では、段が起こした子孫 (pr.sh など) も止める。
 - 必要なもの:
   - 共通のツール: `shellcheck` (0.11.0 だけ。違えば `./verify.sh` が落ちる)、`deno`、`curl` (7.84 以降)、`jq` (1.6 以降)、`archetect` (3.6.1)。
   - macOS: `sandbox-exec`、`otool`。
@@ -60,7 +61,7 @@
 
 ## このリポのスクリプトの言語
 
-- このリポの中でだけ動く test と開発用のスクリプトは TypeScript (Deno) で書く。shell で残っているもの (`scripts/test-*.sh`、`verify.sh` の検査の段) は移す対象。
+- このリポの中でだけ動く test と開発用のスクリプトは TypeScript (Deno) で書く。
   - 理由:
     - 型の検査ができる。
     - stack trace が読める。
@@ -71,6 +72,7 @@
 - 次は対象外で、shell のまま:
   - 他のリポへ配るスクリプト (`skills/` の下と `hooks/pre-push`): agent-sync の `sync.sh`、pr-workflow の `pr.sh`・`cleanup-branch.sh`・`codex-limits.sh`、review-perspectives の `target-diff.sh` など。
   - deno が入る前に動く環境の準備: `setup-cc-web.sh`・`setup-codex-cloud.sh`。
+  - `verify.sh` の入口と状態を揃える段: `.claude/skills` の symlink を作るのに、deno はパスを付けない read・write の許可を要る。
 
 ## コメントの書き方
 

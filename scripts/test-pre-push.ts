@@ -7,7 +7,8 @@
  * - 作業ツリーが無い (bare) リポジトリと .git の中からの push は止まる (git 自身のエラーも見える)
  * - main worktree と linked worktree、そのサブディレクトリからの push は、その作業ツリーのルートの pre-push.local を呼ぶ
  * - verify.sh は hooks/pre-push を common git dir の hooks へ写す (検査に落ちるリポでも、linked worktree で回しても)
- * - verify.sh を回すリポに scripts/ は無く、shellcheck の版が違っても verify.sh はこの test を呼び返さない
+ * - verify.sh を回すリポに scripts/ は無く、verify.sh は検査の段 (scripts/run-checks.ts) を起動できずに落ちる (この test を呼び返さない)
+ * - scripts/run-checks.ts だけを置いたリポでは、版の違う shellcheck の段が落ち、この test の段は起動できずに落ちる
  * - 写す先の pre-push の状態ごとに、写す・何もしない・触らずに落とすのどれかになる
  *   - 無い・壊れた symlink: 写す (VERIFY_READONLY=1 では写さずに落ちる)
  *   - 現行と同じ実行可能なファイル: 何もしない (VERIFY_READONLY=1 でも)
@@ -217,7 +218,7 @@ async function commitFile(repo: string, name: string) {
 /** repo の ref の一覧 (pattern を渡せばそれに合うものだけ)。 */
 const refOf = (repo: string, ...pattern: string[]) => git(repo, ["for-each-ref", ...pattern]);
 
-/** 作業ツリーの verify.sh と hooks/pre-push だけを commit したリポ。scripts/ が無いので verify.sh の検査の段は起動できずに落ち、この test を呼び返さない。 */
+/** 作業ツリーの verify.sh と hooks/pre-push だけを commit したリポ。scripts/ が無いので verify.sh の検査の段 (scripts/run-checks.ts) は起動できずに落ち、この test を呼び返さない。 */
 async function verifyRepo(repo: string) {
   await git(tmp, ["init", "-q", "-b", "main", repo]);
   await Deno.copyFile(`${here}/verify.sh`, `${repo}/verify.sh`);
@@ -386,11 +387,17 @@ fixture(".git の中からの push", async (t) => {
 
 // ---- verify.sh の写し ----
 
+// canon: facts/deno/run-missing-module — 無いモジュールは Module not found と file URL で示し exit 1 で終わる。tmp は encode の要らない文字だけ
+const missing = (repo: string, script: string) => `Module not found "file://${repo}/${script}"`;
+
 // verify.sh は、検査が落ちても hooks/pre-push を common git dir の hooks に写してから落ちる (hook が無い clone から push できる期間を作らない)
 fixture("verify.sh が写す", async (t) => {
   const repo = `${t.dir}/repo`;
   const hook = await verifyRepo(repo);
-  if ((await verify(repo)).code === 0) t.fail("検査の段が落ちるのに verify.sh が通った");
+  const r = await verify(repo);
+  if (r.code !== 1 || !r.err.includes(missing(repo, "scripts/run-checks.ts"))) {
+    t.fail(`scripts/ の無いリポで、verify.sh が検査の段を起動できずに exit 1 で落ちていない — exit ${r.code}、${r.err}`);
+  }
   if (!await executable(hook) || !await sameBytes(hookSrc, hook)) t.fail(`検査に落ちた verify.sh が ${hook} に hooks/pre-push の実行可能な写しを置いていない`);
 });
 
@@ -406,16 +413,17 @@ fixture("linked worktree で回した verify.sh", async (t) => {
   if (await present(own)) t.fail(`linked worktree で回した verify.sh が ${own} に書いた`);
 });
 
-// 版の違う shellcheck が先にあっても (その段だけが落ちて残りの段は回る)、verify.sh はこの test を呼び返さない
+// 版の違う shellcheck が先にあると、その段だけが落ちて残りの段は回る。scripts/test-pre-push.ts は無いので、この test を呼び返さない
 fixture("shellcheck の版が違う verify.sh", async (t) => {
   const repo = `${t.dir}/repo`;
   await verifyRepo(repo);
+  await Deno.mkdir(`${repo}/scripts`);
+  await Deno.copyFile(`${here}/scripts/run-checks.ts`, `${repo}/scripts/run-checks.ts`);
   await write(`${t.dir}/old-shellcheck/shellcheck`, '#!/bin/sh\necho "version: 0.9.0"\n', 0o755);
   const r = await verify(repo, { PATH: `${t.dir}/old-shellcheck:${baseEnv.PATH}` });
   if (r.code === 0) t.fail("shellcheck の版が違うのに verify.sh が通った");
   if (!r.err.includes("shellcheck の版が 0.9.0 で")) t.fail(`verify.sh が shellcheck の版の違いを示さない — ${r.err}`);
-  // canon: facts/deno/run-missing-module — 無いモジュールは Module not found と file URL で示し exit 1 で終わる。tmp は encode の要らない文字だけ
-  if (!/^== scripts\/test-pre-push\.ts: 落ちた \(exit 1、/m.test(r.err) || !r.err.includes(`Module not found "file://${repo}/scripts/test-pre-push.ts"`)) {
+  if (!/^== scripts\/test-pre-push\.ts: 落ちた \(exit 1、/m.test(r.err) || !r.err.includes(missing(repo, "scripts/test-pre-push.ts"))) {
     t.fail(`shellcheck の版が違うとき、verify.sh を回すリポの scripts/test-pre-push.ts の段が起動できずに落ちていない — ${r.err}`);
   }
 });
