@@ -46,6 +46,10 @@
   - 版 0.9.0 を名乗る偽の shellcheck で verify.sh を回し、`scripts/test-pre-push.sh` の段が exit 127 で落ちることを確かめる検査を足した。
   - shellcheck を並行の段の 1 つにした。
 - test の git の自動 maintenance を止めた (`f5758e1`): push や commit をしたリポを直後に clone・読み取りする 5 つの test の `GIT_CONFIG_GLOBAL` を、`gc.auto=0` と `maintenance.auto=false` を書いた一時ファイルにした。`GIT_CONFIG_COUNT` は test ごとに自前の設定で上書きされるので使わない。
+- レビューの指摘を直した (`e838dd1`、`a5e8966`、`e6dcff8`):
+  - 自動 maintenance の停止が 5 つの test に散っていたのを、commit した `scripts/test-gitconfig` 1 つにまとめ、原因と確かめていないこと・外す条件を書いた。
+  - `verify.sh` の SC2329 の disable を 1 つにして外す条件を書き、出力の経路の長い 1 文を箇条書きにした。
+  - 偽の `sleep` の引数を非負整数 1 つに限った。待つ秒数そのものは検査しない。
 - `verify.sh` の段の標準出力と標準エラーを分けた (`c0337dd`)。最初の版は 1 つのファイルにまとめ、通った段の警告 (stderr) を stdout に出していた。
 - AGENTS.md の検査の順序と `PR_JOBS` の記述を、今の形に直した (`7b81473`)。
 
@@ -53,7 +57,7 @@
 
 - 全体は `scripts/test-agent-sync.sh` (93〜96 秒) が律速。145 回の sync.sh の起動 (`expect_fail`) が 50 秒ほどを占めるが、同じ下流のリポとロック・`$tmp/err.txt` を共有しているので、並行にするには例ごとにリポを分ける作り直しが要る。
 - `test-pr.ts` の残りの時間は pr.sh の周期ごとの curl・jq・awk の起動 (CPU) で、待ちではない。律速になったら、p1〜p5 の `fc.assert` と固定の検査を `Promise.all` で並行に回す (fast-check の公開の API だけで済む)。
-- 偽の `sleep` は引数を見ないので、pr.sh が待つ秒数 (間隔、失敗時の倍、まとめの窓の `min(間隔, 10)`) は検査に入っていない。本物の `sleep` だった頃も検査していなかった。
+- 偽の `sleep` は引数が非負整数 1 つかだけを見るので、pr.sh が待つ秒数 (間隔、失敗時の倍、まとめの窓の `min(間隔, 10)`) は検査に入っていない。本物の `sleep` だった頃も検査していなかった。
 - `test-codex-limits.sh` の 30 秒は codex-limits.sh の timeout を待つ時間で、`test-pr.ts` と同じ種類の待ち。短くするには製品の timeout を変えることになる。
 - CI (ubuntu-latest、4 vCPU) での時間はまだ見ていない。
 - `scripts/test-target-diff.sh` の clone の失敗 (5 回に 1 回、exit 128) は、自動 maintenance の疑いに対する防御を入れただけで、既定の閾値での原因は確かめていない。閾値を下げた再現は 201 回中 2 回で同じ文言で落ち、`receive.autogc=false` では 301 回中 0 回だった (canon: facts/git/auto-maintenance-races-local-clone)。一方、既定の閾値のままの `test-target-diff.sh` 13 回では gc の子が 1 回も走らなかった。手を入れた後の `./verify.sh` は 6 回続けて通ったが、元の頻度 (1/5〜1/6) では再発しないことの証拠として弱い。再発したら、`GIT_TRACE` を付けて回し、clone が落ちた時点で背景の gc 以外に objects を消すものが無いか調べる。
