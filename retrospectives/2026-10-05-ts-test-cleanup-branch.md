@@ -77,7 +77,8 @@ cleanup-branch.sh を 1 か所ずつ壊し、sh (`2bdb5d6` の `scripts/test-cle
   - `scripts/test-target-diff.sh` (できれば `scripts/test-target-diff.ts` と 1 つにする)
   - `scripts/test-codex-limits.sh`
   - `verify.sh` の検査の段
-- deno の許可は symlink を解決せずにパスで照合する (deno 2.9.7、macOS で実測)。`Deno.realPath` した一時ディレクトリを使う test は、TMPDIR に絞った許可では落ちる。`test-pre-push.ts`・`test-agent-sync.ts` は symlink を作るので read・write を絞っておらず、この形に揃えても絞れない。
+- deno の許可は symlink を解決せずにパスで照合する (canon: `facts/deno/permission-paths-not-resolved`)。`Deno.realPath` した一時ディレクトリを使う test は、TMPDIR に絞った許可では落ちる。`test-pre-push.ts`・`test-agent-sync.ts` は symlink を作るので read・write を絞っておらず、この形に揃えても絞れない。
 - worktree のパスの文字 (空白・改行など) の検査は無い。cleanup-branch.sh は `git worktree list --porcelain -z` で読むので扱えるはずだが、TMPDIR の定義域で外している。
 - 入口の止まる経路 (引数・TMPDIR の相対・文字) と SIGINT の後始末は手で確かめただけで、検査は無い。
 - 中断で子を待つ仕組みは `scripts/test-agent-sync.ts` には無いまま。
+- cleanup-branch.sh は呼び出し元の `GIT_DIR` などを継承すると先頭に書いているが、この test は子の環境を空から作るので、その経路は回していない (sh でも回していなかった)。hook や `rebase --exec` から呼ばれる形を検査するなら、`GIT_DIR` を別のリポに向けても `-C` の先のリポだけが変わることを見る。
