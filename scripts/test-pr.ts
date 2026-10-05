@@ -43,21 +43,22 @@
  * - 恒久的な失敗: 401 なら auth の行で exit 2。404・301・権限の 403・レート制限でない GraphQL の errors なら error の行で exit 3。
  * - 一時的な失敗 (5xx・429・レート制限・接続の切断) を 2 件まで挟んでも、上の結果は変わらない。
  *
- * 環境: PR_RUNS (性質ごとの試行数、既定 8。1 以上の整数。それ以外は止まる)、FC_SEED (再現する seed。指定するなら整数。それ以外は止まる)。
+ * 環境: PR_RUNS (性質ごとの試行数、既定 8。先頭が 0 でない 10 進の正の整数の綴りの安全な整数。それ以外は止まる)、FC_SEED (再現する seed。指定するなら -2147483648〜2147483647 の整数。それ以外は止まる)。
  */
 import fc from "fast-check";
 
 const script = new URL("../skills/setup-repo/pr-workflow/pr.sh", import.meta.url).pathname;
 
 const runsRaw = Deno.env.get("PR_RUNS");
+// 綴りの検査だけでは、桁の多い数が Number() で Infinity や丸めた値になる。fast-check は numRuns をそのまま使い、seed は 32 ビットの整数に寄せる (canon: facts/fast-check/seed-and-numruns)
 const numRuns = runsRaw === undefined ? 8 : Number(runsRaw);
-if (!Number.isInteger(numRuns) || numRuns < 1) {
-  console.error(`test-pr.ts: PR_RUNS は 1 以上の整数: ${runsRaw ?? ""}`);
+if (runsRaw !== undefined && (!/^[1-9]\d*$/.test(runsRaw) || !Number.isSafeInteger(numRuns))) {
+  console.error(`test-pr.ts: PR_RUNS は 1 以上の整数: ${runsRaw}`);
   Deno.exit(2);
 }
 const seedEnv = Deno.env.get("FC_SEED");
-if (seedEnv !== undefined && !/^-?\d+$/.test(seedEnv)) {
-  console.error(`test-pr.ts: FC_SEED は整数: ${seedEnv}`);
+if (seedEnv !== undefined && (!/^-?\d+$/.test(seedEnv) || (Number(seedEnv) | 0) !== Number(seedEnv))) {
+  console.error(`test-pr.ts: FC_SEED は 32 ビットの符号付き整数: ${seedEnv}`);
   Deno.exit(2);
 }
 

@@ -31,7 +31,8 @@
 - 単一検証コマンドは `./verify.sh`。CI も同じものを回す。含むもの:
   - shellcheck
   - `deno check`
-  - review-perspectives の `target-diff.sh` の fixture (`scripts/test-target-diff.sh`) と model based test (`scripts/test-target-diff.ts`。fast-check)、`hooks/pre-push` の fixture (`scripts/test-pre-push.ts`)
+  - review-perspectives の `target-diff.sh` の、例の fixture と model based test (`scripts/test-target-diff.ts`。fast-check。並行に回す)
+  - `hooks/pre-push` の fixture (`scripts/test-pre-push.ts`)
   - pr-workflow の `cleanup-branch.sh` の fixture (`scripts/test-cleanup-branch.ts`)
   - pr-workflow の `pr.sh` の、fake GitHub を相手にした model based test (`scripts/test-pr.ts`。fast-check)
   - pr-workflow の `codex-limits.sh` の、偽の codex を相手にした fixture (`scripts/test-codex-limits.ts`)
