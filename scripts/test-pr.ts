@@ -43,7 +43,12 @@
  * - 恒久的な失敗: 401 なら auth の行で exit 2。404・301・権限の 403・レート制限でない GraphQL の errors なら error の行で exit 3。
  * - 一時的な失敗 (5xx・429・レート制限・接続の切断) を 2 件まで挟んでも、上の結果は変わらない。
  *
- * 後始末: 一時ディレクトリ (tmpRoot。検査ごとの下位のディレクトリもすべてその下) は、終わったときに消す。SIGINT・SIGTERM では動いている子 (pr.sh を回す bash・curl の検査) に SIGTERM を送り、子が終わってから消して 130・143 で終わる (子が書いている最中に消すと消し残す)。fake の GitHub は自分のプロセスの中にあり、終われば止まる。
+ * 後始末: 一時ディレクトリ (tmpRoot。検査ごとの下位のディレクトリもすべてその下) は、終わったときに消す。fake の GitHub は自分のプロセスの中にあり、終われば止まる。
+ * - 処理するもの: SIGINT・SIGTERM。最初の 1 回だけが中断を始め、終了コードは最初のシグナルで決まる (130・143)。
+ *   - 直接の子 (pr.sh を回す bash・curl の検査) に SIGTERM を送り、終わりを待ってから消す (子が書いている最中に消すと消し残す)。
+ *   - 中断の間に性質が落ちても、通常の経路は失敗を出さず中断の経路の終わりを待つ。
+ * - 処理しないもの: SIGHUP・SIGKILL は後始末なしで終わり、tmpRoot が残る。孫 (bash が起こす curl など) は待たない。
+ * - 消せなかったときは stderr に出し、終了コードは変えない。
  *
  * 環境: PR_RUNS (性質ごとの試行数、既定 8。先頭が 0 でない 10 進の正の整数の綴りの安全な整数。それ以外は止まる)、FC_SEED (再現する seed。指定するなら -2147483648〜2147483647 の整数。それ以外は止まる)。
  */
@@ -66,26 +71,28 @@ if (seedEnv !== undefined && (!/^-?\d+$/.test(seedEnv) || (Number(seedEnv) | 0) 
 
 /** 動いている子。中断では、子が終わるのを待ってから一時ディレクトリを消す。 */
 const children = new Set<Deno.ChildProcess>();
-let interrupted = false;
 function track(child: Deno.ChildProcess): Deno.ChildProcess {
   children.add(child);
   child.status.finally(() => children.delete(child)).catch(() => {});
   return child;
 }
-const interrupt = async (code: number) => {
-  interrupted = true;
-  for (const c of children) {
-    try {
-      c.kill("SIGTERM");
-    } catch {
-      // 既に終わっている
-    }
-  }
-  await Promise.allSettled([...children].map((c) => c.status));
-  Deno.exit(code);
-};
-Deno.addSignalListener("SIGINT", () => interrupt(130));
-Deno.addSignalListener("SIGTERM", () => interrupt(143));
+/** 中断が始まっていれば、その経路 (子の終わりを待って Deno.exit する。解決しない)。終了コードは最初のシグナルが決める。 */
+let interruption: Promise<never> | undefined;
+for (const [signal, code] of [["SIGINT", 130], ["SIGTERM", 143]] as const) {
+  Deno.addSignalListener(signal, () => {
+    interruption ??= (async () => {
+      for (const c of children) {
+        try {
+          c.kill("SIGTERM");
+        } catch {
+          // 既に終わっている
+        }
+      }
+      await Promise.allSettled([...children].map((c) => c.status));
+      Deno.exit(code);
+    })();
+  });
+}
 
 const REPO = "o/r";
 const PR = 1;
@@ -908,7 +915,7 @@ class Proc {
   private pumps: Promise<void>[];
 
   constructor(args: string[], fake: Fake) {
-    if (interrupted) throw new Error("中断した");
+    if (interruption) throw new Error("中断した");
     this.child = track(
       new Deno.Command("bash", {
         args: [script, ...args],
@@ -1515,7 +1522,7 @@ const p5 = fc.asyncProperty(
 
 /** <args> と <env> の組が curl 自身に恒久的な失敗 (URL・プロトコルの誤り) として扱われ、exit 3 と error の行 (stdout、fail 3 から) で止まることを確かめる。生成器は repo の形を変えないので、ここで固定して確かめる */
 async function checkPermanentCurlFailure(what: string, args: string[], env: Record<string, string>) {
-  if (interrupted) throw new Error("中断した");
+  if (interruption) throw new Error("中断した");
   const child = track(
     new Deno.Command("bash", {
       args: [script, ...args],
@@ -1537,7 +1544,7 @@ async function checkPermanentCurlFailure(what: string, args: string[], env: Reco
 
 /** <args> と <env> の組が pr.sh の起動時の GITHUB_API_URL の形の検査で止まり、exit 2 と "pr.sh: GITHUB_API_URL は" で始まる行 (stderr) になることを確かめる。生成器は GITHUB_API_URL の形を変えないので、ここで固定して確かめる */
 async function checkGuardFailure(what: string, args: string[], env: Record<string, string>) {
-  if (interrupted) throw new Error("中断した");
+  if (interruption) throw new Error("中断した");
   const child = track(
     new Deno.Command("bash", {
       args: [script, ...args],
@@ -1719,15 +1726,19 @@ async function checkRequestThenPush() {
 
 // ---- 入口 ----
 
-const tmpRoot = await Deno.makeTempDir({ prefix: "pr-pbt." });
+let tmpRootCreated: string | undefined;
 const cleanup = () => {
+  if (tmpRootCreated === undefined) return;
   try {
-    Deno.removeSync(tmpRoot, { recursive: true });
+    Deno.removeSync(tmpRootCreated, { recursive: true });
   } catch (e) {
-    if (!(e instanceof Deno.errors.NotFound)) throw e;
+    if (!(e instanceof Deno.errors.NotFound)) console.error(`一時ディレクトリを消せなかった: ${tmpRootCreated}: ${e}`);
   }
 };
 addEventListener("unload", cleanup);
+// 同期で作るので、シグナルは作る前か tmpRootCreated を置いた後にしか入らない
+const tmpRoot = Deno.makeTempDirSync({ prefix: "pr-pbt." });
+tmpRootCreated = tmpRoot;
 const curlHome = await Deno.makeTempDir({ dir: tmpRoot });
 await Deno.writeTextFile(`${curlHome}/.curlrc`, 'proxy = "http://127.0.0.1:9"\nconnect-to = "::127.0.0.1:9"\n');
 try {
@@ -1797,6 +1808,10 @@ try {
   await fc.assert(p3, params);
   await fc.assert(p4, params);
   await fc.assert(p5, params);
+} catch (e) {
+  // 中断で SIGTERM を受けた子のせいで性質が落ちても、終了は中断の経路に任せる
+  if (interruption) await interruption;
+  throw e;
 } finally {
   cleanup();
 }
