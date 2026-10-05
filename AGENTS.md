@@ -35,7 +35,7 @@
   - pr-workflow の `cleanup-branch.sh` の fixture (`scripts/test-cleanup-branch.sh`)
   - pr-workflow の `pr.sh` の、fake GitHub を相手にした model based test (`scripts/test-pr.ts`。fast-check)
   - pr-workflow の `codex-limits.sh` の、偽の codex を相手にした fixture (`scripts/test-codex-limits.sh`)
-  - agent-sync の `sync.sh` の、このリポの catalog から作った手元の上流を相手にした fixture (`scripts/test-agent-sync.sh`):
+  - agent-sync の `sync.sh` の、このリポの catalog から作った手元の上流を相手にした fixture (`scripts/test-agent-sync.ts`。検査ごとに下流のリポを分けて並行に回す):
     - OS の sandbox を適用できない環境 (別の sandbox の中など) では、最初の描画が sync.sh の「OS の sandbox を適用できない」で落ちるので、描画を伴う残りの検査を飛ばして理由を stderr に出す。
     - 全部を検査するには、適用できる環境で回す。
     - CI では落とす。
@@ -56,6 +56,20 @@
   - macOS: `sandbox-exec`、`otool`。
   - Linux: `bwrap`、`ldd` (非特権の user namespace が要る)。
   - ネットワーク: `www.schemastore.org` への到達。
+
+## このリポのスクリプトの言語
+
+- このリポの中でだけ動く test と開発用のスクリプトは TypeScript (Deno) で書く。shell で残っているもの (`scripts/test-*.sh`、`verify.sh` の検査の段) は移す対象。
+  - 理由:
+    - 型の検査ができる。
+    - stack trace が読める。
+    - fast-check の生成器が使える。
+    - 並行に書きやすい。
+    - 子プロセスの環境を明示できる。
+    - test の言語が 1 つになり、言語の境界が減る。
+- 次は対象外で、shell のまま:
+  - 他のリポへ配るスクリプト (`skills/` の下と `hooks/pre-push`): agent-sync の `sync.sh`、pr-workflow の `pr.sh`・`cleanup-branch.sh`・`codex-limits.sh`、review-perspectives の `target-diff.sh` など。
+  - deno が入る前に動く環境の準備: `setup-cc-web.sh`・`setup-codex-cloud.sh`。
 
 ## コメントの書き方
 
