@@ -2,7 +2,11 @@
  * test-pr.ts — skills/setup-repo/pr-workflow/pr.sh の model based test。verify.sh から呼ぶ。
  *
  * PR の状態と操作列を生成し、pr.sh が呼ぶ経路だけを持つ fake の GitHub (127.0.0.1 の空きポート) に載せて pr.sh を回し、モデルから計算した出力と照合する。fake の返り方は canon の facts/github/rest-rate-limit-responses、facts/github/pr-comments-retrieval-and-resolved-state、facts/github/check-runs-filter-latest-hides-reruns に合わせる。
- * 時刻は仮想にする: pr.sh の PATH の先頭に偽の date と sleep を置き (bash はどちらも PATH で引く。canon: facts/shell/bash-sleep-date-resolved-via-path)、date +%s は試験が決めた時刻 (T0 から始まり、試験が進めたときだけ進む) を返し、sleep は待たずに返る。pr.sh の周期は fake が受けた要求で数える。
+ * 時刻は仮想にする (canon: facts/shell/bash-sleep-date-resolved-via-path):
+ * - pr.sh の PATH の先頭に偽の date と sleep を置く (bash はどちらも PATH で引く)。
+ * - date +%s は試験が決めた時刻を返す。T0 から始まり、試験が進めたときだけ進む。
+ * - sleep は待たずに返る。引数が非負整数 1 つであることは検査するが、待つ秒数は検査しない。
+ * - pr.sh の周期は fake が受けた要求で数える。
  *
  * モデル (pr.sh の先頭の仕様を集合で書いたもの):
  * - 状態 S は PENDING の review (提出前の下書き) を持たないものとする。提出されたら、その時に S に足す。
@@ -1024,6 +1028,9 @@ cat "$0.now"
 `;
 /** 偽の sleep。待たずに返る (先頭の「時刻は仮想にする」) */
 const SLEEP_STUB = `#!/bin/sh
+case "$*" in
+  ""|*[!0-9]*) echo "偽の sleep: 非負整数 1 つだけを扱う: $*" >&2; exit 2;;
+esac
 `;
 
 /** spec (specOf の形) を返し、返したものを <パス>.log に足していく偽の PR_CODEX_LIMITS を置いて、そのパスを返す。spec が null なら無いパスを返す */
