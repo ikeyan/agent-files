@@ -81,4 +81,4 @@ cleanup-branch.sh を 1 か所ずつ壊し、sh (`2bdb5d6` の `scripts/test-cle
 - worktree のパスの文字 (空白・改行など) の検査は無い。cleanup-branch.sh は `git worktree list --porcelain -z` で読むので扱えるはずだが、TMPDIR の定義域で外している。
 - 入口の止まる経路 (引数・TMPDIR の相対・文字) と SIGINT の後始末は手で確かめただけで、検査は無い。
 - 中断で子を待つ仕組みは `scripts/test-agent-sync.ts` には無いまま。
-- cleanup-branch.sh は呼び出し元の `GIT_DIR` などを継承すると先頭に書いているが、この test は子の環境を空から作るので、その経路は回していない (sh でも回していなかった)。hook や `rebase --exec` から呼ばれる形を検査するなら、`GIT_DIR` を別のリポに向けても `-C` の先のリポだけが変わることを見る。
+- cleanup-branch.sh は呼び出し元の `GIT_DIR` などを継承すると先頭に書いているが、この test は子の環境を空から作るので、その経路は回していない (sh でも回していなかった)。継承した `GIT_DIR` は `git -C` で上書きされず、cleanup-branch.sh の detach・prune・`branch -D` は `GIT_DIR` が指すリポに効く (canon: `facts/git/local-env-vars-and-hook-env`)。hook や `rebase --exec` から呼ばれる形を検査するなら、この挙動を固定するか、cleanup-branch.sh が `GIT_DIR` などを断る契約に改めてから検査する。
