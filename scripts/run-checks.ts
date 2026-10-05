@@ -9,17 +9,13 @@
  *   - 見出しに段の所要時間を出す。
  * - どれかの段が落ちるか、引数が 1 なら exit 1。
  * - 段の子孫 (段が起こした pr.sh なども) を段より長く残さない。段が起動する子は、それぞれ自分のプロセスグループで回る (Deno.Command の detached。deno 2.9.7 の spawn() は子で setsid する) ので、グループごとに止める。
- *   - 子 (グループの先頭) が終われば、グループを空にしてから段を終える: 残ったものに SIGTERM を送り、出力の pipe が閉じるか猶予 (graceMs) が過ぎたら SIGKILL を送る。SIGTERM を無視して pipe を開いたままのものがいても段が終わり、pipe を開いていないものも残らない。
- *   - SIGHUP・SIGINT・SIGTERM (終了コードは下の signals) の 1 回目では、記録している (下の「状態」) グループに SIGTERM を送り、全部のグループを上の手順で空にしてから終わる。段の出力は出さない。グループの状態ごとに:
- *     - 先頭が SIGTERM で終わる:
- *       - 子孫が残らない、または SIGTERM で終わる: pipe が閉じたら SIGKILL を送り (届く先は無い)、終わる。
- *       - 子孫が SIGTERM を無視する: pipe を開いていれば猶予の後に、開いていなければ pipe が閉じたらすぐ SIGKILL を送る。
- *     - 先頭が SIGTERM で終わらない (子孫を待つ、または無視する): 先頭が終わるまで待つ (段の test が一時ディレクトリを片付けられるように)。終わった後は上と同じ。
- *   - 中断が始まった後は、段が新しい子を起動しようとしても起動しない。その段は落ちた扱いになるが、出力は出さず、中断の経路が終わらせる。
- *   - 2 回目のシグナルでは、記録しているグループに SIGKILL を送り、待たずにそのシグナルの終了コードで終わる (1 回目と種類が違えば 2 回目の値。SIGTERM を受けても終わらない先頭がいても抜けられるように)。
- *   - 各グループに SIGTERM は高々 1 回送る。段の子孫の run-checks.ts (test-pre-push.ts が回す verify.sh) は、2 回目を 2 回目のシグナルと読んで段を待たずに終わるため。
- *   - 自分で setsid してグループを抜けた子孫は止めない。それが pipe を開いたままだと、段は終わらない。
- * - 状態: 起動した子のグループを、起動から SIGKILL を送るまで記録する。鍵は子 (pgid は子の pid)。メンバーの残るグループの pgid を OS は他に使わない (POSIX の Process ID Reuse) ので、先頭を回収した後も -pid はそのグループに届く。グループが空になった後 (setsid で抜けた子孫が pipe だけを開いている場合など) に送る最後の SIGKILL は、pid の再利用先に届く余地があるが、猶予が 2 秒なので許容する。
+ *   - グループを空にする操作 (emptyGroup) は 1 つで、グループごとに 1 回だけ行う: グループに SIGTERM を送り、先頭が終わって出力の pipe が閉じるのを猶予 (graceMs) まで待ち、SIGKILL を送って先頭を回収する。SIGTERM を無視するものがいても、猶予の後に終わる。
+ *   - 子 (グループの先頭) が終われば、グループを空にしてから段を終える。SIGTERM を無視して pipe を開いたままのものがいても段が終わり、pipe を開いていないものも残らない。
+ *   - SIGHUP・SIGINT・SIGTERM (終了コードは下の signals): 最初の 1 回が中断を始め、記録している (下の「状態」) 全部のグループを同時に空にしてから、そのシグナルの終了コードで終わる。段の出力は出さない。中断にかかる時間は、猶予と SIGKILL の後の回収までで尽きる。
+ *     - 2 回目以降のシグナルは、種類も間隔もよらず何もしない。段の子孫の run-checks.ts (test-pre-push.ts が回す verify.sh) は、グループへの配送と test-pre-push.ts の転送で 1 回の中断を 2 回受ける。
+ *     - 中断が始まった後は、段が新しい子を起動しようとしても起動しない。その段は落ちた扱いになるが、出力は出さず、中断の経路が終わらせる。
+ *   - 自分で setsid してグループを抜けた子孫は止めない。それが pipe を開いたままだと、段は終わらない (中断は終わる)。
+ * - 状態: 起動した子のグループを、起動から段がその子の結果を受け取るまで記録する。鍵は子 (pgid は子の pid)。メンバーの残るグループの pgid を OS は他に使わない (POSIX の Process ID Reuse) ので、先頭を回収した後も -pid はそのグループに届く。グループが空になった後 (setsid で抜けた子孫が pipe だけを開いている場合など) に送る最後の SIGKILL は、pid の再利用先に届く余地があるが、猶予が 2 秒なので許容する。
  *
  * 入力と環境の定義域:
  * - 引数は 1 つで、verify.sh が先に回した状態を揃える段の結果 (0 か 1)。外れていれば理由を出して落ちる。
@@ -51,8 +47,8 @@ const tmpdir = Deno.env.get("TMPDIR") || "/tmp";
 /** 受けるシグナルと、それで終わるときの終了コード。 */
 const signals: Partial<Record<Deno.Signal, number>> = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
 
-/** 起動した子 (グループの先頭) と、そのグループを空にし終えたら解決するもの。 */
-const groups = new Map<Deno.ChildProcess, Promise<unknown>>();
+/** 動いている段の子ごとの、そのグループを空にする操作 (emptyGroup を 1 回だけ行い、2 回目以降の呼び出しには同じ Promise を返す)。 */
+const groups = new Set<() => Promise<void>>();
 const killGroup = (child: Deno.ChildProcess, signal: Deno.Signal) => {
   try {
     Deno.kill(-child.pid, signal);
@@ -61,40 +57,27 @@ const killGroup = (child: Deno.ChildProcess, signal: Deno.Signal) => {
     if (!(e instanceof Deno.errors.NotFound || e instanceof Deno.errors.PermissionDenied)) throw e;
   }
 };
-const termed = new WeakSet<Deno.ChildProcess>();
-const term = (child: Deno.ChildProcess) => {
-  if (termed.has(child)) return;
-  termed.add(child);
-  killGroup(child, "SIGTERM");
-};
-/** SIGTERM を送ってから SIGKILL を送るまで、グループの出力の pipe が閉じるのを待つ時間。 */
+/** SIGTERM を送ってから SIGKILL を送るまで、先頭の終わりと出力の pipe が閉じるのを待つ時間。段の test が SIGTERM を受けて子を止め、一時ディレクトリを消し終えるまでの実測 (macOS で最大 0.7 秒、test-target-diff.ts) に余裕を持たせた値。 */
 const graceMs = 2000;
-/** 先頭が終わった後のグループを空にする。 */
 async function emptyGroup(child: Deno.ChildProcess, outputs: Promise<unknown>) {
-  term(child);
+  killGroup(child, "SIGTERM");
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    await Promise.race([outputs, new Promise((r) => timer = setTimeout(r, graceMs))]);
+    await Promise.race([Promise.allSettled([child.status, outputs]), new Promise((r) => timer = setTimeout(r, graceMs))]);
   } finally {
     clearTimeout(timer);
     killGroup(child, "SIGKILL");
   }
+  await child.status;
 }
-/** 中断が始まっていれば、その経路 (終了コードを決めて Deno.exit する。解決しない)。 */
+/** 中断が始まっていれば、その経路 (全グループを空にしてから Deno.exit する。解決しない)。 */
 let interruption: Promise<never> | undefined;
-const interrupt = async (code: number): Promise<never> => {
-  groups.forEach((_, c) => term(c));
-  await Promise.all(groups.values());
-  Deno.exit(code);
-};
 for (const [signal, code] of Object.entries(signals) as [Deno.Signal, number][]) {
   Deno.addSignalListener(signal, () => {
-    if (!interruption) {
-      interruption = interrupt(code);
-      return;
-    }
-    groups.forEach((_, c) => killGroup(c, "SIGKILL"));
-    Deno.exit(code);
+    interruption ??= (async () => {
+      await Promise.all([...groups].map((empty) => empty()));
+      Deno.exit(code);
+    })();
   });
 }
 
@@ -127,31 +110,30 @@ async function exec(cmd: string, args: string[], stdin?: Uint8Array): Promise<Ru
     stdout: "piped",
     stderr: "piped",
   }).spawn();
-  const run = collect(child, cmd, stdin);
-  groups.set(child, run.catch(() => {}));
+  const outputs = Promise.all([new Response(child.stdout).bytes(), new Response(child.stderr).bytes()]);
+  // collect が待つまでに reject すると unhandled rejection で runner が落ち、setsid した段が残る
+  outputs.catch(() => {});
+  let emptied: Promise<void> | undefined;
+  const empty = () => emptied ??= emptyGroup(child, outputs);
+  groups.add(empty);
   try {
-    return await run;
+    return await collect(child, cmd, outputs, empty, stdin);
   } finally {
-    groups.delete(child);
+    groups.delete(empty);
   }
 }
 
-/** 子の出力を受け、子が終わったらグループを空にする。投げるときも、先頭を止めて回収し、グループを空にしてから投げる。 */
-async function collect(child: Deno.ChildProcess, cmd: string, stdin?: Uint8Array): Promise<Run> {
-  const outputs = Promise.all([new Response(child.stdout).bytes(), new Response(child.stderr).bytes()]);
-  // emptyGroup の race に渡るまでに reject すると unhandled rejection で runner が落ち、setsid した段が残る
-  outputs.catch(() => {});
+/** 子の出力を受け、子が終わったらグループを空にする。投げるときも、グループを空にしてから投げる。 */
+async function collect(child: Deno.ChildProcess, cmd: string, outputs: Promise<[Uint8Array, Uint8Array]>, empty: () => Promise<void>, stdin?: Uint8Array): Promise<Run> {
   let fed: boolean;
   try {
     fed = !stdin || await feed(child.stdin, stdin);
   } catch (e) {
-    term(child);
-    await child.status;
-    await emptyGroup(child, outputs);
+    await empty();
     throw e;
   }
   const status = await child.status;
-  await emptyGroup(child, outputs);
+  await empty();
   const [out, err] = await outputs;
   if (fed || status.code !== 0) return { code: status.code, out, err };
   return { code: 1, out, err: new Uint8Array([...err, ...enc.encode(`${self}: ${cmd} が stdin を読み終える前に閉じた\n`)]) };

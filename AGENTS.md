@@ -52,7 +52,7 @@
 - `./verify.sh` は状態を揃えてから `scripts/run-checks.ts` を exec し、検査の段を全部並行に回す。全部を待ってから段ごとに決めた順で出す:
   - 通った段: 標準出力を stdout へ、標準エラーを stderr へ。
   - 落ちた段: 両方を stderr へ。落ちた段は全部示す。
-  - SIGHUP・SIGINT・SIGTERM では、段が起こした子孫 (pr.sh など) も止める。1 回目は段が終わるのを待ち、2 回目はすぐ止めて終わる。
+  - SIGHUP・SIGINT・SIGTERM では、段が起こした子孫 (pr.sh など) も止める。最初の 1 回で段に SIGTERM を送り、猶予 (2 秒) の後も残るものは SIGKILL で止めて終わる。2 回目以降は何もしない。
 - 必要なもの:
   - 共通のツール: `shellcheck` (0.11.0 だけ。違えば `./verify.sh` が落ちる)、`deno`、`curl` (7.84 以降)、`jq` (1.6 以降)、`archetect` (3.6.1)。
   - macOS: `sandbox-exec`、`otool`。
