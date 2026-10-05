@@ -63,8 +63,9 @@ const interrupt = async (code: number) => {
 Deno.addSignalListener("SIGINT", () => interrupt(130));
 Deno.addSignalListener("SIGTERM", () => interrupt(143));
 
-// git は worktree のパスを解決して記録し、cleanup-branch.sh はそのパスを使う。パスの文字 (空白・改行など) による違いは検査していないので、検査した形のパスでだけ回す。
-// tmp は解決しないまま使う (deno の --allow-write は symlink を解決せずにパスで照合し、verify.sh は TMPDIR を渡す)
+// tmp は解決しないまま使う: deno の --allow-read・--allow-write は symlink を解決せずにパスの綴りで照合し、verify.sh は TMPDIR の綴りで許可を渡す (canon: facts/deno/permission-paths-not-resolved)。
+// 文字の定義域は resolved で見る: git は worktree のパスを解決して記録し、cleanup-branch.sh は `git worktree list` のパスを `git -C` に渡す (canon: facts/git/worktree-add-records-resolved-path)。
+// deno が許可の照合でパスを解決するようになれば、tmp を解決したパス 1 本にできる。パスの文字 (空白・改行など) による違いは検査していないので、検査した形のパスでだけ回す。
 const resolved = await Deno.realPath(tmp);
 if (!/^\/[A-Za-z0-9._\/-]*$/.test(resolved)) {
   console.error(`${self}: TMPDIR (${tmpdirEnv}) の下に作った一時ディレクトリ ${resolved} が A-Z a-z 0-9 . _ / - だけの形でない。TMPDIR を直す`);
@@ -177,14 +178,14 @@ const current = (wt: string) => git(wt, ["branch", "--show-current"]);
 
 // ---- 消える場合 ----
 
-// work を checkout している worktree (wt。無ければ undefined) は、同じ commit のまま detach され、work は消える。他のブランチは変わらない
-async function expectDeleted(t: Ctx, repo: string, wt?: string) {
-  const sha = await tip(repo, "work");
-  const others = await heads(repo, "work");
-  const r = await cleanupBranch(repo, ["work", sha]);
+// branch (既定は work) を checkout している worktree (wt。無ければ undefined) は、同じ commit のまま detach され、branch は消える。他のブランチは変わらない
+async function expectDeleted(t: Ctx, repo: string, wt?: string, branch = "work") {
+  const sha = await tip(repo, branch);
+  const others = await heads(repo, branch);
+  const r = await cleanupBranch(repo, [branch, sha]);
   if (r.code !== 0) t.fail(`消せなかった (exit ${r.code}) — ${r.err.trimEnd()}`);
-  if (await hasBranch(repo, "work")) t.fail("ブランチが残った");
-  const after = await heads(repo, "work");
+  if (await hasBranch(repo, branch)) t.fail("ブランチが残った");
+  const after = await heads(repo, branch);
   if (after !== others) t.fail(`他のブランチが変わった — ${after}`);
   if (wt === undefined) return;
   if (await git(wt, ["rev-parse", "HEAD"]) !== sha) t.fail(`${wt} の HEAD が元の commit でない`);
@@ -212,6 +213,14 @@ fixture("ディレクトリが消えた登録が checkout", async (t) => {
   await expectDeleted(t, repo);
 });
 
+// 名前に / を含むブランチ
+fixture("linked worktree が checkout (名前に / を含む)", async (t) => {
+  const repo = await newRepo(t.dir);
+  await git(repo, ["branch", "feature/work", "work"]);
+  await git(repo, ["worktree", "add", "-q", `${t.dir}/wt`, "feature/work"]);
+  await expectDeleted(t, repo, `${t.dir}/wt`, "feature/work");
+});
+
 fixture("checkout 無し", async (t) => {
   const repo = await newRepo(t.dir);
   await expectDeleted(t, repo);
@@ -227,15 +236,22 @@ fixture("他のブランチの worktree", async (t) => {
   if (b !== "work-x") t.fail(`work-x を checkout している worktree が変わった (${b || "detach"})`);
 });
 
-// locked な登録は prune されず、detach するディレクトリも無いので落ちる (cleanup-branch.sh の先頭)
+// locked な登録は prune されず、detach するディレクトリも無いので落ちる (cleanup-branch.sh の先頭)。断る理由 (usage・先端の不一致・ブランチが無い) でなく、その登録のディレクトリへ移れないことで落ち、登録は変わらない
 fixture("ディレクトリが消えた locked な登録が checkout", async (t) => {
   const repo = await newRepo(t.dir);
   await git(repo, ["worktree", "add", "-q", "--lock", `${t.dir}/wt`, "work"]);
+  const wt = await Deno.realPath(`${t.dir}/wt`);
   await Deno.remove(`${t.dir}/wt`, { recursive: true });
-  const sha = await tip(repo, "work");
-  const r = await cleanupBranch(repo, ["work", sha]);
+  const [refs, list] = [await heads(repo), await worktreeList(repo)];
+  if (!list.includes(`worktree ${wt}\n`) || !/^locked/m.test(list)) t.fail(`locked な登録が無い — ${list}`);
+  const r = await cleanupBranch(repo, ["work", await tip(repo, "work")]);
   if (r.code === 0) t.fail("落ちなかった");
-  if (!await hasBranch(repo, "work")) t.fail("ブランチが消えた");
+  for (const refusal of ["usage:", "PR の head", "が無い", "40 桁"]) {
+    if (r.err.includes(refusal)) t.fail(`断る理由 (${refusal}) で落ちた — ${r.err.trimEnd()}`);
+  }
+  if (!r.err.includes(`cannot change to '${wt}'`)) t.fail(`locked な登録のディレクトリへ移れずに落ちたのでない — ${r.err.trimEnd()}`);
+  if (await heads(repo) !== refs) t.fail(`ブランチが変わった — ${await heads(repo)}`);
+  if (await worktreeList(repo) !== list) t.fail(`worktree の登録が変わった — ${await worktreeList(repo)}`);
 });
 
 // ---- 断る場合 ----
@@ -248,7 +264,9 @@ const refusals: [string, (good: string, main: string) => string[], string][] = [
   ["大文字の sha", (good) => ["work", good.toUpperCase()], "40 桁の 16 進数でない"],
   ["ref 名", () => ["work", "work"], "40 桁の 16 進数でない"],
   ["sha が空", () => ["work", ""], "40 桁の 16 進数でない"],
+  ["引数が 0 個", () => [], "usage:"],
   ["引数が 1 つ", () => ["work"], "usage:"],
+  ["引数が 3 個", (good) => ["work", good, "extra"], "usage:"],
 ];
 for (const [name, args, reason] of refusals) {
   fixture(`断る: ${name}`, async (t) => {
