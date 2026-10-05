@@ -25,7 +25,7 @@
 ## 良かったこと
 
 - 移す前に codex-limits.sh の性質ごとの変異を作り、古い sh と新しい ts の両方を回してから sh を消した (下の表)。変異の無いものでは両方が通った。
-- 応答しない例を飛ばす一時的な ts は作らず、全ての変異で ts を丸ごと回した。8 変異ずつ並行に回し、全部で約 3 分だった。
+- 全ての変異で ts を丸ごと回した。22 変異 (下の表の M00〜M21) を 8 変異ずつ並行に回し、全部で約 3 分だった。
 - 変異の結果を読み、stderr の 1 行目を関数で照合した失敗の文言が関数のソースを出していたのを、正規表現で照合する形に直した。
 
 ## 直したこと
@@ -42,10 +42,28 @@
 - 偽の codex は、入力が閉じても終わらない (読み終えたら `exec sleep 60`)。sh の偽物は入力が閉じると終わったので、app-server を止めない変異 (M10) を捕えるのは応答しない例だけだった。ts では全ての例が捕える。
 - app-server が残っているかは、pid が 2 秒のうちに消えるかで見る。codex-limits.sh の `kill` は終わりを待たない。
 - 準備の失敗 (要るコマンドが PATH に無い・symlink を作れない) は例外にして、どのコマンドが無いかを出して exit 1 で落ちる。`in` が無いとき (app-server が 1 行も受けていない) と中身が違うときで、失敗の文言を分けた。
-- 引数を渡したとき、TMPDIR が相対パスのとき、TMPDIR に空白を含めたときに、理由を出して exit 1 で落ちることを確かめた。
-- 中断の後始末を実測した。deno への SIGTERM (起動から 2 秒)、deno への SIGINT (2 秒)、プロセスグループへの SIGINT (0.3・2 秒) のどれでも exit 143・130 で終わり、一時ディレクトリも応答しない例の偽の codex (`sleep 60`) も残らなかった。
+- 理由を出して exit 1 で落ちることを確かめた:
+  - 引数を渡したとき
+  - TMPDIR が相対パスのとき
+  - TMPDIR に空白を含めたとき
+- 中断の後始末を実測した。次の送り方のどれでも deno は exit 143 (SIGTERM)・130 (SIGINT) で終わり、一時ディレクトリも応答しない例の偽の codex (`sleep 60`) も残らなかった。
+
+  | 信号 | 送り先 | 送った時刻 (起動から) |
+  | --- | --- | --- |
+  | SIGTERM | deno | 2 秒 |
+  | SIGINT | deno | 2 秒 |
+  | SIGINT | プロセスグループ | 0.3 秒 |
+  | SIGINT | プロセスグループ | 2 秒 |
+
   - deno は子の codex-limits.sh に SIGTERM を送るだけで、偽の codex は codex-limits.sh の EXIT trap が止める。bash は SIGTERM で終わるときも EXIT trap を回す (canon: `facts/shell/bash-exit-trap-runs-on-fatal-signal`。macOS の /bin/bash 3.2.57 と Homebrew の bash 5.3.20 で実測)。
   - job control の無い bash の `&` で起動したものは SIGINT を無視する (bash(1) の SIGNALS) ので、プロセスグループへの SIGINT でも偽の codex はこの経路で止まる。
+
+レビューの指摘を `5a60276` で直した。
+
+- pid と in を読む箇所は、読めない失敗を、無いことと同じ null にしていた。`Deno.errors.NotFound` だけを null にし、他の失敗は投げる。
+- `alive` の 2 秒の poll に、理由 (codex-limits.sh の EXIT trap は終わりを待たない) と外せる条件 (待つようになれば 1 回の `kill -0`) を書いた。
+- 先頭コメントの PATH に要るコマンドの列挙が、コードが呼ぶものと違っていた (`mkdir` の漏れ)。呼ぶ場所ごとに書き直した。HOME の「作らない」も消した。
+- verify.sh の test-codex-limits の段を、同じく read・write を TMPDIR に絞った test-cleanup-branch の隣に移した。直後の行のコメントが test-codex-limits の段のことと読み違えられていた。
 
 ## 変異と結果
 
