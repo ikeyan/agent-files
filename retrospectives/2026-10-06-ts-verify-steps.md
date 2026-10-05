@@ -81,6 +81,14 @@
 - `collect` の出力の Promise に、作った直後に空の catch を付けた。`emptyGroup` の race に渡るまでに reject すると、unhandled rejection で runner が落ち、setsid した段が残りえた。
 - `scripts/verify.ts` が stdin を `ignoreBOM: true` で decode する。既定の `TextDecoder` は、一覧の先頭の名前が U+FEFF で始まると、それを BOM として落とした (リンク切れを持つ U+FEFF で始まる .md を 1 件だけ渡すと、直す前は「ファイルが無い」、直した後はリンク切れを報告した)。
 
+`scripts/test-target-diff.ts` のモデルが CI で落ちた (このブランチで 4 回中 3 回。比較に再実行した main の run 37333232573 でも落ちた)。原因は runner でなく `target-diff.sh` にあった:
+
+- 診断: 落ちたときの log に反例しか出なかった。fast-check は述語の Error を、投げる Error の message でなく cause に付ける (canon: `facts/fast-check/failure-error-cause`)。test は message だけを出していた。`includeErrorInReport: true` で文言を message に足した (`80687d6`)。
+- 再現: Linux の container (ubuntu 24.04、4 CPU) で、CI の seed 4 つを同時に回すと 2 つが落ちた。文言はどちらも `fatal: --unshallow on a complete repository does not make sense`。反例はどちらも、shallow clone に target-diff.sh を 2 つ同時に回す試行 (`clone: "shallow"`・`concurrent: true`)。
+- 原因: `--is-shallow-repository` で判定した後に他方が先に埋めると、こちらの `git fetch --unshallow` は完全なリポジトリで die する。test は fetch の衝突の文言だけをやり直すので、この文言で落ちた。手元の macOS で同じ seed が通った理由は確かめていない。
+- 直したこと: shallow を `--depth=2147483647` で埋める (`75293db`)。`--unshallow` は shallow なら `--depth` にこの値 (`INFINITE_DEPTH`) を渡すのと同じで、shallow でなければ die する (git の `builtin/fetch.c`)。`--depth=2147483647` は完全なリポジトリでも成功し、shallow にしない (git 2.43.0・2.55.0 の Linux と 2.55.0 の macOS で実測)。canon の `facts/git/repository-shapes` の並行実行の行に足した。
+- 直した後: container で 2400 試行が全部通り、CI は run 37351837104 で 4 回続けて通った。
+
 ## 同等性
 
 一時の clone (検査の段の test を stub に替えたもの) で、古い `verify.sh` (`c49cb81`) と新しい形を回した。出力は所要時間と一時ディレクトリのパスを置き換えて比べた。「同じ」は、新しい形で増えたファイル (`scripts/run-checks.ts`) による差 (deno check の `Check scripts/run-checks.ts` の行と、verify.ts に渡すファイルの数の 1 つの差) の他に違いが無いこと。
@@ -151,7 +159,9 @@
   - 自分で setsid してグループを抜けた子孫は止められない。それが pipe を開いたままだと段が終わらない。
   - pipe を開いていない子孫は、pipe が閉じた時点で猶予なしに SIGKILL を受ける。SIGTERM で片付けを始めていても、片付けは終わらない。
 - UTF-8 として不正な名前を Linux の作業ツリーに作って測っていない (macOS では index に入れて測った)。
-- CI (ubuntu) で `scripts/test-target-diff.ts` のモデルが 2 回落ち、どちらも再実行で通った (FC_SEED=1589625654 と -1001087250。反例はどちらも `concurrent: true`。手元の macOS では同じ seed で通る)。このブランチは test-target-diff.ts も target-diff.sh も変えていない。モデルを並行に回すようにした #35 の後の CI 8 回のうちの 2 回で、同時に回す target-diff.sh の競合に関わる非決定の失敗と見られる。落ちたときに反例しか出ず、どの照合で落ちたかが log に残らないので、原因は未調査。
+- CI で `scripts/test-target-diff.ts` のモデルが落ちた反例のうち、full clone のもの (FC_SEED=1589625654) は原因が分かっていない。
+  - Linux の container で、同じ seed を 24 回、反例と同じ形 (full clone・commit の対象・2 つを同時に) を target-diff.sh だけで 400 回回して、どれも落ちなかった。
+  - 落ちたときの log に照合の文言が無かった。今は文言を出す (`80687d6`) ので、再発すれば原因が log に残る。
 
 ## 次の実装セッションへ
 
