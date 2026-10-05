@@ -74,6 +74,12 @@
   - それまでは既定の `TextDecoder` で一覧全体を decode していたので、不正なバイトが U+FFFD になり、index だけにある `bad-\xff.sh` と U+FFFD を含む `bad-�.sh` が同じ名前に潰れ、前者が検査から外れた。
   - NUL で分けた名前ごとに `new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })` で decode する。`ignoreBOM` が無いと、名前ごとの decode が U+FEFF で始まる名前の先頭を落とす (WHATWG Encoding の decode は呼ぶたびに BOM seen を戻す)。落とす名前は、バイトを `\xHH` に escape して出す。
   - macOS の APFS は不正な名前のファイルを作れない (EILSEQ) が、`git update-index --cacheinfo` で index に入れると `ls-files --cached` に出る。canon の `facts/git/path-output-quoting` に足した。
+- `*`・`?` を含む名前を落とす (git の名前についての 4 回目の指摘)。`gitFiles` の受け入れを 1 つの述語 (`accepted`: UTF-8 として正しく、改行と `*`・`?` を含まない) にまとめ、先頭コメントの名前の節をその述語を主に書き直した。
+  - それまでは `./x*.ts` を deno check に渡し、deno 2.9.7 がそれを glob として展開して、git が無視するファイルまで検査した。
+  - 集合は deno v2.9.7 の `libs/config/glob/mod.rs` と実測で決めた。`*`・`?` だけが展開され、エスケープの手段は無い。`[`・`]` は deno が文字どおりに置き換え、`{`・`}` は glob crate が解釈しない (指摘は `[` も展開すると書いていたが、`./a[1].ts` は `a[1].ts` だけを検査した)。canon の `facts/deno/check-file-args-glob` に足した。
+  - deno check に名前を渡さず、引数なしで deno 自身に探させる形は採らなかった。deno.json が無いと .gitignore を見ず、`.claude/worktrees` の下の .ts まで検査するので、exclude の設定 (knob) が要る。
+- `collect` の出力の Promise に、作った直後に空の catch を付けた。`emptyGroup` の race に渡るまでに reject すると、unhandled rejection で runner が落ち、setsid した段が残りえた。
+- `scripts/verify.ts` が stdin を `ignoreBOM: true` で decode する。既定の `TextDecoder` は、一覧の先頭の名前が U+FEFF で始まると、それを BOM として落とした (リンク切れを持つ U+FEFF で始まる .md を 1 件だけ渡すと、直す前は「ファイルが無い」、直した後はリンク切れを報告した)。
 
 ## 同等性
 
@@ -101,6 +107,7 @@
 | 段の先頭が SIGTERM で終わり、子孫が SIGTERM を無視する | 段の stub (listener 無しの deno) の子が `trap "" TERM; exec sleep 300`。SIGTERM・SIGINT・SIGHUP を 1 回 | 測っていない | 143・130・129 で、子が pipe を開いていれば 2.0 秒 (猶予) で、開いていなければ 0.013 秒で終わる。子は残らない。直す前の runner は 0.012 秒で終わり、子が残った |
 | 中断で子孫が受ける SIGTERM の数 | 段の stub (listener 無しの deno) の子が、SIGTERM を受けるたびにファイルに 1 行書いて動き続ける。SIGTERM・SIGINT・SIGHUP を 1 回 | 測っていない | 1 回。子は残らない。直す前の runner は 2 回で、子が残った |
 | SIGTERM を無視して残る孫 (通常の経路) | 段の stub が `trap "" TERM; sleep 300 &` を残して終わる | 測っていない | pipe を開いた孫は 2.8 秒で、開いていない孫 (`>/dev/null 2>&1`) は 1.1 秒で verify.sh が終わる。孫は残らない。直す前の runner は、前者で孫が終わるまで (300 秒) 段が終わらず、後者で孫が残った |
+| glob のメタ文字を含む名前 | `xa.ts`・`x*.ts`・`a[1].ts`・`{b}.ts` を置き、型エラーの `xz-ignored.ts` を `.git/info/exclude` に書く。別に `x*.ts` を `q?.ts` に替える | 測っていない | deno check と verify.ts の段が、理由と `x*.ts` (`q?.ts`) を出して落ちる。`*`・`?` を含む名前を消すと、deno check は `a[1].ts`・`{b}.ts`・`xa.ts` を検査し、`xz-ignored.ts` を検査せずに通る。直す前の runner は `./x*.ts` を `xz-ignored.ts` まで展開し、その型エラーで deno check の段が落ちた |
 | UTF-8 として不正な名前 | index だけに `bad-\xff.sh` を入れ、作業ツリーに U+FFFD を含む `bad-�.sh` と U+FEFF で始まる `bom.sh` を置く | 測っていない | shellcheck と verify.ts の段が、理由と `bad-\xff.sh` を出して落ちる。直す前の runner は 2 つの名前を `bad-�.sh` に潰して verify.ts に 2 回渡し、shellcheck の段は `bad-\xff.sh` を検査せずに進んだ。U+FEFF で始まる名前は、どちらも shellcheck にそのまま渡った (その名前で SC2086 を出した) |
 
 - `scripts/test-pre-push.ts` は、古い形では古い版が、新しい形では直した版が通った。
@@ -144,3 +151,7 @@
   - 自分で setsid してグループを抜けた子孫は止められない。それが pipe を開いたままだと段が終わらない。
   - pipe を開いていない子孫は、pipe が閉じた時点で猶予なしに SIGKILL を受ける。SIGTERM で片付けを始めていても、片付けは終わらない。
 - UTF-8 として不正な名前を Linux の作業ツリーに作って測っていない (macOS では index に入れて測った)。
+
+## 次の実装セッションへ
+
+- git の名前の次元への指摘が 4 回続いた (`-` で始まる・改行・UTF-8 として不正・glob のメタ文字)。外部コマンドへ名前を渡す行は、最初から受け入れる名前の集合を 1 つの述語で決め、外れる名前は理由を出して落とす。値ごとに対処を足すと、次の値で同じ指摘が来る。

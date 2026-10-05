@@ -15,20 +15,23 @@
  *       - 子孫が残らない、または SIGTERM で終わる: pipe が閉じたら SIGKILL を送り (届く先は無い)、終わる。
  *       - 子孫が SIGTERM を無視する: pipe を開いていれば猶予の後に、開いていなければ pipe が閉じたらすぐ SIGKILL を送る。
  *     - 先頭が SIGTERM で終わらない (子孫を待つ、または無視する): 先頭が終わるまで待つ (段の test が一時ディレクトリを片付けられるように)。終わった後は上と同じ。
- *   - 2 回目のシグナルでは、記録しているグループに SIGKILL を送り、待たずに終わる (SIGTERM を受けても終わらない先頭がいても抜けられるように)。
+ *   - 中断が始まった後は、段が新しい子を起動しようとしても起動しない。その段は落ちた扱いになるが、出力は出さず、中断の経路が終わらせる。
+ *   - 2 回目のシグナルでは、記録しているグループに SIGKILL を送り、待たずにそのシグナルの終了コードで終わる (1 回目と種類が違えば 2 回目の値。SIGTERM を受けても終わらない先頭がいても抜けられるように)。
  *   - 各グループに SIGTERM は高々 1 回送る。段の子孫の run-checks.ts (test-pre-push.ts が回す verify.sh) は、2 回目を 2 回目のシグナルと読んで段を待たずに終わるため。
  *   - 自分で setsid してグループを抜けた子孫は止めない。それが pipe を開いたままだと、段は終わらない。
- * - 状態: 起動した子のグループを、起動から SIGKILL を送るまで記録する。鍵は子 (pgid は子の pid)。メンバーの残るグループの pgid を OS は他に使わない (POSIX の Process ID Reuse) ので、先頭を回収した後も -pid はそのグループに届く。
+ * - 状態: 起動した子のグループを、起動から SIGKILL を送るまで記録する。鍵は子 (pgid は子の pid)。メンバーの残るグループの pgid を OS は他に使わない (POSIX の Process ID Reuse) ので、先頭を回収した後も -pid はそのグループに届く。グループが空になった後 (setsid で抜けた子孫が pipe だけを開いている場合など) に送る最後の SIGKILL は、pid の再利用先に届く余地があるが、猶予が 2 秒なので許容する。
  *
  * 入力と環境の定義域:
  * - 引数は 1 つで、verify.sh が先に回した状態を揃える段の結果 (0 か 1)。外れていれば理由を出して落ちる。
  * - cwd はリポのルート。
  * - 読む環境変数は TMPDIR だけ (未設定か空なら /tmp。段の deno の read・write の許可に渡す)。子にはこのプロセスの環境を全部渡す (段の test が読む CI・PATH など)。
- * - git が知っているファイル (canon: facts/git/path-output-quoting、facts/git/untracked-entry-kinds) の名前: UTF-8 として正しく (WHATWG の UTF-8 decoder が fatal で投げない)、改行を含まないものだけを処理する。外れる名前が 1 つでもあれば、理由と名前 (バイトを escape したもの) を出して gitFiles を使う段を落とす。UTF-8 として不正な名前はコマンドへ渡す引数 (文字列) で表せず、改行を含む名前は verify.ts へ渡す 1 行 1 件の入力で割れるため。処理する名前の次元:
- *   - `-` で始まる: shellcheck と deno check へは `./` を前置して渡す。`--` は使わない (shellcheck 0.11.0 は `--` の後を位置引数にするが、deno 2.9.7 の deno check は `--` の後の名前を無視して cwd 全体を検査する。canon: facts/deno/check-double-dash)。verify.ts は名前を行から読むだけなので前置しない。
- *   - 非 ASCII・`"`・`\`・タブ・空白: そのまま渡す。git は -z で quote せずに出し、コマンドへは引数の配列で渡し、verify.ts へは行で渡す。
- *   - U+FEFF で始まる: そのまま渡す (decode で BOM として落とさない)。
- *   - 作業ツリーに無い追跡ファイル・リンク先の無い symlink: git は一覧に出す。コマンドがその名前の無いことを知らせて落ちる (shellcheck は exit 2)。
+ * - git は GIT_DIR・GIT_WORK_TREE・GIT_INDEX_FILE など (canon: facts/git/local-env-vars-and-hook-env) をこのプロセスの環境から継承して読む。ファイルの一覧は、その git が指すリポジトリのもの。
+ * - git が知っているファイル (canon: facts/git/path-output-quoting、facts/git/untracked-entry-kinds) の名前: 次の述語を全部満たすものだけを処理する。外れる名前が 1 つでもあれば、理由と名前 (バイトを escape したもの) を出して gitFiles を使う段を落とす。
+ *   - UTF-8 として正しい (WHATWG の UTF-8 decoder が fatal で投げない)。不正な名前はコマンドへ渡す引数 (文字列) で表せない。
+ *   - 改行を含まない。改行は verify.ts へ渡す 1 行 1 件の入力で名前を割る。
+ *   - `*`・`?` を含まない。deno 2.9.7 の deno check はこれを含む引数を glob として展開し、git が知らないファイルまで検査する。エスケープの手段は無い。`[`・`]`・`{`・`}` は展開しない (canon: facts/deno/check-file-args-glob)。
+ *   満たす名前は変えずに渡す (git は -z で quote せずに出し、名前ごとに decode して U+FEFF で始まる名前も BOM として落とさない)。ただし shellcheck と deno check へは `./` を前置し、先頭に `-` (option)・`!` (deno の除外)・`npm:` など (deno の URL) が来ないようにする。`--` は使わない (deno 2.9.7 の deno check は `--` の後の名前を無視して cwd 全体を検査する。canon: facts/deno/check-double-dash)。
+ *   作業ツリーに無い追跡ファイルとリンク先の無い symlink も git は一覧に出し、コマンドがその名前の無いことを知らせて落ちる (shellcheck は exit 2)。
  * - deno は 2.9.7 で確かめた。detached が子で setsid すること、Deno.kill に負の pid を渡すとプロセスグループに送れること、先に終わった子の stdin への write が Deno.errors.BrokenPipe で投げることに依存する。版は検査しない (CI は v2.x を使う)。外れた版 (detached が setsid しない版など) では、段の孫が止められずに残る。
  * - PATH に shellcheck (0.11.0 だけ。違えばその段が落ちる)・git・deno があること。
  *
@@ -136,6 +139,8 @@ async function exec(cmd: string, args: string[], stdin?: Uint8Array): Promise<Ru
 /** 子の出力を受け、子が終わったらグループを空にする。投げるときも、先頭を止めて回収し、グループを空にしてから投げる。 */
 async function collect(child: Deno.ChildProcess, cmd: string, stdin?: Uint8Array): Promise<Run> {
   const outputs = Promise.all([new Response(child.stdout).bytes(), new Response(child.stderr).bytes()]);
+  // emptyGroup の race に渡るまでに reject すると unhandled rejection で runner が落ち、setsid した段が残る
+  outputs.catch(() => {});
   let fed: boolean;
   try {
     fed = !stdin || await feed(child.stdin, stdin);
@@ -157,6 +162,18 @@ const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const escapeBytes = (b: Uint8Array) =>
   Array.from(b, (c) => c > 0x20 && c < 0x7f && c !== 0x5c ? String.fromCharCode(c) : `\\x${c.toString(16).padStart(2, "0")}`).join("");
 
+/** 先頭の定義域の名前の述語。満たせば decode した名前、外れれば undefined。 */
+function accepted(name: Uint8Array): string | undefined {
+  let f: string;
+  try {
+    f = utf8.decode(name);
+  } catch (e) {
+    if (!(e instanceof TypeError)) throw e;
+    return undefined;
+  }
+  return /[\n*?]/.test(f) ? undefined : f;
+}
+
 /** git が知っているファイル (作業ツリーの未追跡を含み、無視するものを除く) のうち、pathspec に合うもの。-z でなければ git は非 ASCII の名前を quote して出す (canon: facts/git/path-output-quoting)。git が落ちれば out は空 (落ちた段に一覧を出さない)。out は名前を改行で繋いだもの。 */
 async function gitFiles(patterns: string[]): Promise<Run & { files: string[] }> {
   const r = await exec("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard", ...patterns]);
@@ -167,17 +184,12 @@ async function gitFiles(patterns: string[]): Promise<Run & { files: string[] }> 
     const end = r.out.indexOf(0, i);
     const name = r.out.subarray(i, end < 0 ? r.out.length : end);
     i += name.length + 1;
-    let f: string | undefined;
-    try {
-      f = utf8.decode(name);
-    } catch (e) {
-      if (!(e instanceof TypeError)) throw e;
-    }
-    if (f === undefined || f.includes("\n")) rejected.push(name);
+    const f = accepted(name);
+    if (f === undefined) rejected.push(name);
     else files.push(f);
   }
   if (rejected.length) {
-    return { code: 1, out: new Uint8Array(), err: enc.encode(`${self}: UTF-8 として不正な名前 (引数の文字列で表せない) か改行を含む名前 (1 行 1 件の入力で割れる) のファイルがある。名前を変えるか消す: ${rejected.map(escapeBytes).join(" ")}\n`), files: [] };
+    return { code: 1, out: new Uint8Array(), err: enc.encode(`${self}: 処理できない名前のファイルがある (UTF-8 として不正、改行を含む、deno check が glob として展開する * か ? を含む)。名前を変えるか消す: ${rejected.map(escapeBytes).join(" ")}\n`), files: [] };
   }
   return { ...r, out: enc.encode(files.map((f) => `${f}\n`).join("")), files };
 }
