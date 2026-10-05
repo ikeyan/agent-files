@@ -151,7 +151,7 @@
   - 自分で setsid してグループを抜けた子孫は止められない。それが pipe を開いたままだと段が終わらない。
   - pipe を開いていない子孫は、pipe が閉じた時点で猶予なしに SIGKILL を受ける。SIGTERM で片付けを始めていても、片付けは終わらない。
 - UTF-8 として不正な名前を Linux の作業ツリーに作って測っていない (macOS では index に入れて測った)。
-- CI (ubuntu) で `scripts/test-target-diff.ts` のモデルが 1 回落ち、再実行で通った (FC_SEED=1589625654、反例は `concurrent: true`。手元の macOS では同じ seed で通る)。このブランチは test-target-diff.ts も target-diff.sh も変えていない。同時に回す target-diff.sh の競合に関わる非決定の失敗と見られ、原因は未調査。
+- CI (ubuntu) で `scripts/test-target-diff.ts` のモデルが 2 回落ち、どちらも再実行で通った (FC_SEED=1589625654 と -1001087250。反例はどちらも `concurrent: true`。手元の macOS では同じ seed で通る)。このブランチは test-target-diff.ts も target-diff.sh も変えていない。モデルを並行に回すようにした #35 の後の CI 8 回のうちの 2 回で、同時に回す target-diff.sh の競合に関わる非決定の失敗と見られる。落ちたときに反例しか出ず、どの照合で落ちたかが log に残らないので、原因は未調査。
 
 ## 次の実装セッションへ
 
