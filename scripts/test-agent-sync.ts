@@ -22,7 +22,7 @@
  * それ以外では archetect と、macOS では sandbox-exec と otool、Linux では bwrap と ldd が要り、無ければ落ちる。
  * ネットワークは使わない (上流は file システムの上のリポで、sync.sh が取る URL を git の insteadOf で向ける)。
  *
- * 検査は互いに独立に並行で回す。下流のリポは検査ごとに作るか、共有の元 (初回・v2 の後) の写しを使い、sync.sh の同時の起動が同じリポのロックに当たらない。上流は最初に全ての commit を作り、後は読むだけ。
+ * 検査は互いに独立に並行で回す。下流のリポは検査ごとに作るか、共有の元 (初回の後・v2 の後・古いパスを足した後) の写しを使い、sync.sh の同時の起動が同じリポのロックに当たらない。上流は最初に全ての commit を作り、後は読むだけ。
  * 子の環境は PATH と下の baseEnv だけ (clearEnv)。hook や rebase --exec から呼ばれても、呼び出し元の GIT_DIR などを子に渡さない。
  */
 
@@ -38,8 +38,8 @@ const tmp = await Deno.realPath(await Deno.makeTempDir({ dir: Deno.env.get("TMPD
 const cleanup = () => {
   try {
     Deno.removeSync(tmp, { recursive: true });
-  } catch {
-    // 既に無い
+  } catch (e) {
+    if (!(e instanceof Deno.errors.NotFound)) throw e;
   }
 };
 addEventListener("unload", cleanup);
@@ -110,12 +110,13 @@ async function gitRun(dir: string, args: string[], o: { env?: Record<string, str
 }
 const git = async (dir: string, args: string[], o: { env?: Record<string, string>; input?: string } = {}) => (await gitRun(dir, args, o)).out;
 
+/** 使い方の形 (リポの中で `./.agent-sync/sync.sh`) で起動する。Deno は相対パスのコマンドを絶対パスにして起動するので、$0 を保つよう env を通す。 */
 const sync = (d: string, env: Record<string, string> = {}, args: string[] = []) =>
-  exec(`${d}/.agent-sync/sync.sh`, args, { cwd: d, env });
+  exec("env", ["./.agent-sync/sync.sh", ...args], { cwd: d, env });
 
 // ---- ファイル ----
 
-/** `$(...)` と同じく末尾の改行を落とす。 */
+/** 末尾の改行を全て落とす。 */
 const chomp = (s: string) => s.replace(/\n+$/, "");
 
 async function write(path: string, content: string, mode?: number) {
@@ -127,16 +128,19 @@ const append = (path: string, content: string) => Deno.writeTextFile(path, conte
 const readOr = (path: string) => Deno.readTextFile(path).catch(() => "");
 const lstatOr = (path: string) => Deno.lstat(path).catch(() => null);
 const statOr = (path: string) => Deno.stat(path).catch(() => null);
-/** `[ -e ]` (symlink の先を見る)。 */
+/** 在るか (symlink の先を見る)。 */
 const exists = async (path: string) => (await statOr(path)) !== null;
-/** `[ -e ] || [ -L ]`。 */
+/** 在るか (symlink そのものを見る)。 */
 const present = async (path: string) => (await lstatOr(path)) !== null;
-/** `[ -x ]` (所有者として)。 */
+/** 所有者として実行できるか (symlink の先を見る)。 */
 const executable = async (path: string) => ((await statOr(path))?.mode ?? 0) & 0o100 ? true : false;
 const sameBytes = async (a: Uint8Array, path: string) => {
   const b = await Deno.readFile(path).catch(() => null);
   return b !== null && a.length === b.length && a.every((x, i) => x === b[i]);
 };
+
+const sha256 = async (bytes: Uint8Array<ArrayBuffer>) =>
+  Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (b) => b.toString(16).padStart(2, "0")).join("");
 
 /** 1 行 1 件のファイルの行を書き換える (末尾の改行を保つ)。 */
 async function editLines(path: string, f: (lines: string[]) => string[]) {
@@ -146,7 +150,7 @@ async function editLines(path: string, f: (lines: string[]) => string[]) {
   await Deno.writeTextFile(path, out.length ? out.join("\n") + "\n" : "");
 }
 
-/** .git の外の全てのファイルの種類・実行可能か・中身 (find の -type f -o -type l と同じく、ディレクトリは出さず、一覧が取れないディレクトリの下は出さない)。 */
+/** .git の外の全てのファイルの種類・実行可能か・中身 (ディレクトリそのものは出さず、一覧が取れないディレクトリの下は出さない)。 */
 async function snapshot(root: string): Promise<string> {
   const lines: string[] = [];
   const walk = async (rel: string) => {
@@ -162,9 +166,7 @@ async function snapshot(root: string): Promise<string> {
       const st = await Deno.lstat(`${root}${p}`);
       if (st.isSymlink) lines.push(`L .${p} ${await Deno.readLink(`${root}${p}`)}`);
       else if (st.isFile) {
-        const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", await Deno.readFile(`${root}${p}`)));
-        const hex = Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("");
-        lines.push(`${(st.mode ?? 0) & 0o100 ? "x" : "-"} .${p} ${hex}`);
+        lines.push(`${(st.mode ?? 0) & 0o100 ? "x" : "-"} .${p} ${await sha256(await Deno.readFile(`${root}${p}`))}`);
       } else if (st.isDirectory) await walk(p);
     }
   };
@@ -172,7 +174,7 @@ async function snapshot(root: string): Promise<string> {
   return lines.sort().join("\n");
 }
 
-/** `command -v` の代わり。PATH の中の、実行可能な通常のファイル。 */
+/** PATH の中の、その名前の実行可能な通常のファイル。 */
 async function which(name: string): Promise<string | null> {
   for (const d of baseEnv.PATH.split(":")) {
     if (!d) continue;
@@ -223,21 +225,41 @@ async function porcelain(d: string) {
   return await git(d, ["status", "--porcelain"]);
 }
 
+/** ディレクトリの下のファイルのパスと中身。skip が真の相対パス (/ で始まる) の下は見ない。 */
+async function filesUnder(dir: string, skip: (rel: string) => boolean = () => false): Promise<string> {
+  const out: string[] = [];
+  const walk = async (rel: string) => {
+    for await (const e of Deno.readDir(`${dir}${rel}`)) {
+      const p = `${rel}/${e.name}`;
+      if (skip(p)) continue;
+      if (e.isDirectory) await walk(p);
+      else if (e.isFile) out.push(`${p} ${await sha256(await Deno.readFile(`${dir}${p}`))}`);
+    }
+  };
+  await walk("");
+  return out.sort().join("\n");
+}
+
+/** .git の下のうち、落ちた sync.sh が変えてはならないもの (index は git status が書き直し、objects は大きいので見ない)。 */
+const gitDirState = (d: string) => filesUnder(`${d}/.git`, (p) => p === "/index" || p === "/objects");
+
 /** git status の出力と終了状態 (一覧が取れないディレクトリがあっても比べられるよう、落ちても例外にしない)。 */
 const gitState = async (d: string) => {
   const r = await exec("git", ["-C", d, "status", "--porcelain"]);
   return `${r.code}\n${r.out}`;
 };
 
-/** sync.sh が落ち、作業ツリーと git の状態 (index を含む) を変えず、理由を示す。 */
+/** sync.sh が落ち、作業ツリーと git の状態 (index と .git の下を含む) を変えず、理由を示す。 */
 async function expectFail(t: Ctx, name: string, d: string, want: string, env: Record<string, string> = {}): Promise<Run> {
   const before = await snapshot(d);
   const stateBefore = await gitState(d);
+  const gitDirBefore = await gitDirState(d);
   const lock = `${d}/.git/agent-sync.lock`;
   const had = await present(lock);
   const r = await sync(d, env);
   if (r.code === 0) t.fail(`${name}: sync.sh が通った`);
   if (await snapshot(d) !== before) t.fail(`${name}: 落ちた sync.sh が作業ツリーを変えた`);
+  if (await gitDirState(d) !== gitDirBefore) t.fail(`${name}: 落ちた sync.sh が .git の下を変えた`);
   if (await gitState(d) !== stateBefore) t.fail(`${name}: 落ちた sync.sh が git の状態を変えた`);
   const has = await present(lock);
   if (has && !had) t.fail(`${name}: 落ちた sync.sh がロックを残した`);
@@ -416,13 +438,13 @@ for (const d of baseEnv.PATH.split(":")) {
     await Deno.symlink(`${d}/${e.name}`, `${tmp}/shim-nolauncher/${e.name}`).catch(() => {});
   }
 }
-// fetch のときの GIT_TERMINAL_PROMPT を記録する git
+// fetch のときの GIT_TERMINAL_PROMPT を FETCH_PROMPT_LOG に記録する git
 await shim(
   "shim-git",
   "git",
   `#!/bin/sh
 for a in "$@"; do
-  [ "$a" = fetch ] && echo "\${GIT_TERMINAL_PROMPT-unset}" >>"${tmp}/fetch-prompt.txt"
+  [ "$a" = fetch ] && echo "\${GIT_TERMINAL_PROMPT-unset}" >>"$FETCH_PROMPT_LOG"
 done
 exec "${realGit}" "$@"
 `,
@@ -564,8 +586,9 @@ fixture("fetch の GIT_TERMINAL_PROMPT", async (t) => {
   await expectFail(t, "fetch の GIT_TERMINAL_PROMPT", d, "OS の sandbox を適用できない", {
     PATH: `${tmp}/shim-git:${tmp}/shim-sb:${baseEnv.PATH}`,
     GIT_TERMINAL_PROMPT: "1",
+    FETCH_PROMPT_LOG: `${t.dir}/fetch-prompt.txt`,
   });
-  const got = chomp(await readOr(`${tmp}/fetch-prompt.txt`));
+  const got = chomp(await readOr(`${t.dir}/fetch-prompt.txt`));
   if (got !== "0") t.fail(`fetch の GIT_TERMINAL_PROMPT が 0 でない — ${got}`);
   // TMPDIR は絶対パス。相対パスなら、作業ディレクトリが cwd (リポの中) にできる前に落ちる
   await expectFail(t, "TMPDIR が相対パス", d, "絶対パスでない", { TMPDIR: "." });
@@ -816,7 +839,7 @@ fixture("GIT_*", async (t) => {
   const other = `${t.dir}/other`;
   await exec("git", ["init", "-q", "-b", "main", other]);
   await git(other, ["commit", "-q", "--allow-empty", "-m", "other"]);
-  const otherState = async () => (await git(other, ["for-each-ref"])) + (await gitFiles(`${other}/.git`));
+  const otherState = async () => (await git(other, ["for-each-ref"])) + (await filesUnder(`${other}/.git`));
   const otherBefore = await otherState();
   const head = await git(d, ["rev-parse", "HEAD"]);
   for (const v of chomp(await git(tmp, ["rev-parse", "--local-env-vars"])).split("\n")) {
@@ -827,18 +850,6 @@ fixture("GIT_*", async (t) => {
   if (await git(d, ["rev-parse", "HEAD"]) !== head) t.fail("GIT_*: ds の HEAD が変わった");
   await clean(t, "GIT_* の後", d);
 });
-/** .git の下のファイルのパスの一覧 (find -type f)。 */
-async function gitFiles(dir: string): Promise<string> {
-  const out: string[] = [];
-  const walk = async (rel: string) => {
-    for await (const e of Deno.readDir(`${dir}${rel}`)) {
-      if (e.isDirectory) await walk(`${rel}/${e.name}`);
-      else if (e.isFile) out.push(`${rel}/${e.name}`);
-    }
-  };
-  await walk("");
-  return out.sort().join("\n");
-}
 
 // 生成物の同一性 (sync.sh の同一性の表の行ごと)。表は git の状態・HEAD を見ないので、commit 済みの編集も、追跡していない・無視されているも、中身の id だけで決まる。
 const dest = "hooks/pre-push";
@@ -1064,7 +1075,6 @@ if (ciFs) {
   });
 }
 
-// 利用者が生成物を編集して commit した後、上流が同じファイルを置き続けても、一覧から消しても、落ちて何も変えない。
 // 上流が置き先を大文字小文字だけ改名すると、大文字小文字を区別しないファイルシステムでは前回の出力の古い綴りに当たって落ちる。文言は前回の出力だと示し、古い綴りを消せば通る (描画の出力の改名で再現する)。
 if (ciFs) {
   fixture("上流の大文字小文字だけの改名", async (t) => {
@@ -1110,6 +1120,7 @@ fixture("置き先・古いパスの名前が - で始まる", async (t) => {
   if (await exists(`${d}/-dash/-f.txt`) || (await Deno.readTextFile(generated(d))).includes("-dash")) t.fail("古いパスの名前が - で始まる: 消えず generated に残った");
 });
 
+// 利用者が生成物を編集して commit した後、上流が同じファイルを置き続けても、一覧から消しても、落ちて何も変えない。
 fixture("編集を commit した生成物を、上流が置き続ける", async (t) => {
   const d = await copyOf(t, v1Base, "edit");
   await append(`${d}/hooks/pre-push`, "# mine\n");
