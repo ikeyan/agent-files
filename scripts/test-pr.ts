@@ -43,6 +43,8 @@
  * - 恒久的な失敗: 401 なら auth の行で exit 2。404・301・権限の 403・レート制限でない GraphQL の errors なら error の行で exit 3。
  * - 一時的な失敗 (5xx・429・レート制限・接続の切断) を 2 件まで挟んでも、上の結果は変わらない。
  *
+ * 後始末: 一時ディレクトリ (tmpRoot。検査ごとの下位のディレクトリもすべてその下) は、終わったときに消す。SIGINT・SIGTERM では動いている子 (pr.sh を回す bash・curl の検査) に SIGTERM を送り、子が終わってから消して 130・143 で終わる (子が書いている最中に消すと消し残す)。fake の GitHub は自分のプロセスの中にあり、終われば止まる。
+ *
  * 環境: PR_RUNS (性質ごとの試行数、既定 8。先頭が 0 でない 10 進の正の整数の綴りの安全な整数。それ以外は止まる)、FC_SEED (再現する seed。指定するなら -2147483648〜2147483647 の整数。それ以外は止まる)。
  */
 import fc from "fast-check";
@@ -61,6 +63,29 @@ if (seedEnv !== undefined && (!/^-?\d+$/.test(seedEnv) || (Number(seedEnv) | 0) 
   console.error(`test-pr.ts: FC_SEED は 32 ビットの符号付き整数: ${seedEnv}`);
   Deno.exit(2);
 }
+
+/** 動いている子。中断では、子が終わるのを待ってから一時ディレクトリを消す。 */
+const children = new Set<Deno.ChildProcess>();
+let interrupted = false;
+function track(child: Deno.ChildProcess): Deno.ChildProcess {
+  children.add(child);
+  child.status.finally(() => children.delete(child)).catch(() => {});
+  return child;
+}
+const interrupt = async (code: number) => {
+  interrupted = true;
+  for (const c of children) {
+    try {
+      c.kill("SIGTERM");
+    } catch {
+      // 既に終わっている
+    }
+  }
+  await Promise.allSettled([...children].map((c) => c.status));
+  Deno.exit(code);
+};
+Deno.addSignalListener("SIGINT", () => interrupt(130));
+Deno.addSignalListener("SIGTERM", () => interrupt(143));
 
 const REPO = "o/r";
 const PR = 1;
@@ -883,14 +908,17 @@ class Proc {
   private pumps: Promise<void>[];
 
   constructor(args: string[], fake: Fake) {
-    this.child = new Deno.Command("bash", {
-      args: [script, ...args],
-      clearEnv: true,
-      env: prEnv({ GITHUB_API_URL: fake.url, PR_CODEX_LIMITS: fake.limits, PATH: `${fake.bin}:${Deno.env.get("PATH") ?? ""}` }),
-      stdin: "null",
-      stdout: "piped",
-      stderr: "piped",
-    }).spawn();
+    if (interrupted) throw new Error("中断した");
+    this.child = track(
+      new Deno.Command("bash", {
+        args: [script, ...args],
+        clearEnv: true,
+        env: prEnv({ GITHUB_API_URL: fake.url, PR_CODEX_LIMITS: fake.limits, PATH: `${fake.bin}:${Deno.env.get("PATH") ?? ""}` }),
+        stdin: "null",
+        stdout: "piped",
+        stderr: "piped",
+      }).spawn(),
+    );
     fake.procs.push(this);
     const pump = async (s: ReadableStream<Uint8Array>, put: (t: string) => void) => {
       const r = s.pipeThrough(new TextDecoderStream()).getReader();
@@ -1487,14 +1515,18 @@ const p5 = fc.asyncProperty(
 
 /** <args> と <env> の組が curl 自身に恒久的な失敗 (URL・プロトコルの誤り) として扱われ、exit 3 と error の行 (stdout、fail 3 から) で止まることを確かめる。生成器は repo の形を変えないので、ここで固定して確かめる */
 async function checkPermanentCurlFailure(what: string, args: string[], env: Record<string, string>) {
-  const cmd = new Deno.Command("bash", {
-    args: [script, ...args],
-    clearEnv: true,
-    env: prEnv(env),
-    stdout: "piped",
-    stderr: "piped",
-  });
-  const { code, stdout, stderr } = await cmd.output();
+  if (interrupted) throw new Error("中断した");
+  const child = track(
+    new Deno.Command("bash", {
+      args: [script, ...args],
+      clearEnv: true,
+      env: prEnv(env),
+      stdin: "null",
+      stdout: "piped",
+      stderr: "piped",
+    }).spawn(),
+  );
+  const { code, stdout, stderr } = await child.output();
   const out = new TextDecoder().decode(stdout);
   if (code !== 3 || !out.split("\n").some((l) => l.startsWith("error"))) {
     throw new Error(
@@ -1505,14 +1537,18 @@ async function checkPermanentCurlFailure(what: string, args: string[], env: Reco
 
 /** <args> と <env> の組が pr.sh の起動時の GITHUB_API_URL の形の検査で止まり、exit 2 と "pr.sh: GITHUB_API_URL は" で始まる行 (stderr) になることを確かめる。生成器は GITHUB_API_URL の形を変えないので、ここで固定して確かめる */
 async function checkGuardFailure(what: string, args: string[], env: Record<string, string>) {
-  const cmd = new Deno.Command("bash", {
-    args: [script, ...args],
-    clearEnv: true,
-    env: prEnv(env),
-    stdout: "piped",
-    stderr: "piped",
-  });
-  const { code, stdout, stderr } = await cmd.output();
+  if (interrupted) throw new Error("中断した");
+  const child = track(
+    new Deno.Command("bash", {
+      args: [script, ...args],
+      clearEnv: true,
+      env: prEnv(env),
+      stdin: "null",
+      stdout: "piped",
+      stderr: "piped",
+    }).spawn(),
+  );
+  const { code, stdout, stderr } = await child.output();
   const err = new TextDecoder().decode(stderr);
   if (code !== 2 || !err.split("\n").some((l) => l.startsWith("pr.sh: GITHUB_API_URL は"))) {
     throw new Error(
@@ -1684,6 +1720,14 @@ async function checkRequestThenPush() {
 // ---- 入口 ----
 
 const tmpRoot = await Deno.makeTempDir({ prefix: "pr-pbt." });
+const cleanup = () => {
+  try {
+    Deno.removeSync(tmpRoot, { recursive: true });
+  } catch (e) {
+    if (!(e instanceof Deno.errors.NotFound)) throw e;
+  }
+};
+addEventListener("unload", cleanup);
 const curlHome = await Deno.makeTempDir({ dir: tmpRoot });
 await Deno.writeTextFile(`${curlHome}/.curlrc`, 'proxy = "http://127.0.0.1:9"\nconnect-to = "::127.0.0.1:9"\n');
 try {
@@ -1754,5 +1798,5 @@ try {
   await fc.assert(p4, params);
   await fc.assert(p5, params);
 } finally {
-  await Deno.remove(tmpRoot, { recursive: true }).catch(() => {});
+  cleanup();
 }
