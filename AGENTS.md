@@ -48,10 +48,9 @@
     - 無ければ `hooks/pre-push` を写す。
     - `hooks/pre-push` と違えば、上書きせず落ちて置き換えのコマンドを示す。
 - `./verify.sh` は `core.hooksPath` が hook をよそへ向けていれば落ちる (設定は書かない)。
-- `./verify.sh` の検査の順序:
-  - 状態を揃えてから shellcheck を回す。shellcheck が落ちたら残りを回さない。
-  - 残りの検査は並行に回し、落ちた段を全部 stderr に示す。
-  - `scripts/test-pr.ts` も中で並行に回す。同時に回す数は `PR_JOBS` (既定は CPU の数)。
+- `./verify.sh` は状態を揃えてから、検査を全部並行に回す。全部を待ってから段ごとに出す:
+  - 通った段: 標準出力を stdout へ、標準エラーを stderr へ。
+  - 落ちた段: 両方を stderr へ。落ちた段は全部示す。
 - 必要なもの:
   - 共通のツール: `shellcheck` (0.11.0 だけ。違えば `./verify.sh` が落ちる)、`deno`、`curl` (7.84 以降)、`jq`、`archetect` (3.6.1)。
   - macOS: `sandbox-exec`、`otool`。
