@@ -22,10 +22,11 @@ pid=$!
 # app-server が先に終わったときに SIGPIPE で黙って止まらず、下の read の EOF で理由を出す
 trap '' PIPE
 exec 3> "$tmp/in" 4< "$tmp/out"
+# 書けなかったとき bash は printf の write error を stderr に出し、理由の 1 行目を埋もれさせるので捨てる (canon: facts/shell/bash-printf-epipe-with-sigpipe-ignored)。理由は下の read の EOF で出す
 printf '%s\n' \
   '{"id":1,"method":"initialize","params":{"clientInfo":{"name":"pr-workflow","title":"pr-workflow","version":"0"}}}' \
   '{"method":"initialized"}' \
-  '{"id":2,"method":"account/rateLimits/read","params":null}' >&3
+  '{"id":2,"method":"account/rateLimits/read","params":null}' >&3 2> /dev/null
 end=$((SECONDS + 30))
 while :; do
   left=$((end - SECONDS))
