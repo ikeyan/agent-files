@@ -22,8 +22,21 @@
  * それ以外では archetect と、macOS では sandbox-exec と otool、Linux では bwrap と ldd が要り、無ければ落ちる。
  * ネットワークは使わない (上流は file システムの上のリポで、sync.sh が取る URL を git の insteadOf で向ける)。
  *
+ * このスクリプトの入力と環境の定義域:
+ * - 引数は取らない。
+ * - 読む環境変数は PATH・TMPDIR・CI だけ。
+ * - TMPDIR (未設定か空なら /tmp) は絶対パスで、作った一時ディレクトリの解決済みのパスが sync.sh の作業ディレクトリの文字の定義域 (A-Z a-z 0-9 . _ / -) に収まること。作る前 (絶対パス) と作った直後 (文字) に確かめ、外れていれば理由を出して落ちる。
+ * - UTF-8 の locale が無ければ、CI (環境変数 CI が空でない) では落とし、そうでなければ locale の検査を理由と一緒に stderr に出して飛ばす。
+ * - root では、一覧が取れないディレクトリの検査を飛ばす (root は mode 111 のディレクトリも一覧できる)。
+ * - 後始末は、一時ディレクトリの下のディレクトリの mode を 0o755 に戻してから消す (mode 111 の検査の最中に中断されても消せる)。
+ *
+ * 並行の検査が共有する、変わりうる状態。これ以外は検査ごとの `${tmp}/f/<n>` の下に置き、新しく共有するものを足すときも検査ごとのパスにする:
+ * - `${tmp}/outside` と `${tmp}/secret.txt`: probe の部品の検査だけが使う。
+ * - HOME (`${tmp}/home`) と TMPDIR (`${tmp}`): sync.sh は TMPDIR の下に起動ごとに別の作業ディレクトリを作る。
+ * - 上流 (`${tmp}/upstream`)・shim のディレクトリ・`${tmp}/dash.index`: 準備で作った後は読むだけ。dash.index は準備の中でしか使わない。
+ *
  * 検査は互いに独立に並行で回す。下流のリポは検査ごとに作るか、共有の元 (初回の後・v2 の後・古いパスを足した後) の写しを使い、sync.sh の同時の起動が同じリポのロックに当たらない。上流は最初に全ての commit を作り、後は読むだけ。
- * 子の環境は PATH と下の baseEnv だけ (clearEnv)。hook や rebase --exec から呼ばれても、呼び出し元の GIT_DIR などを子に渡さない。
+ * 子の環境は PATH と下の baseEnv だけ (clearEnv。canon: facts/deno/command-spawn)。hook や rebase --exec から呼ばれても、呼び出し元の GIT_DIR などを子に渡さない。
  */
 
 const here = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
@@ -34,8 +47,23 @@ const self = "test-agent-sync.ts";
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
-const tmp = await Deno.realPath(await Deno.makeTempDir({ dir: Deno.env.get("TMPDIR") || "/tmp", prefix: "agent-sync-test." }));
+const tmpdirEnv = Deno.env.get("TMPDIR") ?? "";
+if (tmpdirEnv && !tmpdirEnv.startsWith("/")) {
+  console.error(`${self}: TMPDIR (${tmpdirEnv}) が絶対パスでない`);
+  Deno.exit(1);
+}
+const tmp = await Deno.realPath(await Deno.makeTempDir({ dir: tmpdirEnv || "/tmp", prefix: "agent-sync-test." }));
+/** 検査が mode を落としたディレクトリ (中断で戻されなかったもの) も消せるよう、下のディレクトリの mode を戻す。 */
+const restoreModes = (dir: string) => {
+  try {
+    Deno.chmodSync(dir, 0o755);
+    for (const e of Deno.readDirSync(dir)) if (e.isDirectory) restoreModes(`${dir}/${e.name}`);
+  } catch {
+    // 消えている・開けないものは removeSync が決める
+  }
+};
 const cleanup = () => {
+  restoreModes(tmp);
   try {
     Deno.removeSync(tmp, { recursive: true });
   } catch (e) {
@@ -46,6 +74,12 @@ addEventListener("unload", cleanup);
 addEventListener("unhandledrejection", cleanup);
 Deno.addSignalListener("SIGINT", () => Deno.exit(130));
 Deno.addSignalListener("SIGTERM", () => Deno.exit(143));
+
+// このスクリプトの TMPDIR の定義域 (先頭の宣言)。外れていれば sync.sh の検査が全部、別の理由で落ちる
+if (!/^\/[A-Za-z0-9._\/-]*$/.test(tmp)) {
+  console.error(`${self}: TMPDIR (${tmpdirEnv}) の下に作った一時ディレクトリ ${tmp} が A-Z a-z 0-9 . _ / - だけの形でない (sync.sh の作業ディレクトリの定義域)。TMPDIR を直す`);
+  Deno.exit(1);
+}
 
 const baseEnv: Record<string, string> = {
   PATH: Deno.env.get("PATH") ?? "",
@@ -84,6 +118,7 @@ async function exec(cmd: string, args: string[], o: { cwd?: string; env?: Record
       args,
       cwd: o.cwd,
       env: { ...baseEnv, ...o.env },
+      // canon: facts/deno/command-spawn — cmd は / が無ければ、この env.PATH で引かれる (shim の PATH が効く)。clearEnv は env だけを子に渡す。stdin は毎回明示する
       clearEnv: true,
       stdin: o.input === undefined ? "null" : "piped",
       stdout: "piped",
@@ -110,7 +145,11 @@ async function gitRun(dir: string, args: string[], o: { env?: Record<string, str
 }
 const git = async (dir: string, args: string[], o: { env?: Record<string, string>; input?: string } = {}) => (await gitRun(dir, args, o)).out;
 
-/** 使い方の形 (リポの中で `./.agent-sync/sync.sh`) で起動する。Deno は相対パスのコマンドを絶対パスにして起動するので、$0 を保つよう env を通す。 */
+/**
+ * 使い方の形 (リポの中で `./.agent-sync/sync.sh`) で起動する。Deno.Command は / を含むコマンドを絶対パスにして起動し、$0 が絶対パスになるので、相対のまま渡すよう env を通す (canon: facts/deno/command-spawn)。
+ * 外せる条件: Deno.Command が相対の argv[0] を保てるようになれば、env を通さず直接起動する。
+ * env 自身も env.PATH で引かれるので、PATH を差し替える検査 (shim) は env のあるディレクトリを PATH に残す。
+ */
 const sync = (d: string, env: Record<string, string> = {}, args: string[] = []) =>
   exec("env", ["./.agent-sync/sync.sh", ...args], { cwd: d, env });
 
@@ -489,7 +528,13 @@ const loc = await (async () => {
   const avail = (await exec("locale", ["-a"])).out.split("\n").map((l) => l.toLowerCase());
   return ["en_US.UTF-8", "en_US.utf8", "ja_JP.UTF-8", "ja_JP.utf8", "C.UTF-8", "C.utf8"].find((l) => avail.includes(l.toLowerCase()));
 })();
-if (!loc) console.error(`${self}: UTF-8 の locale が無いので、locale の検査を飛ばした`);
+if (!loc) {
+  if (Deno.env.get("CI")) {
+    console.error(`${self}: CI で UTF-8 の locale (locale -a) が無い`);
+    Deno.exit(1);
+  }
+  console.error(`${self}: UTF-8 の locale が無いので、locale の検査を飛ばした`);
+}
 const locEnv: Record<string, string> = loc ? { LC_ALL: loc, LANG: loc } : {};
 
 // ---- 下流 ----
