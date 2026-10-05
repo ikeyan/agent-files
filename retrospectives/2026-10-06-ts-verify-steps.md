@@ -175,7 +175,6 @@
   - 自分で setsid してグループを抜けた子孫は止められない。それが pipe を開いたままだと段が終わらない。
   - pipe を開いていない子孫は、pipe が閉じた時点で猶予なしに SIGKILL を受ける。SIGTERM で片付けを始めていても、片付けは終わらない。
 - 入れ子の runner は外側と同じ猶予を持つ。内側の段が SIGTERM を無視すると、外側が猶予の後に内側の runner (`scripts/test-pre-push.ts` の段のグループにいる) を SIGKILL するのと、内側が自分の段に SIGKILL を送るのが同じ頃になり、内側の段のグループが残りうる。今の内側の段は SIGTERM で 4〜13 ms で終わるので起きていない。
-- `scripts/test-pr.ts` はシグナルのハンドラを持たず SIGTERM ですぐ死ぬので、中断すると TMPDIR に `pr-pbt.*` の一時ディレクトリが残る (猶予の実測で見つけた。この PR の前から)。
 - UTF-8 として不正な名前を Linux の作業ツリーに作って測っていない (macOS では index に入れて測った)。
 - CI で `scripts/test-target-diff.ts` のモデルが落ちた反例のうち、full clone のもの (FC_SEED=1589625654) は原因が分かっていない。
   - Linux の container で、同じ seed を 24 回、反例と同じ形 (full clone・commit の対象・2 つを同時に) を target-diff.sh だけで 400 回回して、どれも落ちなかった。
