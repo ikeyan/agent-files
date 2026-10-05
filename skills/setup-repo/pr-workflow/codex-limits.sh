@@ -8,7 +8,7 @@
 #   reached<TAB><rateLimitReachedType>
 #   窓そのものが無ければ、その行は <usedPercent> から - になる。
 # 終了コード: 0 成功。1 app-server が error を返した (stderr に message)。2 codex や jq が動かない、または app-server が 30 秒以内に応答しない (途中で終わったときや応答が JSON でないときを含む。stderr に理由)。
-# 事前条件: codex と jq が PATH にあること。環境変数は読まない (codex 自身が読むものはそのまま効く)。
+# 事前条件: codex と jq (1.6 以上) が PATH にあること。環境変数は読まない (codex 自身が読むものはそのまま効く)。
 # 並行実行: 同時に複数回起動しても、各回が独立した一時ディレクトリと app-server プロセスを使うので共有する可変状態は無い。
 set -uo pipefail
 

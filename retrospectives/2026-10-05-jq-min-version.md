@@ -9,6 +9,7 @@
 ## 直したこと
 
 - `cdb9dfb` README の「agent-sync で配る」に jq 1.6 以上と理由を書き、AGENTS.md の「必要なもの」に版を書いた。`scripts/test-codex-limits.ts` の parse error の照合に、下限を 1.7 に上げたときの TODO を置いた。
+- Codex の指摘で、下限を配る側の前提の宣言 (`pr.sh`・`codex-limits.sh` の先頭と `gh.md`) にも書いた。README はこのリポの読者にしか届かず、agent-sync で受け取るリポには配る側の宣言だけが届く。
 
 ## 残っていること
 
