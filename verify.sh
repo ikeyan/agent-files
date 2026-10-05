@@ -2,7 +2,7 @@
 # このリポの単一検証コマンド。引数なしで全部を検査する。
 # 段は 2 種類で、その場で直す状態 (hooks/pre-push の写し (無いときだけ置く)、.claude/skills の symlink のずれ) を先に揃え、検査を後に回す。検査が落ちても状態は揃っているようにするため。VERIFY_READONLY=1 では直さず違反にする (CI 用)。
 # 検査は shellcheck を先に回し、shellcheck が落ちたら残りを回さずに止まる (scripts/test-pre-push.sh が clone で回す verify.sh は、これで自身を呼び返さない)。
-# 残りの検査は互いに独立なので並行に回し、全部を待ってから、段ごとの出力を下に並べた順で、通った段は stdout へ、落ちた段は stderr へ出す。どれかが落ちれば exit 1。
+# 残りの検査は互いに独立なので並行に回し、全部を待ってから、段ごとの出力を下に並べた順で出す。通った段は標準出力を stdout へ、標準エラーを stderr へ、落ちた段は両方を stderr へ出す。どれかが落ちれば exit 1。
 # 事前条件: shellcheck (0.11.0 だけ。.github/workflows/verify.yml が入れる版と同じ)・deno・curl (7.84 以降)・jq・archetect と、macOS では sandbox-exec と otool、Linux では bwrap と ldd が PATH にあること。ネットワーク (www.schemastore.org) に出られること。
 # agent-sync の描画の sandbox を適用できない環境 (別の sandbox の中など) では、test-agent-sync.sh の最初の描画が sync.sh の「OS の sandbox を適用できない」で落ちるので、描画を伴う残りの検査を飛ばして理由を stderr に出す。CI では落とす。全部を検査するのは適用できる環境。
 # git は hook を $GIT_COMMON_DIR/hooks (linked worktree も共有し、checkout で変わらない) から呼ぶので、hooks/pre-push をそこへ写す。core.hooksPath (どの scope でも) が hook をよそへ向けていれば違反にし、設定は書かない。
@@ -125,13 +125,13 @@ trap 'kill -TERM -- ${pids[@]+"${pids[@]/#/-}"} 2>/dev/null || true; rm -rf "$ou
 trap 'exit 130' INT
 trap 'exit 143' TERM
 set -m
-step() { # <名前> <コマンド…>: 裏で回し、標準出力と標準エラーを $out/<番号> に、かかった秒数を $out/<番号>.time に残す
+step() { # <名前> <コマンド…>: 裏で回し、標準出力を $out/<番号>.out に、標準エラーを $out/<番号>.err に、かかった秒数を $out/<番号>.time に残す
   local i=${#names[@]}
   names+=("$1")
   shift
   (
     start=$SECONDS code=0
-    "$@" < /dev/null > "$out/$i" 2>&1 || code=$?
+    "$@" < /dev/null > "$out/$i.out" 2> "$out/$i.err" || code=$?
     echo "$((SECONDS - start))" > "$out/$i.time"
     exit "$code"
   ) &
@@ -153,11 +153,12 @@ for i in "${!names[@]}"; do
   wait "${pids[$i]}" || code=$?
   if [ "$code" = 0 ]; then
     echo "== ${names[$i]}: 通った ($(cat "$out/$i.time") 秒)"
-    cat "$out/$i"
+    cat "$out/$i.out"
+    cat "$out/$i.err" >&2
   else
     {
       echo "== ${names[$i]}: 落ちた (exit $code、$(cat "$out/$i.time" 2>/dev/null || echo ?) 秒)"
-      cat "$out/$i"
+      cat "$out/$i.out" "$out/$i.err"
     } >&2
     status=1
   fi
