@@ -48,6 +48,10 @@
 - `pre-push.local の呼び出し`: 最後の `git rev-parse` の `.catch(() => "")` を外した (git の失敗は例外として理由に出る)。引数と stdin の記録が無いとき (pre-push.local が呼ばれなかったとき) は、「null」でなくそう示す。
 - `core.hooksPath` の最後の失敗に stderr を含めた。`seq` をやめ、検査のディレクトリ番号を `reports.length - 1` から導いた。`install` の JSDoc を消した。
 
+レビューの修正 (`a26a8ad`)。
+
+- 引数を渡されたら理由を出して落ちる。先頭の定義域は引数を取らないと書いていたが、渡されても無視していた。
+
 ## 変異と結果
 
 hooks/pre-push と verify.sh を 1 か所ずつ壊し、sh (`a30f60d` の `scripts/test-pre-push.sh` と verify.sh) と ts (`19d1a31`) を回した。変異は両方の verify.sh の同じ箇所に当てた。「捕えた検査」は ts の最初の失敗 (sh も V07・V15・V17 以外は同じ検査で落ちた)。
@@ -98,3 +102,5 @@ hooks/pre-push と verify.sh を 1 か所ずつ壊し、sh (`a30f60d` の `scrip
 - shellcheck の版が違うときの検査は、deno が無いモジュールを `Module not found "file://…"` と示して exit 1 で終わること (deno 2.9.7 で実測) に依る。deno の文言が変われば、この検査が落ちて知らせる。
 - 中断で子を待つ仕組みは `scripts/test-agent-sync.ts` には無い (mode を戻してから消すだけ)。同じ消し残しが起きうる。
 - locale は baseEnv の `LC_ALL=C` に置いた。他の検査も、子の文言を見る検査を足すときはこの前提に乗る。
+- `core.hooksPath` の検査は local の相対パス (`hooks`) の 1 値だけで、sh から引き継いだ範囲のまま広げていない。verify.sh は全ての scope を見ると書いているが、global・`-c`・絶対パス (`$common/hooks` と一致するもの・しないもの) は回していない。
+- 写す先の pre-push が、現行と同じ中身の実行可能なファイルを指す有効な symlink のとき、verify.sh は `-x` と `cmp` が先を見るので何もしない (通る)。この挙動を通してよいかは決めておらず、検査も無い (この移植では足していない)。
