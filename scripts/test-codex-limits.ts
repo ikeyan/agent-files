@@ -16,7 +16,7 @@
  *
  * このスクリプトの入力と環境の定義域:
  * - 引数は取らない。渡されれば理由を出して落ちる。
- * - 読む環境変数は PATH・TMPDIR だけ。PATH に bash (bash スクリプトの `#!/usr/bin/env bash` が引く)・jq・mktemp・mkfifo・rm (codex-limits.sh)・cat・sleep (偽の codex)・mkdir・ln (codex か jq を欠いた PATH を作る準備)・sleep (alive) があること (codex は要らない)。
+ * - 読む環境変数は PATH・TMPDIR だけ。PATH に bash (bash スクリプトの `#!/usr/bin/env bash` が引く)・jq・mktemp・mkfifo・rm (codex-limits.sh)・cat (偽の codex)・sleep (偽の codex と alive)・mkdir・ln (codex か jq を欠いた PATH を作る準備) があること (codex は要らない)。
  * - TMPDIR (未設定か空なら /tmp) は絶対パスで、作った一時ディレクトリの綴りと解決済みのパスが A-Z a-z 0-9 . _ / - だけであること。外れていれば理由を出して落ちる。
  * - 後始末は、終わったときに一時ディレクトリを消す。SIGINT・SIGTERM では子に SIGTERM を送り、子が終わってから消す (子が書いている最中に消すと消し残す)。codex-limits.sh は SIGTERM でも EXIT trap で app-server を止める (canon: facts/shell/bash-exit-trap-runs-on-fatal-signal)。
  *
