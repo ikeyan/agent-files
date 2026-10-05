@@ -1,4 +1,12 @@
 {
+  "sandbox": {
+    "network": {
+      "allowedDomains": [
+        "dl.deno.land",
+        "www.schemastore.org"
+      ]
+    }
+  },
   "enabledPlugins": {
     "superpowers@claude-plugins-official": true
   }
