@@ -2,6 +2,7 @@
  * test-pr.ts — skills/setup-repo/pr-workflow/pr.sh の model based test。verify.sh から呼ぶ。
  *
  * PR の状態と操作列を生成し、pr.sh が呼ぶ経路だけを持つ fake の GitHub (127.0.0.1 の空きポート) に載せて pr.sh を回し、モデルから計算した出力と照合する。fake の返り方は canon の facts/github/rest-rate-limit-responses、facts/github/pr-comments-retrieval-and-resolved-state、facts/github/check-runs-filter-latest-hides-reruns に合わせる。
+ * 時刻は仮想にする: pr.sh の PATH の先頭に偽の date と sleep を置き、date +%s は試験が決めた時刻 (T0 から始まり、試験が進めたときだけ進む) を返し、sleep は待たずに返る。pr.sh の周期は fake が受けた要求で数える。
  *
  * モデル (pr.sh の先頭の仕様を集合で書いたもの):
  * - 状態 S は PENDING の review (提出前の下書き) を持たないものとする。提出されたら、その時に S に足す。
@@ -24,7 +25,7 @@
  *   - Δ の前半で差が無く L だけがあれば、その周期で L だけを出して終わる (後半は入らない)。
  *   - reset が分かれば、以後の周期で reset を過ぎ、head が同じで、Completed も上限のコメントより新しい "@codex review" も無ければ、@codex review をちょうど 1 件 POST して new codex-review requested <url> を出す。POST の応答が切れたら、代わりにそのコメントが new comment me <url> で出る。POST の後は、bot の応答 (Completed・次の上限のコメント・無し) に関わらずもう POST しない。
  *   - head が変わる・Completed が付く・他人の "@codex review" が先に付く・reset が分からない、のどれかなら POST しない。
- *   - 偽の PR_CODEX_LIMITS は、失敗 (exit 1) か、両窓の usedPercent (0・99・100・150)、resetsAt (遠い未来の固定値か null)、windowDurationMins (300・10080・1440・null) を返す (窓ごと無いこともある)。reset を過ぎる経路 (p4) では resetsAt を実行時の now + 0〜2 秒にする。
+ *   - 偽の PR_CODEX_LIMITS は、失敗 (exit 1) か、両窓の usedPercent (0・99・100・150)、resetsAt (遠い未来の固定値か null)、windowDurationMins (300・10080・1440・null) を返す (窓ごと無いこともある)。reset を過ぎる経路 (p4) では resetsAt を偽の date の now + 0〜2 秒にする。
  * - 始まらないレビュー (p5。pr.sh の先頭の宣言): 時刻を偽の date で止めて進め、操作 (push で Codex が始めない・始める・上限のコメント・他人の "@codex review"・時刻を 100〜300 秒進める・次の周期までに続けて入る操作の組) ごとに、pr.sh の周期を状態 (前の周期の S、codex-resume、codex-wait) から 1 つずつ計算する。
  *   - PR が open で Codex の summary があり、どの summary の Commit 列も head の接頭辞でない間、head ごとの起点から 300 秒で @codex review を 1 回だけ POST して new codex-review requested <url> を、さらに 300 秒で new codex-review not-started <head> を 1 回だけ出す。POST の応答が切れたら、そのコメントは new comment me <url> で出て、その周期は記録されないので、Codex が始めていなければ次の周期でもう 1 件 POST する。
  *   - draft の PR では見ない (何も出さず POST しない)。
@@ -38,36 +39,23 @@
  * - 恒久的な失敗: 401 なら auth の行で exit 2。404・301・権限の 403・レート制限でない GraphQL の errors なら error の行で exit 3。
  * - 一時的な失敗 (5xx・429・レート制限・接続の切断) を 2 件まで挟んでも、上の結果は変わらない。
  *
- * 回し方: 固定の検査と性質の各試行を互いに独立な単位として、同時に PR_JOBS 件まで回す。単位ごとに fake (空きポート) と一時ディレクトリ (状態・偽の date・偽の PR_CODEX_LIMITS) を別に持ち、単位の間で書くものを共有しない (curl の設定ファイルは読むだけ)。
- * 性質の i 件目の試行は、fast-check の seed と path "i" で取り出す。どの性質も同じ seed を使い、同じ seed なら順に回したときと同じ例になる。落ちた単位は全部を示して exit 1。
- *
- * 環境:
- * - PR_RUNS: 性質ごとの試行数。既定 8。1 以上の整数。それ以外は止まる。
- * - FC_SEED: 再現する seed。整数。それ以外は止まる。無ければ起動ごとに決め、性質が落ちたときに示す。
- * - PR_JOBS: 同時に回す単位の数。既定は navigator.hardwareConcurrency。1 以上の整数。それ以外は止まる。
+ * 環境: PR_RUNS (性質ごとの試行数、既定 8。1 以上の整数。それ以外は止まる)、FC_SEED (再現する seed。指定するなら整数。それ以外は止まる)。
  */
 import fc from "fast-check";
 
 const script = new URL("../skills/setup-repo/pr-workflow/pr.sh", import.meta.url).pathname;
 
-function positiveEnv(name: string, fallback: number): number {
-  const raw = Deno.env.get(name);
-  const n = raw === undefined ? fallback : Number(raw);
-  if (!Number.isInteger(n) || n < 1) {
-    console.error(`test-pr.ts: ${name} は 1 以上の整数: ${raw ?? ""}`);
-    Deno.exit(2);
-  }
-  return n;
+const runsRaw = Deno.env.get("PR_RUNS");
+const numRuns = runsRaw === undefined ? 8 : Number(runsRaw);
+if (!Number.isInteger(numRuns) || numRuns < 1) {
+  console.error(`test-pr.ts: PR_RUNS は 1 以上の整数: ${runsRaw ?? ""}`);
+  Deno.exit(2);
 }
-const numRuns = positiveEnv("PR_RUNS", 8);
-const jobs = positiveEnv("PR_JOBS", navigator.hardwareConcurrency);
 const seedEnv = Deno.env.get("FC_SEED");
 if (seedEnv !== undefined && !/^-?\d+$/.test(seedEnv)) {
   console.error(`test-pr.ts: FC_SEED は整数: ${seedEnv}`);
   Deno.exit(2);
 }
-// fast-check が seed を省いたときと同じ決め方
-const seed = seedEnv === undefined ? Date.now() ^ (Math.random() * 0x100000000) : Number(seedEnv);
 
 const REPO = "o/r";
 const PR = 1;
@@ -81,6 +69,7 @@ const REQUEST = "@codex review";
 const LIMITS_FAILED = "fake limits: failed";
 const FAILING = ["failure", "timed_out", "cancelled", "action_required", "startup_failure"];
 const CASE_SECONDS = 20;
+const T0 = 1_900_000_000;
 
 // ---- PR の状態 ----
 
@@ -664,13 +653,13 @@ class Fake {
   log: string[] = [];
   procs: Proc[] = [];
   posts: { id: number; at: number; head: string }[] = []; // 受けた issue comment の POST と、受けた時刻 (epoch 秒。偽の date の時刻)
-  now: number | null = null; // 偽の date が止めている時刻。null なら実際の時刻
+  now = T0; // 偽の date が返す時刻
   dropPosts = 0; // issue comment の POST を受けてから応答を切る残りの回数
   reply: Reply = "none"; // POST された "@codex review" への Codex の応え
   dropped: string[] = []; // 応答を切った POST の、そのときの head
   private server: Deno.HttpServer<Deno.NetAddr>;
 
-  /** limits: pr.sh に PR_CODEX_LIMITS として渡すパス。bin: 偽の date を置いたディレクトリ (pr.sh の PATH の先頭) */
+  /** limits: pr.sh に PR_CODEX_LIMITS として渡すパス。bin: 偽の date と sleep を置いたディレクトリ (pr.sh の PATH の先頭) */
   constructor(world: World, private skip: number, private failures: Transient[], private permanent: Permanent | null, readonly limits: string, readonly bin: string) {
     this.world = world;
     this.server = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, (req) => this.handle(req));
@@ -680,7 +669,7 @@ class Fake {
     return `http://127.0.0.1:${this.server.addr.port}`;
   }
 
-  /** 偽の date +%s が返す時刻を epoch 秒の t に止める (読みかけの date が空のファイルを読まないように、置き換えで書く) */
+  /** 偽の date +%s が返す時刻を epoch 秒の t にする (読みかけの date が空のファイルを読まないように、置き換えで書く) */
   async setNow(t: number) {
     await Deno.writeTextFile(`${this.bin}/date.now.new`, `${t}\n`);
     await Deno.rename(`${this.bin}/date.now.new`, `${this.bin}/date.now`);
@@ -772,7 +761,7 @@ class Fake {
       const c = { id: idOf(n), login: ME, body: JSON.parse(body).body, updated_at: timeOf(n) };
       w.issue.push(c);
       if (c.body.startsWith(REQUEST)) react(w, this.reply);
-      this.posts.push({ id: c.id, at: this.now ?? Date.now() / 1000, head: w.pr.head });
+      this.posts.push({ id: c.id, at: this.now, head: w.pr.head });
       return json(201, { id: c.id, user: { login: ME }, body: c.body, updated_at: c.updated_at, html_url: urls.issue(c.id) });
     }
     if (method === "POST" && (m = rest.match(new RegExp(`^pulls/${PR}/comments/(\\d+)/replies$`)))) {
@@ -922,7 +911,7 @@ class Proc {
     return s.code;
   }
 
-  /** 待ち続けている pr.sh を止める (sleep の子が標準出力を持ち続けるので、読むのもやめる) */
+  /** 待ち続けている pr.sh を止める (curl などの子が標準出力を持ち続けることがあるので、読むのもやめる) */
   kill() {
     if (this.code === null) this.child.kill("SIGKILL");
     for (const r of this.readers) r.cancel().catch(() => {});
@@ -1028,9 +1017,13 @@ if [ "$(cat "$0.spec")" = fail ]; then echo fail >> "$0.log"; echo "${LIMITS_FAI
 awk -F'\\t' -v OFS='\\t' -v now="$(date +%s)" '$3 ~ /^[+]/ { $3 = now + substr($3, 2) } { print }' "$0.spec" | tee -a "$0.log"
 `;
 
-/** 偽の date。<自身のパス>.now があれば date +%s にその中身を返し、それ以外は PATH の残りの date に渡す (PATH の先頭に置く) */
+/** 偽の date。date +%s に <自身のパス>.now の中身 (Fake.setNow が書く) を返す。pr.sh と偽の PR_CODEX_LIMITS は date を +%s でだけ呼ぶ */
 const DATE_STUB = `#!/bin/sh
-if [ "$#" = 1 ] && [ "$1" = +%s ] && [ -f "$0.now" ]; then cat "$0.now"; else PATH=\${PATH#*:} exec date "$@"; fi
+[ "$*" = +%s ] || { echo "偽の date: +%s だけを扱う: $*" >&2; exit 2; }
+cat "$0.now"
+`;
+/** 偽の sleep。待たずに返る (先頭の「時刻は仮想にする」) */
+const SLEEP_STUB = `#!/bin/sh
 `;
 
 /** spec (specOf の形) を返し、返したものを <パス>.log に足していく偽の PR_CODEX_LIMITS を置いて、そのパスを返す。spec が null なら無いパスを返す */
@@ -1051,8 +1044,11 @@ async function withFake(
   body: (fake: Fake, dir: string) => Promise<void>,
 ) {
   const bin = await Deno.makeTempDir({ dir: tmpRoot });
-  await Deno.writeTextFile(`${bin}/date`, DATE_STUB);
-  await Deno.chmod(`${bin}/date`, 0o755);
+  for (const [name, stub] of [["date", DATE_STUB], ["sleep", SLEEP_STUB]]) {
+    await Deno.writeTextFile(`${bin}/${name}`, stub);
+    await Deno.chmod(`${bin}/${name}`, 0o755);
+  }
+  await Deno.writeTextFile(`${bin}/date.now`, `${T0}\n`);
   const fake = new Fake(w, failures.skip, structuredClone(failures.list), permanent, await limitsStub(limits), bin);
   const dir = await Deno.makeTempDir({ dir: tmpRoot });
   try {
@@ -1214,9 +1210,8 @@ const p4 = fc.asyncProperty(
     addComment(w0, { kind: "limit", login: BOT });
     await withFake(structuredClone(w0), failures, null, limits, async (fake, dir) => {
       const deadline = Date.now() + CASE_SECONDS * 1000;
-      /** 起動して終わるのを待ち、出力を want (期待する行か、照合の成否) で確かめる */
-      const exits = async (what: string, want: (got: string[]) => Promise<string[] | boolean> | string[] | boolean) => {
-        const proc = watch(fake, dir);
+      /** proc が終わるのを待ち、出力を want (期待する行か、照合の成否) で確かめる */
+      const exited = async (proc: Proc, what: string, want: (got: string[]) => Promise<string[] | boolean> | string[] | boolean) => {
         const code = await proc.exit(deadline);
         if (code !== 0) throw new Error(`${what}: exit ${code}\n${proc.show()}`);
         const got = proc.out.split("\n").slice(0, -1);
@@ -1224,6 +1219,7 @@ const p4 = fc.asyncProperty(
         if (w === false) throw new Error(`${what}: 出力が違う\n${proc.show()}`);
         if (w !== true) expectLines(got, w, what, proc);
       };
+      const exits = (what: string, want: (got: string[]) => Promise<string[] | boolean> | string[] | boolean) => exited(watch(fake, dir), what, want);
       await exits("初回", async () => expectInitial(w0, await fake.when()));
       const reset = resetOf((await fake.lastLimits()) ?? "fail");
       const s1 = structuredClone(fake.world);
@@ -1234,7 +1230,7 @@ const p4 = fc.asyncProperty(
       else if (before === "close") w.pr.state = "closed";
       if (before !== "none" || reset === null) {
         // 要求を出すはずの周期に before が重なるように、reset を過ぎてから起動し直す
-        if (reset !== null) await new Promise((r) => setTimeout(r, Math.max(0, (reset.at + 1) * 1000 - Date.now())));
+        if (reset !== null) await fake.setNow(reset.at);
         const d = expectDelta(s1, w);
         if (d.length > 0) await exits(`${before} の後`, () => d);
         if (w.pr.state === "open") {
@@ -1245,7 +1241,13 @@ const p4 = fc.asyncProperty(
         expectNoPost(fake, `${before} の後`);
         return;
       }
-      await exits("reset の後", (got) => {
+      // reset の前の周期では POST せず、時刻が reset に達した周期で POST する
+      const proc = watch(fake, dir);
+      if (reset.at > fake.now) {
+        await expectQuiet(fake, proc, deadline, 2, `reset (${reset.at}) の前`);
+        await fake.setNow(reset.at);
+      }
+      await exited(proc, "reset の後", (got) => {
         if (fake.posts.length !== 1) throw new Error(`reset の後: POST が ${fake.posts.length} 件`);
         if (fake.posts[0].at < reset.at) throw new Error(`reset (${reset.at}) の前 (${fake.posts[0].at}) に POST した`);
         const url = urls.issue(fake.posts[0].id);
@@ -1383,10 +1385,9 @@ const stallOpArb: fc.Arbitrary<StallOp> = fc.oneof(
 const stallLimitsArb = fc.constantFrom<number | string | null>("fail", "fail", FAR[0], FAR[0], "+0", "+150", "+300").map((r) =>
   r === "fail" ? "fail" : specOf([{ used: 100, reset: r, mins: 300 }, null])
 );
-const T0 = 1_900_000_000;
-
 type StallInit = "none" | "running" | "completed" | "old";
 type Failures = { skip: number; list: Transient[] };
+const NO_FAILURES: Failures = { skip: 0, list: [] };
 
 /**
  * 時刻を偽の date で止め、操作ごとに pr.sh を周期ごとに進めて、出す行を stallCycle と照合する。出して終わったら同じ状態のディレクトリで起動し直す。
@@ -1398,7 +1399,6 @@ async function runStall(spec: WorldSpec, init: StallInit, ops: StallOp[], limits
   if (init === "old") w.pr.head = shaOf(tick(w));
   const m: StallModel = { prev: null, now: T0, limits, reply, resume: null, wait: null };
   await withFake(structuredClone(w), failures, null, limits, async (fake, dir) => {
-    await fake.setNow(T0);
     // 一時的な失敗 (failuresArb) は最初の数周期にしか当たらず POST に届かないので、POST の応答が切れる経路はここで入れる
     if (dropPost) fake.dropPosts = 1;
     fake.reply = reply;
@@ -1477,8 +1477,6 @@ const p5 = fc.asyncProperty(
 
 // ---- 固定の検査 ----
 
-type Check = () => Promise<void>;
-
 /** <args> と <env> の組が curl 自身に恒久的な失敗 (URL・プロトコルの誤り) として扱われ、exit 3 と error の行 (stdout、fail 3 から) で止まることを確かめる。生成器は repo の形を変えないので、ここで固定して確かめる */
 async function checkPermanentCurlFailure(what: string, args: string[], env: Record<string, string>) {
   const cmd = new Deno.Command("bash", {
@@ -1549,7 +1547,7 @@ async function checkLimitsLine(what: string, spec: string | null, want: string |
   w.pr.head = shaOf(tick(w));
   addComment(w, { kind: "limit", login: BOT });
   const prefix = `open codex-usage-limit ${urls.issue(w.issue[0].id)} `;
-  await withFake(w, { skip: 0, list: [] }, null, spec, async (fake, dir) => {
+  await withFake(w, NO_FAILURES, null, spec, async (fake, dir) => {
     const proc = watch(fake, dir);
     const code = await proc.exit(Date.now() + CASE_SECONDS * 1000);
     const line = proc.out.replace(/\n$/, "");
@@ -1578,33 +1576,30 @@ const emptySpec: WorldSpec = {
     statuses: [],
     bulk: { issue: 0, threads: 0, reviews: 0, checks: 0, statuses: 0 },
 };
-function checkPushDuringLimit(): Check[] {
+async function checkPushDuringLimit() {
   const far = specOf([{ used: 100, reset: FAR[0], mins: 300 }, null]);
   const ops: StallOp[] = [{ op: "limit", push: true }, { op: "push", summary: "stale" }, { op: "advance", secs: 300 }, { op: "advance", secs: 300 }];
-  const none = { skip: 0, list: [] };
-  return [far, "fail"].flatMap((limits) => (["none", "limit"] as const).map((reply) => () => runStall(emptySpec, "completed", ops, limits, none, false, reply)));
+  for (const limits of [far, "fail"]) {
+    for (const reply of ["none", "limit"] as const) await runStall(emptySpec, "completed", ops, limits, NO_FAILURES, false, reply);
+  }
 }
 
 /**
  * 上限明けの POST に Codex が上限のコメントで応え、読んだ窓の reset が既に過ぎていても、同じ head へ POST を繰り返さず、300 秒で通知することを確かめる。
  * draft の間は始まらない head でも POST も通知もせず、ready にしてから計時することを確かめる。生成器が操作をこの順に並べるかは確率に任せるので、ここで固定して確かめる
  */
-function checkResumeOnceAndDraft(): Check[] {
-  const none = { skip: 0, list: [] };
+async function checkResumeOnceAndDraft() {
   const now = specOf([{ used: 100, reset: "+0", mins: 300 }, null]);
-  return [
-    () => runStall(emptySpec, "old", [{ op: "limit", push: false }, { op: "advance", secs: 300 }, { op: "advance", secs: 300 }], now, none, false, "limit"),
-    () =>
-      runStall(
-        { ...emptySpec, draft: true },
-        "old",
-        [{ op: "advance", secs: 300 }, { op: "advance", secs: 300 }, { op: "ready", draft: false }, { op: "advance", secs: 300 }],
-        "fail",
-        none,
-        false,
-        "none",
-      ),
-  ];
+  await runStall(emptySpec, "old", [{ op: "limit", push: false }, { op: "advance", secs: 300 }, { op: "advance", secs: 300 }], now, NO_FAILURES, false, "limit");
+  await runStall(
+    { ...emptySpec, draft: true },
+    "old",
+    [{ op: "advance", secs: 300 }, { op: "advance", secs: 300 }, { op: "ready", draft: false }, { op: "advance", secs: 300 }],
+    "fail",
+    NO_FAILURES,
+    false,
+    "none",
+  );
 }
 
 /**
@@ -1620,7 +1615,7 @@ async function checkEqualSecondLimit(limitFirst: boolean) {
   w.issue.push(...(limitFirst ? [limit, summary] : [summary, limit]));
   if (limitLines(null, w, "").length !== 1) throw new Error(`同じ秒の上限 (limitFirst=${limitFirst}): モデルが上限を 1 件と数えない`);
   const limits = specOf([{ used: 100, reset: "+1", mins: 300 }, null]);
-  await withFake(w, { skip: 0, list: [] }, null, limits, async (fake, dir) => {
+  await withFake(w, NO_FAILURES, null, limits, async (fake, dir) => {
     const deadline = Date.now() + CASE_SECONDS * 1000;
     const proc = watch(fake, dir);
     const code = await proc.exit(deadline);
@@ -1628,8 +1623,9 @@ async function checkEqualSecondLimit(limitFirst: boolean) {
     expectLines(proc.out.split("\n").slice(0, -1), expectInitial(w, await fake.when()), `同じ秒の上限 (limitFirst=${limitFirst})`, proc);
     const reset = resetOf((await fake.lastLimits()) ?? "fail");
     if (reset === null) throw new Error(`同じ秒の上限 (limitFirst=${limitFirst}): reset が分からない`);
-    await new Promise((r) => setTimeout(r, Math.max(0, (reset.at + 1) * 1000 - Date.now())));
     const proc2 = watch(fake, dir);
+    await expectQuiet(fake, proc2, deadline, 2, `同じ秒の上限 (limitFirst=${limitFirst}): reset の前`);
+    await fake.setNow(reset.at);
     const code2 = await proc2.exit(deadline);
     if (code2 !== 0) throw new Error(`同じ秒の上限 (limitFirst=${limitFirst}): reset の後 exit ${code2}\n${proc2.show()}`);
     if (fake.posts.length !== 1) throw new Error(`同じ秒の上限 (limitFirst=${limitFirst}): POST が ${fake.posts.length} 件\n${proc2.show()}`);
@@ -1641,9 +1637,11 @@ async function checkEqualSecondLimit(limitFirst: boolean) {
  * 上限のコメントの後 (reset が遠い codex-resume か、reset が分からず codex-wait の計時中) に 300 秒の手前で PR を閉じると、その周期は閉じた PR の行だけを出して POST せず、
  * 状態から codex-resume・codex-wait が消えることを確かめる (runStall が閉じた後に確かめる)。生成器が閉じる前に計時を 299 秒まで進めるかは確率に任せるので、ここで固定して確かめる
  */
-function checkClose(): Check[] {
+async function checkClose() {
   const ops: StallOp[] = [{ op: "limit", push: false }, { op: "advance", secs: 299 }, { op: "close", merged: false }, { op: "advance", secs: 1 }, { op: "restart" }];
-  return [specOf([{ used: 100, reset: FAR[0], mins: 300 }, null]), "fail"].map((limits) => () => runStall(emptySpec, "old", ops, limits, { skip: 0, list: [] }, false, "none"));
+  for (const limits of [specOf([{ used: 100, reset: FAR[0], mins: 300 }, null]), "fail"]) {
+    await runStall(emptySpec, "old", ops, limits, NO_FAILURES, false, "none");
+  }
 }
 
 /**
@@ -1651,19 +1649,16 @@ function checkClose(): Check[] {
  * 2 回目の POST をせず、ready (reopen・出し直し) から 300 秒で not-started を 1 回だけ出すことを確かめる (Codex 指摘: PR #22 review comment r4166229371)。
  * 上限明けに POST した head を閉じて reopen し、同じ head に上限のコメントが付いても、上限明けの POST を繰り返さないことも確かめる。生成器が操作をこの順に並べるかは確率に任せるので、ここで固定して確かめる
  */
-function checkSuspendKeepsRecord(): Check[] {
-  const none = { skip: 0, list: [] };
+async function checkSuspendKeepsRecord() {
   const later: StallOp[] = [{ op: "advance", secs: 300 }, { op: "advance", secs: 300 }];
   const away: StallOp[][] = [
     [{ op: "ready", draft: true }, { op: "ready", draft: false }],
     [{ op: "close", merged: false }, { op: "reopen" }],
     [{ op: "dropSummary" }, { op: "comment", c: { kind: "summary", login: BOT, completed: true, commit: "old", len: 7 } }],
   ];
+  for (const ops of away) await runStall(emptySpec, "old", [{ op: "advance", secs: 300 }, ...ops, ...later], "fail", NO_FAILURES, false, "none");
   const now = specOf([{ used: 100, reset: "+0", mins: 300 }, null]);
-  return [
-    ...away.map((ops) => () => runStall(emptySpec, "old", [{ op: "advance", secs: 300 }, ...ops, ...later], "fail", none, false, "none")),
-    () => runStall(emptySpec, "old", [{ op: "limit", push: false }, { op: "close", merged: false }, { op: "reopen" }, { op: "limit", push: false }, ...later], now, none, false, "none"),
-  ];
+  await runStall(emptySpec, "old", [{ op: "limit", push: false }, { op: "close", merged: false }, { op: "reopen" }, { op: "limit", push: false }, ...later], now, NO_FAILURES, false, "none");
 }
 
 /**
@@ -1671,14 +1666,11 @@ function checkSuspendKeepsRecord(): Check[] {
  * 始まらなければさらに 300 秒で not-started を出すことを確かめる (Codex 指摘: PR #22 review comment r4166502948。要求のコメントを今の head への要求と数えると、B に POST せず not-started を出す)。
  * Codex が POST に応えて B を始めるなら、何も出さない。生成器が要求と push を同じ周期に入れるかは確率に任せるので、ここで固定して確かめる
  */
-function checkRequestThenPush(): Check[] {
-  const none = { skip: 0, list: [] };
+async function checkRequestThenPush() {
   const request: Op = { op: "comment", c: { kind: "text", login: "alice", text: REQUEST } };
   const later: StallOp[] = [{ op: "advance", secs: 300 }, { op: "advance", secs: 300 }];
-  return [
-    () => runStall(emptySpec, "old", [{ op: "together", ops: [request, { op: "start", completed: false }, { op: "push", summary: "stale" }] }, ...later], "fail", none, false, "none"),
-    () => runStall(emptySpec, "old", [{ op: "together", ops: [request, { op: "push", summary: "stale" }] }, ...later], "fail", none, false, "start"),
-  ];
+  await runStall(emptySpec, "old", [{ op: "together", ops: [request, { op: "start", completed: false }, { op: "push", summary: "stale" }] }, ...later], "fail", NO_FAILURES, false, "none");
+  await runStall(emptySpec, "old", [{ op: "together", ops: [request, { op: "push", summary: "stale" }] }, ...later], "fail", NO_FAILURES, false, "start");
 }
 
 // ---- 入口 ----
@@ -1686,103 +1678,73 @@ function checkRequestThenPush(): Check[] {
 const tmpRoot = await Deno.makeTempDir({ prefix: "pr-pbt." });
 const curlHome = await Deno.makeTempDir({ dir: tmpRoot });
 await Deno.writeTextFile(`${curlHome}/.curlrc`, 'proxy = "http://127.0.0.1:9"\nconnect-to = "::127.0.0.1:9"\n');
-const host255 = Array(128).fill("a").join(".");
-const fixed: Check[] = [
-  () => checkGuardFailure("GITHUB_API_URL の検査 (スペースが入る)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "not a url" }),
-  () => checkGuardFailure("GITHUB_API_URL の検査 (スキーム省略)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "not-a-url" }),
-  () => checkGuardFailure("GITHUB_API_URL の検査 (クエリが付く)", ["reply-resolve", REPO, String(PR), "1", "x"], {
+try {
+  await checkGuardFailure("GITHUB_API_URL の検査 (スペースが入る)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "not a url" });
+  await checkGuardFailure("GITHUB_API_URL の検査 (スキーム省略)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "not-a-url" });
+  await checkGuardFailure("GITHUB_API_URL の検査 (クエリが付く)", ["reply-resolve", REPO, String(PR), "1", "x"], {
     GITHUB_API_URL: "http://127.0.0.1:8080?x",
-  }),
-  () => checkGuardFailure("GITHUB_API_URL の検査 (フラグメントが付く)", ["reply-resolve", REPO, String(PR), "1", "x"], {
+  });
+  await checkGuardFailure("GITHUB_API_URL の検査 (フラグメントが付く)", ["reply-resolve", REPO, String(PR), "1", "x"], {
     GITHUB_API_URL: "http://127.0.0.1:8080#f",
-  }),
-  () => checkGuardFailure("GITHUB_API_URL の検査 (ポート 0)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "http://127.0.0.1:0" }),
-  () => checkGuardFailure("GITHUB_API_URL の検査 (ポート 00000)", ["reply-resolve", REPO, String(PR), "1", "x"], {
+  });
+  await checkGuardFailure("GITHUB_API_URL の検査 (ポート 0)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "http://127.0.0.1:0" });
+  await checkGuardFailure("GITHUB_API_URL の検査 (ポート 00000)", ["reply-resolve", REPO, String(PR), "1", "x"], {
     GITHUB_API_URL: "http://127.0.0.1:00000",
-  }),
-  () => checkGuardFailure("GITHUB_API_URL の検査 (ポート 65536、範囲外)", ["reply-resolve", REPO, String(PR), "1", "x"], {
+  });
+  await checkGuardFailure("GITHUB_API_URL の検査 (ポート 65536、範囲外)", ["reply-resolve", REPO, String(PR), "1", "x"], {
     GITHUB_API_URL: "http://127.0.0.1:65536",
-  }),
+  });
   // トークンは Authorization ヘッダで送るので、http は loopback 宛てだけ許す。他ホスト宛ての http はそれ以外の構文の妥当性に関わらず弾く (Codex 指摘: PR #18 review comment r4103373730)
-  () => checkGuardFailure("GITHUB_API_URL の検査 (http で他ホスト)", ["reply-resolve", REPO, String(PR), "1", "x"], {
+  await checkGuardFailure("GITHUB_API_URL の検査 (http で他ホスト)", ["reply-resolve", REPO, String(PR), "1", "x"], {
     GITHUB_API_URL: "http://api.example.com",
-  }),
-  () => checkGuardFailure("GITHUB_API_URL の検査 (http で localhost)", ["reply-resolve", REPO, String(PR), "1", "x"], {
+  });
+  await checkGuardFailure("GITHUB_API_URL の検査 (http で localhost)", ["reply-resolve", REPO, String(PR), "1", "x"], {
     GITHUB_API_URL: "http://localhost:8080",
-  }),
+  });
   // 以下はホスト名のラベル・長さの検査そのものを確かめるので、上の loopback 限定に阻まれない https で張る
   // ホストの文字クラスだけでは https://- や https://a..b も通り、curl の resolve 失敗 (一時的、exit 6) になって watch が再試行し続ける (Codex 指摘: PR #18 review comment r4101741414)。RFC 1123 のラベルで閉じて弾く
-  () => checkGuardFailure("GITHUB_API_URL の検査 (ホストがハイフンだけ)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "https://-" }),
-  () => checkGuardFailure("GITHUB_API_URL の検査 (ホストがドットだけ)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "https://." }),
-  () => checkGuardFailure("GITHUB_API_URL の検査 (ラベルの間が空)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "https://a..b" }),
-  () => checkGuardFailure("GITHUB_API_URL の検査 (ラベルがハイフンで終わる)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "https://a-.b" }),
+  await checkGuardFailure("GITHUB_API_URL の検査 (ホストがハイフンだけ)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "https://-" });
+  await checkGuardFailure("GITHUB_API_URL の検査 (ホストがドットだけ)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "https://." });
+  await checkGuardFailure("GITHUB_API_URL の検査 (ラベルの間が空)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "https://a..b" });
+  await checkGuardFailure("GITHUB_API_URL の検査 (ラベルがハイフンで終わる)", ["reply-resolve", REPO, String(PR), "1", "x"], { GITHUB_API_URL: "https://a-.b" });
   // ラベルの長さ (63) だけを見る guard は、ホスト全体が RFC 1035 の上限 (253) を超えても通してしまい、resolve の失敗 (一時的、exit 6) になって watch が再試行し続ける (Codex 指摘: PR #18 review comment r4101817376)
-  () => checkGuardFailure(`GITHUB_API_URL の検査 (ホスト ${host255.length} 文字、範囲外)`, ["reply-resolve", REPO, String(PR), "1", "x"], {
+  const host255 = Array(128).fill("a").join(".");
+  await checkGuardFailure(`GITHUB_API_URL の検査 (ホスト ${host255.length} 文字、範囲外)`, ["reply-resolve", REPO, String(PR), "1", "x"], {
     GITHUB_API_URL: `https://${host255}`,
-  }),
-  async () => checkPermanentCurlFailure(
+  });
+  await checkPermanentCurlFailure(
     "owner/repo にスペースが入る検査",
     ["watch", "o r/x", String(PR), await Deno.makeTempDir({ dir: tmpRoot }), "1"],
     {},
-  ),
-  checkPermanentCurlConfigFailures,
-  () => checkLimitsLine("PR_CODEX_LIMITS が exit 1", "fail", `reset unknown: ${LIMITS_FAILED}`),
-  () => checkLimitsLine("PR_CODEX_LIMITS が無い", null, /^reset unknown: .*limits: No such file or directory$/),
-  () => checkLimitsLine(
+  );
+  await checkPermanentCurlConfigFailures();
+  await checkLimitsLine("PR_CODEX_LIMITS が exit 1", "fail", `reset unknown: ${LIMITS_FAILED}`);
+  await checkLimitsLine("PR_CODEX_LIMITS が無い", null, /^reset unknown: .*limits: No such file or directory$/);
+  await checkLimitsLine(
     "100% の窓に resetsAt が無い",
     specOf([{ used: 99, reset: FAR[0], mins: 300 }, { used: 100, reset: null, mins: 10080 }]),
     "reset unknown: no window at 100% with resetsAt",
-  ),
+  );
   // 窓の名前は windowDurationMins から決め、primary・secondary の別からは決めない
-  () => checkLimitsLine(
+  await checkLimitsLine(
     "両窓が 100% なら resetsAt の遅いほう",
     specOf([{ used: 100, reset: FAR[1], mins: 10080 }, { used: 150, reset: FAR[0], mins: 300 }]),
     `resets ${iso(FAR[1])} weekly`,
-  ),
-  () => checkEqualSecondLimit(false),
-  () => checkEqualSecondLimit(true),
-  ...checkPushDuringLimit(),
-  ...checkResumeOnceAndDraft(),
-  ...checkClose(),
-  ...checkSuspendKeepsRecord(),
-  ...checkRequestThenPush(),
-];
-
-/** 性質 p の i 件目の試行。1 件に数秒かかるので、縮小せずに反例で止める (落ちたら seed と path を示す) */
-const trial = <T>(p: fc.IAsyncProperty<T>) => (i: number) => () =>
-  fc.assert(p, { seed, path: String(i), numRuns: 1, endOnFailure: true, verbose: fc.VerbosityLevel.Verbose });
-const trials = (name: string, t: (i: number) => Check) =>
-  Array.from({ length: numRuns }, (_, i) => ({ name: `${name} の試行 ${i} (FC_SEED=${seed} で再現する)`, run: t(i) }));
-// 1 件が長くかかるもの (p5 と固定の検査の runStall) から始め、最後に残る単位を短くする
-const units: { name: string; run: Check }[] = [
-  ...trials("p5", trial(p5)),
-  ...fixed.map((run, i) => ({ name: `固定の検査 ${i}`, run })),
-  ...trials("p4", trial(p4)),
-  ...trials("p2", trial(p2)),
-  ...trials("p1", trial(p1)),
-  ...trials("p3", trial(p3)),
-];
-/** fast-check は性質の中で投げられたものを cause に入れる */
-const describe = (e: unknown): string => !(e instanceof Error) ? String(e) : e.cause === undefined ? e.message : `${e.message}\n${describe(e.cause)}`;
-const failed: string[] = [];
-try {
-  let next = 0;
-  const worker = async () => {
-    while (next < units.length) {
-      const u = units[next++];
-      try {
-        await u.run();
-      } catch (e) {
-        failed.push(u.name);
-        console.error(`test-pr.ts: ${u.name} が落ちた\n${describe(e)}\n`);
-      }
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(jobs, units.length) }, worker));
+  );
+  await checkEqualSecondLimit(false);
+  await checkEqualSecondLimit(true);
+  await checkPushDuringLimit();
+  await checkResumeOnceAndDraft();
+  await checkClose();
+  await checkSuspendKeepsRecord();
+  await checkRequestThenPush();
+  // 1 件に数秒かかるので、縮小せずに最初の反例で止める (FC_SEED と表示される path で再現する)
+  const params = { numRuns, ...(seedEnv ? { seed: Number(seedEnv) } : {}), endOnFailure: true, verbose: fc.VerbosityLevel.Verbose };
+  await fc.assert(p1, params);
+  await fc.assert(p2, params);
+  await fc.assert(p3, params);
+  await fc.assert(p4, params);
+  await fc.assert(p5, params);
 } finally {
   await Deno.remove(tmpRoot, { recursive: true }).catch(() => {});
-}
-if (failed.length > 0) {
-  console.error(`test-pr.ts: ${units.length} 件のうち ${failed.length} 件が落ちた: ${failed.join("、")}`);
-  Deno.exit(1);
 }

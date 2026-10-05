@@ -145,7 +145,7 @@ step scripts/test-codex-limits.sh scripts/test-codex-limits.sh
 step scripts/test-agent-sync.sh scripts/test-agent-sync.sh
 # 書き込みは $TMPDIR の下だけだが、シンボリックリンクを作るので Deno はパスを絞った許可を受け付けない
 step scripts/test-target-diff.ts deno run --allow-run=git,bash --allow-env --allow-read --allow-write scripts/test-target-diff.ts
-step scripts/test-pr.ts deno run --allow-run=bash --allow-net=127.0.0.1 --allow-env=PR_RUNS,FC_SEED,PR_JOBS,PATH --allow-read="${TMPDIR:-/tmp}" --allow-write="${TMPDIR:-/tmp}" scripts/test-pr.ts
+step scripts/test-pr.ts deno run --allow-run=bash --allow-net=127.0.0.1 --allow-env=PR_RUNS,FC_SEED,PATH --allow-read="${TMPDIR:-/tmp}" --allow-write="${TMPDIR:-/tmp}" scripts/test-pr.ts
 step scripts/verify.ts bash -c 'set -o pipefail; git ls-files --cached --others --exclude-standard | deno run --allow-read=. --allow-net=www.schemastore.org scripts/verify.ts'
 
 for i in "${!names[@]}"; do
