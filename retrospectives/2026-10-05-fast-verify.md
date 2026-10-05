@@ -45,6 +45,7 @@
   - verify.sh を回すリポを、verify.sh と hooks/pre-push だけを commit したものにした。scripts/ が無いので検査の段は起動できずに落ちる。
   - 版 0.9.0 を名乗る偽の shellcheck で verify.sh を回し、`scripts/test-pre-push.sh` の段が exit 127 で落ちることを確かめる検査を足した。
   - shellcheck を並行の段の 1 つにした。
+- test の git の自動 maintenance を止めた (`f5758e1`): push や commit をしたリポを直後に clone・読み取りする 5 つの test の `GIT_CONFIG_GLOBAL` を、`gc.auto=0` と `maintenance.auto=false` を書いた一時ファイルにした。`GIT_CONFIG_COUNT` は test ごとに自前の設定で上書きされるので使わない。
 - `verify.sh` の段の標準出力と標準エラーを分けた (`c0337dd`)。最初の版は 1 つのファイルにまとめ、通った段の警告 (stderr) を stdout に出していた。
 - AGENTS.md の検査の順序と `PR_JOBS` の記述を、今の形に直した (`7b81473`)。
 
@@ -55,5 +56,5 @@
 - 偽の `sleep` は引数を見ないので、pr.sh が待つ秒数 (間隔、失敗時の倍、まとめの窓の `min(間隔, 10)`) は検査に入っていない。本物の `sleep` だった頃も検査していなかった。
 - `test-codex-limits.sh` の 30 秒は codex-limits.sh の timeout を待つ時間で、`test-pr.ts` と同じ種類の待ち。短くするには製品の timeout を変えることになる。
 - CI (ubuntu-latest、4 vCPU) での時間はまだ見ていない。
-- 今の版の 5 回の `./verify.sh` のうち 1 回で、変えていない `scripts/test-target-diff.sh` が落ちた (exit 128)。`git clone -q "$tmp/origin.git" "$tmp/advance"` が `failed to copy file to '<tmp>/advance/.git/objects/5c/…': No such file or directory` で失敗し、続く行も `$tmp/advance` が無いと落ちた。続けて回した次の回は通った。原因は調べていない。
+- `scripts/test-target-diff.sh` の clone の失敗 (5 回に 1 回、exit 128) は、自動 maintenance の疑いに対する防御を入れただけで、既定の閾値での原因は確かめていない。閾値を下げた再現は 201 回中 2 回で同じ文言で落ち、`receive.autogc=false` では 301 回中 0 回だった (canon: facts/git/auto-maintenance-races-local-clone)。一方、既定の閾値のままの `test-target-diff.sh` 13 回では gc の子が 1 回も走らなかった。手を入れた後の `./verify.sh` は 6 回続けて通ったが、元の頻度 (1/5〜1/6) では再発しないことの証拠として弱い。再発したら、`GIT_TRACE` を付けて回し、clone が落ちた時点で背景の gc 以外に objects を消すものが無いか調べる。
 - `test-pr.ts` が SIGTERM で止まると一時ディレクトリ (`pr-pbt.*`) が `$TMPDIR` に残る。main でも同じ。
