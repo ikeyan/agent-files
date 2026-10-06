@@ -49,6 +49,7 @@ description: Use when creating a new repository, bringing an existing repository
 ## 3. 検証
 
 - フォーマッター・リンター・静的解析器を入れる (oxfmt, oxlint, typescript 等、言語や目的に応じて)。
+- 自動で列挙できるコードのゴミ (使われない export・module・依存) を列挙する道具を入れ、単一検証コマンドに含める。言語ごとの道具は [dead-code-tools.md](dead-code-tools.md)。
 - テストの仕組みを用意する (外部依存の挙動も内部ロジックも)。入力の定義域で書き方を分ける:
   - 有限集合に閉じた入力: table driven test で列挙する。
   - 定義域が開いた入力と外部システムの状態: canon の目録 (`facts/<topic>/`) の次元ごとに値を生成する property based / model based test (fast-check 等) で回す。生成器は最初は使うリポの `scripts/` に置き、2 つ目のリポが使うときに canon へ移す。テストが相手にする外部システム:
