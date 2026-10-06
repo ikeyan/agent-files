@@ -26,10 +26,11 @@
  * - git が知っているファイル (canon: facts/git/path-output-quoting、facts/git/untracked-entry-kinds) の名前: 次の述語を全部満たすものだけを処理する。外れる名前が 1 つでもあれば、理由と名前 (バイトを escape したもの) を出して gitFiles を使う段を落とす。
  *   - UTF-8 として正しい (WHATWG の UTF-8 decoder が fatal で投げない)。不正な名前はコマンドへ渡す引数 (文字列) で表せない。
  *   - 改行を含まない。改行は verify.ts へ渡す 1 行 1 件の入力で名前を割る。
- *   - `*`・`?` を含まない。deno 2.9.7 の deno check・deno lint はこれを含む引数を glob として展開し、git が知らないファイルまで検査する (deno lint は実測)。エスケープの手段は無い。`[`・`]`・`{`・`}` は展開しない (canon: facts/deno/check-file-args-glob)。
+ *   - `*`・`?` を含まない。deno 2.9.7 の deno check・deno lint はこれを含む引数を glob として展開し、git が知らないファイルまで検査する。エスケープの手段は無い。`[`・`]`・`{`・`}` は展開しない (canon: facts/deno/check-file-args-glob、facts/deno/lint-file-args-and-rules)。
  *   満たす名前は変えずに渡す (git は -z で quote せずに出し、名前ごとに decode して U+FEFF で始まる名前も BOM として落とさない)。ただし shellcheck と deno check・deno lint へは `./` を前置し、先頭に `-` (option)・`!` (deno の除外)・`npm:` など (deno の URL) が来ないようにする。`--` は使わない (deno 2.9.7 の deno check は `--` の後の名前を無視して cwd 全体を検査する。canon: facts/deno/check-double-dash)。
  *   作業ツリーに無い追跡ファイルとリンク先の無い symlink も git は一覧に出し、コマンドがその名前の無いことを知らせて落ちる (shellcheck は exit 2)。
  * - deno は 2.9.7 で確かめた。detached が子で setsid すること、Deno.kill に負の pid を渡すとプロセスグループに送れること、先に終わった子の stdin への write が Deno.errors.BrokenPipe で投げることに依存する。版は検査しない (CI は v2.x を使う)。外れた版 (detached が setsid しない版など) では、段の孫が止められずに残る。
+ * - deno lint は cwd の deno.json の lint 設定を読む (canon: facts/deno/lint-file-args-and-rules)。この段は lint が空であることを前提にし、規則を no-unused-vars 1 つに絞る。lint を足すときは、この段が落ちないか確かめる。
  * - PATH に shellcheck (0.11.0 だけ。違えばその段が落ちる)・git・deno があること。
  *
  * 並行の段が共有する、変わりうる状態: deno のキャッシュ (DENO_DIR) と deno.lock (deno が依存を解決したときに書く)。段の test は作業ツリーを読むだけで、書くものは TMPDIR の下にそれぞれ作る一時ディレクトリに置く。
@@ -207,7 +208,7 @@ const deno = (perms: string[], script: string) => exec("deno", ["run", ...perms,
 const steps: [string, () => Promise<Run>][] = [
   ["shellcheck", shellcheck],
   ["deno check", () => checkFiles("deno", ["check"], ["*.ts"])],
-  // --rules-tags= を外すと recommended 全部が走り、no-unused-vars 以外で落ちる
+  // --rules-tags= で recommended を外し、no-unused-vars だけを走らせる (canon: facts/deno/lint-file-args-and-rules)
   ["deno lint", () => checkFiles("deno", ["lint", "--rules-tags=", "--rules-include=no-unused-vars"], ["*.ts"])],
   ["scripts/test-target-diff.ts", () =>
     deno([

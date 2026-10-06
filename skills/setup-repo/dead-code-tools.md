@@ -5,8 +5,8 @@
 | 言語 | 道具 | 列挙するもの |
 | --- | --- | --- |
 | TypeScript / Node | knip (`canon: facts/knip`) | 未使用の export・ファイル・依存 |
-| TypeScript (Deno) | `deno lint` の `no-unused-vars` | 未使用の変数・import (export は見ない) |
-| shell | shellcheck の SC2034 | 未使用の変数 |
+| TypeScript (Deno) | `deno lint` の `no-unused-vars` (`canon: facts/deno/lint-file-args-and-rules`) | 未使用の変数・import (export は見ない) |
+| shell | shellcheck の SC2034 (`canon: facts/shellcheck/sc2034-unused-variable`) | 未使用の変数 |
 
 - 表に無い言語は、そのリポで等価な道具を選ぶ。
-- 道具が列挙できないもの (環境・版で決まる分岐) は、コードが前提とする環境の版の範囲を仕様に書き、分岐のコメントに固定になる条件を書く (AGENTS.md 設計指針、[writing-comments](../writing-comments/SKILL.md))。
+- 道具が列挙できないもの (環境・版で決まる分岐) は、コードが前提とする環境の版の範囲を仕様に書き、分岐のコメントに固定になる条件を書く ([writing-comments](../writing-comments/SKILL.md))。
