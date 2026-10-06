@@ -45,6 +45,7 @@
     - 全部を検査するには、適用できる環境で回す。
     - CI では落とす。
   - JSON の構文と schema
+  - `deno.json` の `imports` の各キーが、git が知る `.ts` のどれかの import 指定子から使われていること (`scripts/verify.ts`。`deno lint` が見ない未使用の依存を埋める。このリポの `.ts` は export も相対 import も持たない入口なので、未使用の export・module は起きない)
   - Markdown のリポ内リンク
   - `.claude/skills` と `skills/` の対応
 - `./verify.sh` は次をその場で揃える。CI は `VERIFY_READONLY=1` で直さず落とす。

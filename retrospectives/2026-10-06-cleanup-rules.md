@@ -32,10 +32,13 @@
   - deno 2.9.7 の `deno lint` も、`*`・`?` を含む引数を glob として展開する。`--` は効く。名前の述語は `deno check` と同じで足りた。
 - canon に `facts/deno/lint-file-args-and-rules` (glob の展開・`--rules-tags=` の空の値・cwd の `deno.json` の `lint` 設定との相互作用・`_` の無視) と `facts/shellcheck/sc2034-unused-variable` を足し (canon `adbc74e`)、`run-checks.ts` と `dead-code-tools.md` から引いた。`--rules-tags=` の空の値は文書に無く実測のみ。先頭コメントに「`lint` が空であることを前提にする」を足した。
 - `dead-code-tools.md` の「AGENTS.md 設計指針」への参照を外した。setup-repo は他のリポへ配るので、配布先に同じ節があるとは限らない。
+- Codex の指摘で、setup-repo のチェックの文言と `dead-code-tools.md` を直した。「使われない export・module・依存を列挙する検査」は、deno lint では満たせない。
+  - チェックを「道具が列挙できるものを検査に入れる。列挙しないものは別の検査を足すか、起きない理由を書く」にした。表に「列挙しないもの」の列を足した。
+  - このリポの依存の次元を `scripts/verify.ts` で閉じた。`deno.json` の `imports` のキーが使われていることを、文字列の照合で確かめる。未使用のキーを一時に足して落ちること、戻して通ることを実測した。export・module は、このリポの `.ts` が export も相対 import も持たないので起きない (AGENTS.md に書いた)。
 
 ## 残っていること
 
-- `deno lint` は未使用の export・module・依存を見ない。それを列挙するのは knip などで、このリポの TypeScript は入れていない (入れる判断をしていない)。
+- `deno lint` は未使用の export・module・依存を見ない。依存は `scripts/verify.ts` で埋めた。`.ts` が export を持つようになったら、knip などを入れるか判断する。
 - recommended の残り 9 件は直していない (足したのは `no-unused-vars` だけ)。
 - 版で決まる分岐の固定条件は、書かれているかをレビュー (観点) が見るだけで、検査は無い。
 - 作ったものを消す規律は書いただけで、検査はしていない。
