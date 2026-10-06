@@ -49,13 +49,13 @@ description: Use when creating a new repository, bringing an existing repository
 ## 3. 検証
 
 - フォーマッター・リンター・静的解析器を入れる (oxfmt, oxlint, typescript 等、言語や目的に応じて)。
-- 自動で列挙できるコードのゴミ (使われない export・module・依存) を列挙する道具を入れ、単一検証コマンドに含める。言語ごとの道具は [dead-code-tools.md](dead-code-tools.md)。
 - テストの仕組みを用意する (外部依存の挙動も内部ロジックも)。入力の定義域で書き方を分ける:
   - 有限集合に閉じた入力: table driven test で列挙する。
   - 定義域が開いた入力と外部システムの状態: canon の目録 (`facts/<topic>/`) の次元ごとに値を生成する property based / model based test (fast-check 等) で回す。生成器は最初は使うリポの `scripts/` に置き、2 つ目のリポが使うときに canon へ移す。テストが相手にする外部システム:
     - 手元で動く (git 等): 実物
     - 手元で動かない (GitHub API 等): 状態機械の fake
 - 単一検証コマンドを用意する (AGENTS.md 設計指針)。上記すべてを 1 つの入口に集約する。
+  - 自動で列挙できるコードのゴミ (使われない export・module・依存) を列挙する検査が入っている。言語ごとの道具の例は [dead-code-tools.md](dead-code-tools.md)。
 - push は `hooks/pre-push` (agent-sync の pre-push 部品で配る。7 節) で、push のコマンドに `PUSH_OK=1` が付いていないものを止める (付け方は [pr-workflow/SKILL.md](pr-workflow/SKILL.md) の「push の手順」)。単一検証コマンドで `hooks/pre-push` を common git dir (`git rev-parse --git-common-dir`) の `hooks` へ写す。写す先に `hooks/pre-push` と違う pre-push があれば (旧版でも)、このリポのものかを中身から決められないので、上書きせず落として置き換えのコマンドを示す。`core.hooksPath` が hook をよそへ向けていれば落とす。common git dir の `hooks` は linked worktree も共有し、checkout で消えない。`core.hooksPath` で作業ツリーの `hooks/` を指すと、`hooks/` の無い commit を checkout した worktree から hook 無しで push が通る。
 - push の前のリポ固有の検査は、実行可能な `hooks/pre-push.local` に書く。`hooks/pre-push` は配るものなので書き足さない。`hooks/pre-push` は `PUSH_OK=1` の判定の後、`hooks/pre-push.local` に同じ引数と stdin で替わり、その終了コードが push の可否になる。`hooks/pre-push.local` が実行可能な通常のファイルでなければ、無視せず push を止める。
 - レビューは review-perspectives skill で行う。観点は plugin で配られる。
