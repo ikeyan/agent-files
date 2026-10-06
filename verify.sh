@@ -102,4 +102,4 @@ fi
 
 # exec で替わるので、verify.sh に届く SIGHUP・SIGINT・SIGTERM は run-checks.ts が受けて段を止める。
 # Deno.kill で段のプロセスグループに送るには、パスを付けない --allow-run が要る (パスで絞ると NotCapable。canon: facts/deno/command-spawn の「Deno.kill」)。Deno.kill がパスで絞った --allow-run で通るようになったら、段が起動するもの (git・deno・shellcheck) に絞る。
-exec deno run --allow-run --allow-env=TMPDIR scripts/run-checks.ts "$status"
+exec deno run --allow-run --allow-read=deno.json --allow-env=TMPDIR scripts/run-checks.ts "$status"

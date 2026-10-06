@@ -45,7 +45,7 @@ gh 2.98.0 で `--help` と実行を確認したもの。「未実測」と書い
       - `reset unknown: <理由>`: PushNotification で理由をユーザーに知らせる (PR が draft でなく、Codex の summary があり、head のレビューが始まっていなければ、watch が 300 秒後に `@codex review` を 1 回出す。draft の間は ready にするまでレビューは来ない)。
     - `codex-review requested` の行 (watch が `@codex review` を出した): 起動し直すだけ。
     - `codex-review not-started` の行 (`@codex review` の後も head のレビューが始まらない): PushNotification でユーザーに知らせてから起動し直す。
-    - PR の close: 起動し直さない。
+    - PR の close (merge を含む): 起動し直さず、`<dir>` を消す (`rm -r -- <dir>`)。
     - `auth` の行 (トークンが無いか無効): PushNotification でユーザーに gh auth login を頼み、済んだら起動し直す。
   - 起動した shell は Bash ツールの時間の上限に縛られない (900 秒の sleep が最後まで走ることを実測)。
   - HTTP を `gh api` に書き換えない、トークンを `curl` の引数に載せない、CI の失敗の取得から `filter=all` を外さない。根拠: `canon: facts/claude-code/monitor-runs-in-sandbox-gh-tls`、`canon: facts/shell/process-args-visible-via-ps`、`canon: facts/github/check-runs-filter-latest-hides-reruns`
