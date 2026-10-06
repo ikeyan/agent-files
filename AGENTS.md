@@ -34,6 +34,7 @@
 - 単一検証コマンドは `./verify.sh`。CI も同じものを回す。含むもの:
   - shellcheck
   - `deno check`
+  - `deno lint` の未使用の変数・import (`no-unused-vars` だけ)
   - review-perspectives の `target-diff.sh` の、例の fixture と model based test (`scripts/test-target-diff.ts`。fast-check。並行に回す)
   - `hooks/pre-push` の fixture (`scripts/test-pre-push.ts`)
   - pr-workflow の `cleanup-branch.sh` の fixture (`scripts/test-cleanup-branch.ts`)
