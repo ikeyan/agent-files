@@ -21,6 +21,7 @@
  * 入力と環境の定義域:
  * - 引数は 1 つで、verify.sh が先に回した状態を揃える段の結果 (0 か 1)。外れていれば理由を出して落ちる。
  * - cwd はリポのルート。
+ * - 読むファイルは deno.json だけ (imports のキーを読む。許可は verify.sh が `--allow-read=deno.json` で渡す)。
  * - 読む環境変数は TMPDIR だけ (未設定か空なら /tmp。段の deno の read・write の許可に渡す)。子にはこのプロセスの環境を全部渡す (段の test が読む CI・PATH など)。
  * - git は GIT_DIR・GIT_WORK_TREE・GIT_INDEX_FILE など (canon: facts/git/local-env-vars-and-hook-env) をこのプロセスの環境から継承して読む。ファイルの一覧は、その git が指すリポジトリのもの。
  * - git が知っているファイル (canon: facts/git/path-output-quoting、facts/git/untracked-entry-kinds) の名前: 次の述語を全部満たすものだけを処理する。外れる名前が 1 つでもあれば、理由と名前 (バイトを escape したもの) を出して gitFiles を使う段を落とす。
@@ -31,6 +32,11 @@
  *   作業ツリーに無い追跡ファイルとリンク先の無い symlink も git は一覧に出し、コマンドがその名前の無いことを知らせて落ちる (shellcheck は exit 2)。
  * - deno は 2.9.7 で確かめた。detached が子で setsid すること、Deno.kill に負の pid を渡すとプロセスグループに送れること、先に終わった子の stdin への write が Deno.errors.BrokenPipe で投げることに依存する。版は検査しない (CI は v2.x を使う)。外れた版 (detached が setsid しない版など) では、段の孫が止められずに残る。
  * - deno lint は cwd の deno.json の lint 設定を読む (canon: facts/deno/lint-file-args-and-rules)。この段は lint が空であることを前提にし、規則を no-unused-vars 1 つに絞る。lint を足すときは、この段が落ちないか確かめる。
+ * - deno.json の imports の各キー (importKeys 段): git が知る .ts のそれぞれに `deno info --json` を回し (canon: facts/deno/info-json-dependencies)、graph の esm の module (相対 import で辿った先を含む) の dependencies[].specifier のどれかと一致するとき使われているとみなす。末尾が / のキーは、指定子がその接頭辞のときも使われているとみなす。
+ *   - deno info には `--no-config --no-lock --no-npm --no-remote` を付け、deno.json・deno.lock を読み書きせず、ネットワークにも出ない。指定子は書かれた文字列のまま出るので解決は要らない。DENO_DIR (環境から継承) の cache は書く。
+ *   - 指定子に入るのは静的 import・export from・import type・リテラルの動的 import。コメント・文字列の中、`/// <reference>`、JSDoc の `@import`、リテラルでない動的 import は入らない。後ろ 2 つだけで使うキーは使われていないと報告する。
+ *   - graph の file: の module に error (ファイルが無い、構文が壊れている、相対 import 先が無い) があれば、deno info は exit 0 なので、その module と error を報告して落ちる。https: などのリモートの module は --no-remote で取らず (error になる)、指定子だけを数え error は見ない。
+ *   - deno.json の他の設定 (tasks など) からの参照は見ない。
  * - PATH に shellcheck (0.11.0 だけ。違えばその段が落ちる)・git・deno があること。
  *
  * 並行の段が共有する、変わりうる状態: deno のキャッシュ (DENO_DIR) と deno.lock (deno が依存を解決したときに書く)。段の test は作業ツリーを読むだけで、書くものは TMPDIR の下にそれぞれ作る一時ディレクトリに置く。
@@ -203,6 +209,35 @@ async function shellcheck(): Promise<Run> {
   return checkFiles("shellcheck", [], ["*.sh", "hooks/pre-push"]);
 }
 
+/** deno.json の imports の各キーが、.ts の import の指定子から使われていること。 */
+async function importKeys(): Promise<Run> {
+  const ls = await gitFiles(["*.ts"]);
+  if (ls.code !== 0) return ls;
+  const keys = Object.keys(JSON.parse(await Deno.readTextFile("deno.json")).imports ?? {});
+  const infos = await Promise.all(ls.files.map(async (f) => ({
+    f,
+    r: await exec("deno", ["info", "--json", "--no-config", "--no-lock", "--no-npm", "--no-remote", `./${f}`]),
+  })));
+  const problems: string[] = [];
+  const specifiers = new Set<string>();
+  for (const { f, r } of infos) {
+    if (r.code !== 0) {
+      problems.push(`${f}: deno info が exit ${r.code}\n${dec.decode(r.err)}`);
+      continue;
+    }
+    for (const m of JSON.parse(dec.decode(r.out)).modules) {
+      if (m.error && m.specifier.startsWith("file:")) problems.push(`${f}: ${m.specifier}: ${m.error}`);
+      for (const d of m.dependencies ?? []) specifiers.add(d.specifier);
+    }
+  }
+  for (const key of keys) {
+    if (![...specifiers].some((s) => s === key || (key.endsWith("/") && s.startsWith(key)))) {
+      problems.push(`deno.json: imports の "${key}" がどの .ts からも使われていない`);
+    }
+  }
+  return { code: problems.length ? 1 : 0, out: problems.length ? new Uint8Array() : enc.encode(`ok: imports ${keys.length} 件、.ts ${ls.files.length} 件\n`), err: enc.encode(problems.map((p) => `${p}\n`).join("")) };
+}
+
 const deno = (perms: string[], script: string) => exec("deno", ["run", ...perms, script]);
 
 const steps: [string, () => Promise<Run>][] = [
@@ -245,6 +280,7 @@ const steps: [string, () => Promise<Run>][] = [
       `--allow-read=${tmpdir}`,
       `--allow-write=${tmpdir}`,
     ], "scripts/test-pr.ts")],
+  ["deno.json の imports", importKeys],
   ["scripts/verify.ts", async () => {
     const ls = await gitFiles([]);
     if (ls.code !== 0) return ls;

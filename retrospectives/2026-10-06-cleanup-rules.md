@@ -34,7 +34,7 @@
 - `dead-code-tools.md` の「AGENTS.md 設計指針」への参照を外した。setup-repo は他のリポへ配るので、配布先に同じ節があるとは限らない。
 - Codex の指摘で、setup-repo のチェックの文言と `dead-code-tools.md` を直した。「使われない export・module・依存を列挙する検査」は、deno lint では満たせない。
   - チェックを「道具が列挙できるものを検査に入れる。列挙しないものは別の検査を足すか、起きない理由を書く」にした。表に「列挙しないもの」の列を足した。
-  - このリポの依存の次元を `scripts/verify.ts` で閉じた。`deno.json` の `imports` のキーが使われていることを、文字列の照合で確かめる。未使用のキーを一時に足して落ちること、戻して通ることを実測した。export・module は、このリポの `.ts` が export も相対 import も持たないので起きない (AGENTS.md に書いた)。
+  - このリポの依存の次元を `scripts/run-checks.ts` の段で閉じた。`deno.json` の `imports` のキーが使われていることを、`deno info --json` の module graph の指定子で確かめる。未使用のキーの追加と、実際の import のコメントアウト (Codex の場面) で落ちること、戻して通ることを実測した。最初は正規表現で `from "x"` を拾っていたが、Codex に「コメントや文字列に残った古い import も使われているとみなす」と指摘され、構文の解釈を自分で書かず deno の graph に替えた。`deno info` はネットワークに出ず設定も読まない付け方があり (`--no-config --no-lock --no-npm --no-remote`。canon `facts/deno/info-json-dependencies`)、検査の段は子を起こすので、`--allow-run` を持つ run-checks.ts に置いて verify.ts の許可を増やさなかった (run-checks.ts に足したのは `--allow-read=deno.json`)。export・module は、このリポの `.ts` が export も相対 import も持たないので起きない (AGENTS.md に書いた)。
 
 ## 残っていること
 

@@ -1,15 +1,11 @@
 /**
- * verify.ts — リポ内の JSON と Markdown と deno.json の imports を検査する。verify.sh から呼ぶ。
+ * verify.ts — リポ内の JSON と Markdown を検査する。verify.sh から呼ぶ。
  *
  * 事前条件: リポのルートを cwd にして、検査対象のパスを 1 行 1 件で stdin に流すこと。
  * 副作用: 検査結果を stdout / stderr に出し、違反が 1 件でもあれば exit 1。
  *
  * JSON: 構文 + JSON Schema。schema は実行のたびに取得する。
  * Markdown: リポ内を指すリンク・anchor が生きていること。
- * deno.json の imports: 各キーが、git が知る .ts のどれかの import 指定子から使われていること。
- *   - 指定子は文字列リテラルの `from "x"`・`import "x"`・`import("x")` を、コメントや文字列の中も含めて正規表現で拾う。
- *   - キーは、指定子と一致するか、末尾が / のキーで指定子がその接頭辞のとき使われているとみなす。
- *   - 変数で組んだ指定子・deno.json の他の設定 (tasks など) からの参照は見ない。
  */
 import { Ajv } from "ajv";
 import { Ajv2020 } from "ajv/2020";
@@ -161,19 +157,6 @@ for (const file of markdownFiles) {
       report(file, `anchor が見出しに無い — ${target}`);
     }
   }
-}
-
-const importSpecifier = /\b(?:from|import)\s*\(?\s*(["'])([^"'\n]+)\1/g;
-const specifiers = new Set<string>();
-for (const file of targets.filter((f) => f.endsWith(".ts"))) {
-  const text = await Deno.readTextFile(file).catch(() => null);
-  if (text === null) continue;
-  for (const m of text.matchAll(importSpecifier)) specifiers.add(m[2]);
-}
-const importKeys = Object.keys(JSON.parse(await Deno.readTextFile("deno.json")).imports ?? {});
-for (const key of importKeys) {
-  const used = [...specifiers].some((s) => s === key || (key.endsWith("/") && s.startsWith(key)));
-  if (!used) report("deno.json", `imports の "${key}" がどの .ts からも使われていない`);
 }
 
 if (violations.length > 0) {
