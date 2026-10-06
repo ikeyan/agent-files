@@ -30,6 +30,8 @@
 - `ed160d6`: pr-workflow の watch の一時ディレクトリ (`watch-pr.*`。#37 の時点で 13 個溜まっていた) を、PR が close か merge されたら消す手順を足した。
 - `cbb787b`: `scripts/run-checks.ts` に `deno lint` の段 (`no-unused-vars` だけ) を足し、AGENTS.md の「このリポの検証」に載せた。
   - deno 2.9.7 の `deno lint` も、`*`・`?` を含む引数を glob として展開する。`--` は効く。名前の述語は `deno check` と同じで足りた。
+- canon に `facts/deno/lint-file-args-and-rules` (glob の展開・`--rules-tags=` の空の値・cwd の `deno.json` の `lint` 設定との相互作用・`_` の無視) と `facts/shellcheck/sc2034-unused-variable` を足し (canon `adbc74e`)、`run-checks.ts` と `dead-code-tools.md` から引いた。`--rules-tags=` の空の値は文書に無く実測のみ。先頭コメントに「`lint` が空であることを前提にする」を足した。
+- `dead-code-tools.md` の「AGENTS.md 設計指針」への参照を外した。setup-repo は他のリポへ配るので、配布先に同じ節があるとは限らない。
 
 ## 残っていること
 
@@ -37,5 +39,4 @@
 - recommended の残り 9 件は直していない (足したのは `no-unused-vars` だけ)。
 - 版で決まる分岐の固定条件は、書かれているかをレビュー (観点) が見るだけで、検査は無い。
 - 作ったものを消す規律は書いただけで、検査はしていない。
-- `deno lint` の contract (読む設定ファイル・環境変数) の目録は canon に無い。この段は `deno.json` を cwd から読むが、その `lint` 設定は空。
 - この環境の sandbox 内の `./verify.sh` は agent-sync の fixture を飛ばす。全部の検査は適用できる環境で回す。
