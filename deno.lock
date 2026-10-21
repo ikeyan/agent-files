@@ -4,7 +4,7 @@
     "npm:ajv@8.17.1": "8.17.1",
     "npm:fast-check@4.10.2": "4.10.2",
     "npm:github-slugger@2.0.0": "2.0.0",
-    "npm:markdown-it@15.0.2": "15.0.2"
+    "npm:markdown-it@15.0.3": "15.0.3"
   },
   "npm": {
     "ajv@8.17.1": {
@@ -16,8 +16,8 @@
         "require-from-string"
       ]
     },
-    "argparse@3.0.2": {
-      "integrity": "sha512-mFdDM6WqWKraGLsVb+C9CahPnzTXOefAOLq3jYcca2YZ8bEWpr++Tzj+zSaKW9+X9L5uSxcm1AZ3Y6aZJ09OhQ=="
+    "argparse@3.0.3": {
+      "integrity": "sha512-Sn98ftV3KfsO8xfLPHG6oT8y+b0yvbrLgZjgPDXsharNY15tTAjqIsIju4S32nl6/iEUNNE4v+yL2Zhm8ooP3w=="
     },
     "entities@8.1.0": {
       "integrity": "sha512-kxL7msIffSuh9aaFAMD7rxAIuTRMAHMeBtgHW2yUdWw732ZNh4MehkF2gdjvtdmikkaIP9bFDDJOPlsvm7avrA=="
@@ -46,8 +46,8 @@
         "uc.micro"
       ]
     },
-    "markdown-it@15.0.2": {
-      "integrity": "sha512-q4IGxMv56jCqT4OCRCADBoDP3LO4MhmTXjFbphHPXs4g3j9Xg5RDnxqN8IF/3vIWEU+VCnUq+7JUg/cfy2E6Qw==",
+    "markdown-it@15.0.3": {
+      "integrity": "sha512-+Az7Ojz3iRGu8KYMvJ6xVhvrxP3eE+vEtJX75Ow88XBpcQNV/0lGX5ZynIIBftREo4DC2jsveAMDaeltmm8QvQ==",
       "dependencies": [
         "argparse",
         "entities",
@@ -200,7 +200,7 @@
       "npm:ajv@8.17.1",
       "npm:fast-check@4.10.2",
       "npm:github-slugger@2.0.0",
-      "npm:markdown-it@15.0.2"
+      "npm:markdown-it@15.0.3"
     ]
   }
 }
