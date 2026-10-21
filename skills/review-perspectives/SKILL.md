@@ -95,7 +95,7 @@ description: Use when reviewing a diff before commit or push, when asked to revi
    - 後始末: 起動し直しの成否に関わらず、失敗のメッセージごとに、Claude Code が作って残したブランチを次の順で扱う。
      1. メッセージから `new branch 'worktree-agent-<16 進数>'` に一致する部分を探し、その名前を `<ブランチ>` とする。一致が 1 つでなければ、何も消さずにメッセージを報告に書く。
      2. Claude Code のセッションの作業ディレクトリのリポジトリ (レビュー対象のリポジトリと違うことがある) で、`git rev-list --count refs/heads/<ブランチ> --not --exclude=<ブランチ> --branches --remotes` を走らせる。このブランチを消すと失うコミットの数が出る (`canon: facts/git/rev-list-exclude-unique-commits`)。
-     3. 2 が exit 0 で 0 を出したら、同じリポジトリで `git branch -D <ブランチ>` を走らせ、消したブランチを報告に書く。それ以外なら消さずに報告に書く。
+     3. 2 が exit 0 で 0 を出したら、同じリポジトリで `git branch -D <ブランチ>` を走らせる。exit 0 なら消したブランチを報告に書く。失敗したら (worktree が checkout していると `cannot delete branch … used by worktree` で exit 1)、ブランチと `git worktree list` の該当行を残したまま報告に書く。2 がそれ以外なら消さずに報告に書く。
 
    どちらも Claude Code の作成の失敗への回避策 (`canon: facts/claude-code/agent-worktree-isolation-lifecycle`)。canon のそのページの実測で、作成の失敗でブランチが残らなくなったと確かめたら後始末を消し、作成が失敗しなくなったと確かめたらこの段落ごと消す。
 
