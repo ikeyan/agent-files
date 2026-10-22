@@ -9,7 +9,7 @@ skills は Claude plugin としてインストールして参照する (下記)�
 このリポは Claude Code プラグインも兼ねる。`.claude-plugin/` に `plugin.json` (このリポ自身のプラグイン本体) と `marketplace.json` を置いてある。`marketplace.json` は `ikeyan` marketplace として複数プラグインを配布する:
 
 - `ikeyan-skills` (`source: "./"`) — このリポ自身。スキル集。
-- `codex-cc-bridge` (`source: github ikeyan/codex-cc-bridge`) — 別リポジトリを参照。Claude Code から Codex を常駐 app-server 経由で使う橋。
+- `codex-cc-bridge` (`source: url https://github.com/ikeyan/codex-cc-bridge.git`) — 別リポジトリを参照。Claude Code から Codex を常駐 app-server 経由で使う橋。
 
 ```
 /plugin marketplace add ikeyan/agent-files

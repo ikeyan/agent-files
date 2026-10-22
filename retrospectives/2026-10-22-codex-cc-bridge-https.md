@@ -10,7 +10,13 @@
 
 ## 良かったこと
 
-- `CLAUDE_CONFIG_DIR` を一時ディレクトリにし、`GIT_SSH_COMMAND=false` で SSH を使えなくして、変更前と変更後の marketplace で `claude plugin install` を比べた。利用者の設定と plugin の状態を変えずに、github source が SSH で clone することと、url source の HTTPS なら鍵なしで入ることを確かめられた。
+- 利用者の設定と plugin の状態を変えずに、変更前と変更後の marketplace を比べた。
+  1. `CLAUDE_CONFIG_DIR` を一時ディレクトリにする。
+  2. `GIT_SSH_COMMAND=false` で SSH を使えなくする。
+  3. 変更前と変更後の marketplace で `claude plugin install codex-cc-bridge@ikeyan` を走らせる。
+- 分かったこと:
+  - github source は SSH で clone する (変更前は失敗した)。
+  - url source の HTTPS は鍵なしで clone できる (変更後は成功した)。
 
 ## 直したこと
 
@@ -20,3 +26,4 @@
 
 - codex-cc-bridge の `plugin.json` は `"version": "0.1.0"` を固定しているので、clone が通っても version を変えるまで更新されない。ユーザーの判断で固定のまま。
 - github source が SSH で clone することは公式ドキュメントに書かれていない。canon の `facts/claude-code/` にまだ足していない。
+- `./verify.sh` の `scripts/test-codex-limits.ts` が 1 回、2 時間 23 分止まったまま終わらなかった (2026-10-22)。止めて単独で走らせ直すと 60 秒以内に通り、次の `./verify.sh` も通った。原因は調べていない。
