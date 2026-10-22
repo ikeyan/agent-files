@@ -10,7 +10,7 @@
     },
     {
       "name": "codex-cc-bridge",
-      "source": { "source": "github", "repo": "ikeyan/codex-cc-bridge" },
+      "source": { "source": "url", "url": "https://github.com/ikeyan/codex-cc-bridge.git" },
       "description": "Claude Code から OpenAI Codex を常駐 app-server 経由で使う薄い橋 (Claude sandbox に封じ込め)。"
     }
   ]
